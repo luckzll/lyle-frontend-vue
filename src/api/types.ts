@@ -16,6 +16,13 @@ export interface KnowledgeFile {
   knowledgeBaseId: string
   fileName: string
   storagePath: string
+  storageProvider?: string
+  bucket?: string
+  objectKey?: string
+  originalName?: string
+  contentType?: string
+  fileSize?: number
+  visibility?: string
   parseStatus: string
   createdAt: string
 }
@@ -25,6 +32,13 @@ export interface KnowledgeFileUploadResponse {
   knowledgeBaseId: string
   fileName: string
   storagePath: string
+  storageProvider?: string
+  bucket?: string
+  objectKey?: string
+  originalName?: string
+  contentType?: string
+  fileSize?: number
+  visibility?: string
   parseStatus: string
   ingestTaskId?: string | null
   candidateMemories?: MemoryItem[]
@@ -56,6 +70,8 @@ export interface ToolResult {
   tool: string
   ok: boolean
   content: string
+  requiresConfirmation?: boolean
+  operation?: PendingOperationItem
   [key: string]: unknown
 }
 
@@ -121,6 +137,9 @@ export interface AiToolItem {
   name: string
   description: string
   enabled: boolean
+  riskLevel?: string
+  requiresConfirmation?: boolean
+  riskDescription?: string
 }
 
 export interface AiToolsResponse {
@@ -159,6 +178,24 @@ export interface AgentTodoItem {
   conversationId: string
   createdAt: string
   updatedAt: string
+}
+
+export interface PendingOperationItem {
+  id: number
+  toolName: string
+  operationType: string
+  riskLevel: string
+  summary: string
+  payload: Record<string, unknown>
+  status: string
+  sourceText?: string
+  result?: Record<string, unknown> | null
+  conversationId?: string
+  createdAt: string
+  updatedAt: string
+  confirmedAt?: string | null
+  rejectedAt?: string | null
+  error?: string
 }
 
 export interface CandidateTaskItem {

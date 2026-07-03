@@ -93,8 +93,9 @@ onBeforeUnmount(() => {
       <RouterLink to="/conversations">会话</RouterLink>
       <RouterLink to="/memory">记忆</RouterLink>
       <RouterLink to="/tasks">任务</RouterLink>
-      <RouterLink to="/evaluation">评测</RouterLink>
-      <RouterLink to="/prompts">Prompt</RouterLink>
+      <RouterLink to="/operations">操作</RouterLink>
+      <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/evaluation">评测</RouterLink>
+      <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/prompts">Prompt</RouterLink>
       <RouterLink to="/settings">设置</RouterLink>
       <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/admin">管理</RouterLink>
       <div class="sidebar-footer">

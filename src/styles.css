@@ -257,14 +257,15 @@ select {
 
 .home-brief {
   display: grid;
-  grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr);
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
   gap: 12px;
   align-items: start;
 }
 
 .brief-metrics {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -722,6 +723,32 @@ pre {
   white-space: pre-wrap;
 }
 
+.memory-used-panel {
+  border-color: #99f6e4;
+  background: #f0fdfa;
+}
+
+.memory-used-card {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #b2f5ea;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #134e4a;
+  padding: 10px;
+  white-space: normal;
+}
+
+.memory-used-card span {
+  color: #334155;
+  line-height: 1.55;
+}
+
+.memory-used-card small {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .candidate-memory-list {
   display: grid;
   width: min(760px, 100%);
@@ -776,6 +803,19 @@ pre {
 .candidate-memory-actions button {
   min-width: 72px;
   padding: 8px 10px;
+}
+
+.operation-preview-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.operation-preview-text {
+  color: #334155;
+  font-size: 14px;
+  margin: 0;
 }
 
 .candidate-error {
@@ -1208,6 +1248,52 @@ pre {
 
 .tool-row p {
   margin: 4px 0 0;
+}
+
+.tool-badges {
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.operation-row {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #e2e8f0;
+  padding: 14px 0;
+}
+
+.operation-row-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.operation-row-head p {
+  margin: 4px 0 0;
+}
+
+.operation-meta-grid {
+  color: #64748b;
+  display: grid;
+  font-size: 13px;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.operation-source,
+.operation-result {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #334155;
+  font-size: 13px;
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
 }
 
 .audit-row {

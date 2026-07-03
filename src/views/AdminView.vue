@@ -95,6 +95,23 @@ function formatSeconds(value?: number) {
   return `${Math.round(value / 3600)}h`
 }
 
+function riskText(value?: string) {
+  if (value === 'read') return '只读'
+  if (value === 'external_read') return '外部读取'
+  if (value === 'artifact') return '产物生成'
+  if (value === 'write') return '写操作'
+  if (value === 'high_risk') return '高风险'
+  return value || '未分级'
+}
+
+function riskBadgeClass(value?: string) {
+  return {
+    success: value === 'read',
+    pending: value === 'external_read' || value === 'artifact',
+    danger: value === 'write' || value === 'high_risk'
+  }
+}
+
 onMounted(refresh)
 </script>
 
@@ -264,10 +281,19 @@ onMounted(refresh)
           <div>
             <strong>{{ tool.name }}</strong>
             <p class="muted">{{ tool.description }}</p>
+            <small class="memory-meta">
+              {{ tool.riskDescription || '暂无风险说明' }}
+            </small>
           </div>
-          <span class="badge" :class="{ success: tool.enabled, danger: !tool.enabled }">
-            {{ tool.enabled ? '启用' : '关闭' }}
-          </span>
+          <div class="tool-badges">
+            <span class="badge" :class="riskBadgeClass(tool.riskLevel)">
+              {{ riskText(tool.riskLevel) }}
+            </span>
+            <span v-if="tool.requiresConfirmation" class="badge pending">需确认</span>
+            <span class="badge" :class="{ success: tool.enabled, danger: !tool.enabled }">
+              {{ tool.enabled ? '启用' : '关闭' }}
+            </span>
+          </div>
         </div>
       </article>
 

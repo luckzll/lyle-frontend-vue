@@ -7,7 +7,8 @@ describe('SSE parsing', () => {
     const handlers = {
       onDelta: vi.fn(),
       onMeta: vi.fn(),
-      onError: vi.fn()
+      onError: vi.fn(),
+      onDone: vi.fn()
     }
 
     const remaining = consumeSseBuffer(
@@ -21,6 +22,9 @@ describe('SSE parsing', () => {
         'event: error',
         'data: {"message":"boom"}',
         '',
+        'event: done',
+        'data: {}',
+        '',
         ''
       ].join('\n'),
       handlers
@@ -33,6 +37,7 @@ describe('SSE parsing', () => {
       review: { approved: true }
     })
     expect(handlers.onError).toHaveBeenCalledWith('boom')
+    expect(handlers.onDone).toHaveBeenCalled()
   })
 
   it('keeps an incomplete event in the returned buffer until more data arrives', () => {

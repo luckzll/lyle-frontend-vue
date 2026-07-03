@@ -80,10 +80,15 @@ const structuredKeyLabels: Record<string, string> = {
   identity: '身份',
   career: '职业',
   preference: '偏好',
+  negative_preference: '负向偏好',
   food_preference: '食物偏好',
+  food_negative_preference: '食物负向偏好',
   pet_preference: '宠物偏好',
+  pet_negative_preference: '宠物负向偏好',
   sport_preference: '运动偏好',
+  sport_negative_preference: '运动负向偏好',
   entertainment_preference: '娱乐偏好',
+  entertainment_negative_preference: '娱乐负向偏好',
   current_project: '当前项目',
   travel_interest: '旅行意向',
   technology_stack: '技术栈',
@@ -163,6 +168,37 @@ async function removeStructured(key: string) {
 
 async function changeStatus(key: string, status: string) {
   await updateMemoryAction(() => changeStructuredMemoryStatus(key, status), '记忆状态已更新。', '记忆状态更新失败。')
+}
+
+async function adoptStructuredSuggestion(item: MemoryItem) {
+  const key = structuredDisplayKey(item.key)
+  const value = (item.value || '').trim()
+  if (!key || !value) return
+
+  await updateMemoryAction(async () => {
+    await saveStructuredMemory(key, value, item.confidence ?? 0.8, item.source || 'merge_suggestion')
+    if (item.key && item.key !== key) {
+      await changeStructuredMemoryStatus(item.key, 'disabled')
+    }
+}, '记忆建议已采用。', '记忆建议采用失败。')
+}
+
+async function keepMergeSuggestion(suggestion: StructuredMemoryMergeSuggestion, selected: MemoryItem) {
+  await updateMemoryAction(async () => {
+    const key = structuredDisplayKey(selected.key)
+    const value = (selected.value || '').trim()
+    if (key && value) {
+      await saveStructuredMemory(key, value, Math.max(selected.confidence ?? 0.8, 0.85), selected.source || 'merge_suggestion')
+    }
+    await Promise.all(
+      suggestion.items
+        .filter((item) => item.key && item.key !== selected.key)
+        .map((item) => changeStructuredMemoryStatus(String(item.key), 'disabled'))
+    )
+    if (selected.key && isPendingInternalKey(selected.key)) {
+      await changeStructuredMemoryStatus(selected.key, 'disabled')
+    }
+  }, '已保留所选记忆，并禁用其它冲突项。', '记忆保留失败。')
 }
 
 async function purgeStructured(key: string) {
@@ -268,6 +304,32 @@ function structuredDisplayKey(key?: string) {
 
 function isPendingInternalKey(key?: string) {
   return Boolean(key?.startsWith('pending:'))
+}
+
+function sourceInfo(source?: string) {
+  const value = source || ''
+  const match = value.match(/^source_ref:([^\n]+)\n?([\s\S]*)$/)
+  if (!match) {
+    return { text: value || '暂无来源。手动维护的记忆会显示 manual。', label: '', href: '' }
+  }
+  const ref = match[1]
+  const text = match[2] || ''
+  if (ref.startsWith('conversation:')) {
+    const id = ref.replace(/^conversation:/, '')
+    return { text, label: '回到来源会话', href: `/?conversationId=${encodeURIComponent(id)}` }
+  }
+  if (ref.startsWith('knowledge:')) {
+    return { text, label: '查看知识库', href: '/knowledge-bases' }
+  }
+  return { text, label: '', href: '' }
+}
+
+function confidenceHint(item?: MemoryItem) {
+  const confidence = item?.confidence
+  if (confidence === undefined) return ''
+  if (confidence < 0.75) return '低置信度：回答时仅作参考，建议核对来源后再采用。'
+  if (confidence >= 0.95) return '高置信度：多次确认或长期稳定使用。'
+  return ''
 }
 
 function conversationTitle(id?: string | null) {
@@ -417,10 +479,18 @@ function conversationTitle(id?: string | null) {
             <span class="badge" :class="statusClass(selectedStructured.status)">{{ statusLabel(selectedStructured.status) }}</span>
             <span v-if="selectedStructured.confidence !== undefined">置信度：{{ selectedStructured.confidence }}</span>
             <span v-if="selectedStructured.updated_at">更新时间：{{ formattedUpdatedAt(selectedStructured.updated_at) }}</span>
+            <span v-if="confidenceHint(selectedStructured)" class="memory-meta">{{ confidenceHint(selectedStructured) }}</span>
           </div>
           <div>
             <strong>来源文本</strong>
-            <p class="memory-text">{{ selectedStructured.source || '暂无来源。手动维护的记忆会显示 manual。' }}</p>
+            <p class="memory-text">{{ sourceInfo(selectedStructured.source).text }}</p>
+            <a
+              v-if="sourceInfo(selectedStructured.source).href"
+              class="inline"
+              :href="sourceInfo(selectedStructured.source).href"
+            >
+              {{ sourceInfo(selectedStructured.source).label }}
+            </a>
           </div>
           <div class="row">
             <button class="secondary" type="button" @click="editStructured(selectedStructured)">编辑</button>
@@ -476,8 +546,10 @@ function conversationTitle(id?: string | null) {
             <strong>{{ structuredKeyLabel(item.key) }} = {{ item.value }}</strong>
             <small class="memory-meta">{{ statusLabel(item.status) }} · 置信度 {{ item.confidence ?? 1 }}</small>
             <span class="row">
-              <button v-if="item.key" class="inline" type="button" @click="changeStatus(item.key, 'active')">采用</button>
+              <button v-if="item.key" class="inline" type="button" @click="keepMergeSuggestion(suggestion, item)">保留这条</button>
+              <button v-if="item.key" class="inline" type="button" @click="adoptStructuredSuggestion(item)">采用</button>
               <button v-if="item.key" class="inline danger" type="button" @click="changeStatus(item.key, 'disabled')">禁用</button>
+              <button v-if="item.key" class="inline danger" type="button" @click="purgeStructured(item.key)">永久删除</button>
             </span>
           </div>
         </div>

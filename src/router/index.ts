@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { hasAuth } from '@/auth'
+import { getCurrentUser, hasAuth } from '@/auth'
 import ChatView from '@/views/ChatView.vue'
 import ConversationView from '@/views/ConversationView.vue'
 import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
@@ -10,6 +10,7 @@ import AdminView from '@/views/AdminView.vue'
 import TasksView from '@/views/TasksView.vue'
 import EvaluationView from '@/views/EvaluationView.vue'
 import PromptView from '@/views/PromptView.vue'
+import OperationsView from '@/views/OperationsView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -20,10 +21,11 @@ const router = createRouter({
     { path: '/conversations', name: 'conversations', component: ConversationView },
     { path: '/memory', name: 'memory', component: MemoryView },
     { path: '/tasks', name: 'tasks', component: TasksView },
-    { path: '/evaluation', name: 'evaluation', component: EvaluationView },
-    { path: '/prompts', name: 'prompts', component: PromptView },
+    { path: '/operations', name: 'operations', component: OperationsView },
+    { path: '/evaluation', name: 'evaluation', component: EvaluationView, meta: { requiresAdmin: true } },
+    { path: '/prompts', name: 'prompts', component: PromptView, meta: { requiresAdmin: true } },
     { path: '/settings', name: 'settings', component: SettingsView },
-    { path: '/admin', name: 'admin', component: AdminView }
+    { path: '/admin', name: 'admin', component: AdminView, meta: { requiresAdmin: true } }
   ]
 })
 
@@ -32,6 +34,9 @@ router.beforeEach((to) => {
     return { name: 'login' }
   }
   if (to.name === 'login' && hasAuth()) {
+    return { name: 'chat' }
+  }
+  if (to.meta.requiresAdmin && getCurrentUser()?.role !== 'ADMIN') {
     return { name: 'chat' }
   }
   return true

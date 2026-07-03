@@ -1,20 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   createConversation,
   createAgentTodo,
+  confirmPendingOperation,
   getCurrentMemory,
   listChatMessages,
   listConversations,
   listAgentReminders,
   listAgentTodos,
   listKnowledgeBases,
+  listPendingOperations,
   saveStructuredMemory,
+  rejectPendingOperation,
   streamMessage,
   changeStructuredMemoryStatus,
   uploadChatImage
 } from '@/api/app'
-import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateTaskItem, ChatSource, Conversation, KnowledgeBase, MemoryItem, MemorySnapshot, ToolResult } from '@/api/types'
+import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateTaskItem, ChatSource, Conversation, KnowledgeBase, MemoryItem, MemorySnapshot, PendingOperationItem, ToolResult } from '@/api/types'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -33,10 +37,12 @@ interface Message {
 }
 
 const input = ref('')
+const route = useRoute()
 const selectedImage = ref<{ name: string; previewUrl: string; url: string } | null>(null)
 const uploadingImage = ref(false)
 const uploadError = ref('')
 const loading = ref(false)
+const streamController = ref<AbortController | null>(null)
 const initializing = ref(true)
 const showDebug = ref(false)
 const error = ref('')
@@ -46,9 +52,11 @@ const knowledgeBases = ref<KnowledgeBase[]>([])
 const selectedKnowledgeBaseId = ref('')
 const memoryActionLoading = ref<Record<string, boolean>>({})
 const taskActionLoading = ref<Record<string, boolean>>({})
+const operationActionLoading = ref<Record<string, boolean>>({})
 const briefTodos = ref<AgentTodoItem[]>([])
 const briefReminders = ref<AgentReminderItem[]>([])
 const briefMemory = ref<MemorySnapshot | null>(null)
+const briefOperations = ref<PendingOperationItem[]>([])
 const briefError = ref('')
 const messages = ref<Message[]>([
   { role: 'assistant', content: '你好，我是 Lyle。你可以先上传文档到知识库，再带着知识库提问。' }
@@ -69,20 +77,71 @@ const pendingBriefMemories = computed(() => {
   return items.filter((item) => item.status === 'pending')
 })
 const unreadBriefReminders = computed(() => briefReminders.value.filter((item) => item.status !== 'read'))
+const pendingBriefOperations = computed(() => briefOperations.value.filter((item) => item.status === 'pending'))
+const weeklyCreatedTodos = computed(() => briefTodos.value.filter((item) => isThisWeek(item.createdAt)))
+const weeklyCompletedTodos = computed(() => briefTodos.value.filter((item) => item.status === 'done' && isThisWeek(item.updatedAt)))
+const focusedProjects = computed(() => {
+  const memories = briefMemory.value?.structured_all || []
+  const memoryProjects = memories
+    .filter((item) => item.status === 'active' && ['current_project', 'goal'].includes(String(item.key || '')))
+    .map((item) => String(item.value || item.text || '').trim())
+    .filter(Boolean)
+  const taskProjects = openBriefTodos.value
+    .slice(0, 3)
+    .map((item) => item.title)
+  return Array.from(new Set([...memoryProjects, ...taskProjects])).slice(0, 3)
+})
+const weeklyReviewItems = computed(() => [
+  `本周新增 ${weeklyCreatedTodos.value.length} 项任务，完成 ${weeklyCompletedTodos.value.length} 项`,
+  overdueBriefTodos.value.length > 0 ? `${overdueBriefTodos.value.length} 项任务已逾期` : '暂无逾期任务',
+  pendingBriefOperations.value.length > 0 ? `${pendingBriefOperations.value.length} 个操作等你确认` : '暂无待确认操作',
+  pendingBriefMemories.value.length > 0 ? `${pendingBriefMemories.value.length} 条记忆待确认` : '记忆队列清爽'
+])
 const briefFocusItems = computed(() => [
   ...overdueBriefTodos.value.slice(0, 2).map((item) => ({ title: item.title, meta: `逾期 · ${formatBriefTime(item.dueAt)}`, tone: 'danger' })),
   ...todayBriefTodos.value.slice(0, 2).map((item) => ({ title: item.title, meta: `今日到期 · ${formatBriefTime(item.dueAt)}`, tone: 'pending' })),
   ...openBriefTodos.value.filter((item) => !isToday(item.dueAt) && !isOverdueTodo(item)).slice(0, 2).map((item) => ({ title: item.title, meta: item.dueAt ? `待办 · ${formatBriefTime(item.dueAt)}` : '待办 · 未设截止时间', tone: 'normal' }))
 ].slice(0, 4))
 
+const memoryKeyLabels: Record<string, string> = {
+  name: '姓名',
+  identity: '身份',
+  career: '职业',
+  preference: '偏好',
+  negative_preference: '负向偏好',
+  food_preference: '食物偏好',
+  food_negative_preference: '食物负向偏好',
+  pet_preference: '宠物偏好',
+  pet_negative_preference: '宠物负向偏好',
+  sport_preference: '运动偏好',
+  sport_negative_preference: '运动负向偏好',
+  entertainment_preference: '娱乐偏好',
+  entertainment_negative_preference: '娱乐负向偏好',
+  current_project: '当前项目',
+  travel_interest: '旅行意向',
+  technology_stack: '技术栈',
+  goal: '目标',
+  constraint: '限制条件',
+  zodiac: '星座'
+}
+
 onMounted(async () => {
   try {
     await Promise.all([refreshKnowledgeBases(), refreshConversations(), refreshBrief()])
+    const initialConversationId = route.query.conversationId
+    if (typeof initialConversationId === 'string' && initialConversationId.trim()) {
+      await loadConversation(initialConversationId)
+    }
+    syncPendingMemoriesToLatestAssistant()
   } catch {
     error.value = '页面初始化失败，请确认后端服务已经启动。'
   } finally {
     initializing.value = false
   }
+})
+
+onActivated(async () => {
+  await refreshBrief()
 })
 
 async function refreshKnowledgeBases() {
@@ -98,14 +157,17 @@ async function refreshConversations() {
 async function refreshBrief() {
   briefError.value = ''
   try {
-    const [todoResponse, reminderResponse, memoryResponse] = await Promise.all([
+    const [todoResponse, reminderResponse, memoryResponse, operationResponse] = await Promise.all([
       listAgentTodos(),
       listAgentReminders(),
-      getCurrentMemory()
+      getCurrentMemory(),
+      listPendingOperations(20)
     ])
     briefTodos.value = todoResponse.data.items
     briefReminders.value = reminderResponse.data.items
     briefMemory.value = memoryResponse.data
+    briefOperations.value = operationResponse.data.items
+    syncPendingMemoriesToLatestAssistant(memoryResponse.data)
   } catch {
     briefError.value = '简报暂时无法加载'
   }
@@ -132,6 +194,7 @@ async function loadConversation(id: string) {
     messages.value = response.data.length
       ? response.data.map((item) => ({ role: item.role, content: item.content }))
       : [{ role: 'assistant', content: '这个会话还没有消息。' }]
+    await refreshBrief()
   } catch {
     error.value = '会话加载失败，请稍后重试。'
   } finally {
@@ -148,6 +211,11 @@ function newConversation() {
   ]
 }
 
+function cancelStreaming() {
+  if (!streamController.value) return
+  streamController.value.abort()
+}
+
 async function submit() {
   const text = input.value.trim()
   const message = selectedImage.value
@@ -161,6 +229,7 @@ async function submit() {
   uploadError.value = ''
   loading.value = true
   error.value = ''
+  streamController.value = new AbortController()
 
   let assistantIndex = -1
   let streamError = ''
@@ -200,10 +269,25 @@ async function submit() {
       onError: (errorMessage) => {
         streamError = errorMessage
         messages.value[assistantIndex].content ||= errorMessage
+      },
+      onDone: () => {
+        streamController.value = null
       }
+    }, {
+      signal: streamController.value.signal
     })
     await refreshConversations()
+    await refreshBrief()
   } catch (exception) {
+    if (exception instanceof DOMException && exception.name === 'AbortError') {
+      if (assistantIndex >= 0) {
+        messages.value[assistantIndex].content ||= '已停止生成。'
+        if (!messages.value[assistantIndex].content.includes('已停止生成。')) {
+          messages.value[assistantIndex].content += '\n\n已停止生成。'
+        }
+      }
+      return
+    }
     const fallback = streamError || (exception instanceof Error ? exception.message : '') || '请求失败，请确认 Java 后端和 Python AI 服务已经启动。'
     if (assistantIndex >= 0) {
       messages.value[assistantIndex].content ||= fallback
@@ -211,7 +295,36 @@ async function submit() {
     error.value = fallback
   } finally {
     loading.value = false
+    streamController.value = null
   }
+}
+
+function syncPendingMemoriesToLatestAssistant(snapshot = briefMemory.value) {
+  const pending = (snapshot?.structured_all || snapshot?.structured || [])
+    .filter((item) => item.status === 'pending')
+  if (!pending.length || !messages.value.length) return
+
+  const assistantIndex = findLatestAssistantIndex()
+  if (assistantIndex < 0) return
+
+  const message = messages.value[assistantIndex]
+  const existing = new Set((message.candidateMemories || []).map((item) => candidateKey(item)))
+  const next = [
+    ...(message.candidateMemories || []),
+    ...pending.filter((item) => !existing.has(candidateKey(item)))
+  ]
+  if (next.length !== (message.candidateMemories || []).length) {
+    message.candidateMemories = next
+  }
+}
+
+function findLatestAssistantIndex() {
+  for (let index = messages.value.length - 1; index >= 0; index -= 1) {
+    if (messages.value[index].role === 'assistant') {
+      return index
+    }
+  }
+  return -1
 }
 
 async function handleImageSelect(event: Event) {
@@ -441,12 +554,88 @@ function sourceCardKey(source: ChatSource, index: number) {
   return `${source.docId}-${source.title}-${index}`
 }
 
+function usedMemorySummary(message: Message) {
+  const trace = (message.agentTrace || []).find((item) => item.agent === 'memory_agent')
+  return trace?.memorySummary as Record<string, unknown> | undefined
+}
+
+function usedMemoryItems(message: Message) {
+  const summary = usedMemorySummary(message)
+  if (!summary) return []
+  const items: Array<{ label: string; value: string; meta: string }> = []
+  const structured = Array.isArray(summary.structuredPreview) ? summary.structuredPreview : []
+  for (const raw of structured) {
+    const parsed = parseMemoryPreview(String(raw || ''))
+    if (parsed.value) {
+      items.push({
+        label: structuredMemoryLabel(parsed.key),
+        value: parsed.value,
+        meta: '结构化记忆'
+      })
+    }
+  }
+  const summaryPreview = String(summary.summaryPreview || '').trim()
+  if (summaryPreview) {
+    items.push({ label: '长期摘要', value: summaryPreview, meta: '摘要记忆' })
+  }
+  const retrieved = Array.isArray(summary.retrievedPreview) ? summary.retrievedPreview : []
+  for (const raw of retrieved.slice(0, 3)) {
+    const value = String(raw || '').trim()
+    if (value) {
+      items.push({ label: '相关片段', value, meta: '向量召回' })
+    }
+  }
+  return items.slice(0, 8)
+}
+
+function parseMemoryPreview(value: string) {
+  const separator = value.indexOf('=')
+  if (separator < 0) return { key: '', value }
+  return {
+    key: value.slice(0, separator).trim(),
+    value: value.slice(separator + 1).trim()
+  }
+}
+
+function structuredMemoryLabel(key: string) {
+  if (!key) return '记忆'
+  return memoryKeyLabels[key] ? `${memoryKeyLabels[key]} (${key})` : key
+}
+
 function pendingCandidateMemories(message: Message) {
   return (message.candidateMemories || []).filter((item) => item.status !== 'active' && item.status !== 'disabled')
 }
 
 function pendingCandidateTasks(message: Message) {
   return (message.candidateTasks || []).filter((item) => item.status !== 'active' && item.status !== 'disabled')
+}
+
+function pendingOperations(message: Message) {
+  return (message.toolResults || [])
+    .filter((item) => item.requiresConfirmation && item.operation && item.operation.status === 'pending')
+    .map((item) => item.operation as PendingOperationItem)
+}
+
+function operationKey(item: PendingOperationItem) {
+  return `operation:${item.id}`
+}
+
+function operationPayloadText(item: PendingOperationItem) {
+  const payload = item.payload || {}
+  if (item.operationType === 'todo.create') {
+    return [`标题：${payload.title || '-'}`, `截止时间：${formatOperationTime(payload.dueAt)}`].join(' · ')
+  }
+  if (item.operationType === 'calendar.create') {
+    return [`标题：${payload.title || '-'}`, `开始时间：${formatOperationTime(payload.startsAt)}`].join(' · ')
+  }
+  return JSON.stringify(payload)
+}
+
+function formatOperationTime(value: unknown) {
+  if (!value) return '未设置'
+  const date = new Date(String(value))
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString()
 }
 
 function candidateKey(item: MemoryItem) {
@@ -570,6 +759,41 @@ function dismissCandidateTask(message: Message, item: CandidateTaskItem) {
   message.candidateTasks = [...(message.candidateTasks || [])]
 }
 
+async function confirmOperation(message: Message, item: PendingOperationItem) {
+  const key = operationKey(item)
+  operationActionLoading.value[key] = true
+  item.error = ''
+  try {
+    const response = await confirmPendingOperation(item.id)
+    item.status = response.data.operation.status
+    item.result = response.data.result
+    message.toolResults = [...(message.toolResults || [])]
+    await refreshBrief()
+  } catch (exception) {
+    item.error = getRequestErrorMessage(exception, '操作确认失败，请稍后重试。')
+    error.value = item.error
+  } finally {
+    operationActionLoading.value[key] = false
+  }
+}
+
+async function rejectOperation(message: Message, item: PendingOperationItem) {
+  const key = operationKey(item)
+  operationActionLoading.value[key] = true
+  item.error = ''
+  try {
+    const response = await rejectPendingOperation(item.id)
+    item.status = response.data.operation.status
+    message.toolResults = [...(message.toolResults || [])]
+    await refreshBrief()
+  } catch (exception) {
+    item.error = getRequestErrorMessage(exception, '操作拒绝失败，请稍后重试。')
+    error.value = item.error
+  } finally {
+    operationActionLoading.value[key] = false
+  }
+}
+
 function getRequestErrorMessage(exception: unknown, fallback: string) {
   const responseData = (exception as { response?: { data?: unknown } })?.response?.data
   if (typeof responseData === 'string') return responseData
@@ -590,6 +814,20 @@ function isToday(value?: string | null) {
   const date = new Date(value)
   const now = new Date()
   return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
+}
+
+function isThisWeek(value?: string | null) {
+  if (!value) return false
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return false
+  const now = new Date()
+  const start = new Date(now)
+  const day = (start.getDay() + 6) % 7
+  start.setDate(start.getDate() - day)
+  start.setHours(0, 0, 0, 0)
+  const end = new Date(start)
+  end.setDate(start.getDate() + 7)
+  return date >= start && date < end
 }
 
 function formatBriefTime(value?: string | null) {
@@ -788,6 +1026,10 @@ function escapeHtml(text: string) {
           <strong>{{ unreadBriefReminders.length }}</strong>
           <span>未读提醒</span>
         </a>
+        <a class="brief-metric pending" href="/operations">
+          <strong>{{ pendingBriefOperations.length }}</strong>
+          <span>待确认操作</span>
+        </a>
       </div>
       <div class="brief-focus">
         <div class="section-title">
@@ -804,6 +1046,37 @@ function escapeHtml(text: string) {
         >
           <strong>{{ item.title }}</strong>
           <span>{{ item.meta }}</span>
+        </a>
+      </div>
+      <div class="brief-focus">
+        <div class="section-title">
+          <h2>重点项目</h2>
+          <a class="inline secondary" href="/memory">查看记忆</a>
+        </div>
+        <p v-if="focusedProjects.length === 0" class="muted">暂无重点项目。你可以在聊天里说“我这周重点是...”。</p>
+        <a
+          v-for="project in focusedProjects"
+          :key="project"
+          class="brief-focus-item"
+          href="/tasks"
+        >
+          <strong>{{ project }}</strong>
+          <span>来自当前项目记忆或进行中任务</span>
+        </a>
+      </div>
+      <div class="brief-focus">
+        <div class="section-title">
+          <h2>周复盘</h2>
+          <a class="inline secondary" href="/tasks">查看任务</a>
+        </div>
+        <a
+          v-for="item in weeklyReviewItems"
+          :key="item"
+          class="brief-focus-item"
+          href="/tasks"
+        >
+          <strong>{{ item }}</strong>
+          <span>基于本周任务、记忆和操作状态</span>
         </a>
       </div>
     </section>
@@ -870,6 +1143,22 @@ function escapeHtml(text: string) {
             <p>{{ sourceSnippet(source) }}</p>
             <pre>{{ source.chunk }}</pre>
           </details>
+        </div>
+
+        <div v-if="showDebug && message.role === 'assistant' && usedMemoryItems(message).length" class="source-panel memory-used-panel">
+          <div class="source-panel-head">
+            <strong>本轮使用记忆</strong>
+            <span class="badge">{{ usedMemoryItems(message).length }} 条</span>
+          </div>
+          <div
+            v-for="item in usedMemoryItems(message)"
+            :key="`${item.meta}-${item.label}-${item.value}`"
+            class="memory-used-card"
+          >
+            <strong>{{ item.label }}</strong>
+            <span>{{ item.value }}</span>
+            <small>{{ item.meta }}</small>
+          </div>
         </div>
 
         <div v-if="message.role === 'assistant' && pendingCandidateMemories(message).length" class="candidate-memory-list">
@@ -972,6 +1261,43 @@ function escapeHtml(text: string) {
           </article>
         </div>
 
+        <div v-if="message.role === 'assistant' && pendingOperations(message).length" class="candidate-memory-list">
+          <div class="candidate-memory-title">
+            <span>待确认操作</span>
+            <span class="badge pending">{{ pendingOperations(message).length }} 条</span>
+          </div>
+          <article
+            v-for="operation in pendingOperations(message)"
+            :key="operationKey(operation)"
+            class="candidate-memory-card"
+          >
+            <div class="operation-preview-head">
+              <strong>{{ operation.summary }}</strong>
+              <span class="badge danger">{{ operation.riskLevel === 'write' ? '写操作' : operation.riskLevel }}</span>
+            </div>
+            <small class="memory-meta">{{ operation.toolName }} · {{ operation.operationType }}</small>
+            <p class="operation-preview-text">{{ operationPayloadText(operation) }}</p>
+            <small v-if="operation.error" class="candidate-error">{{ operation.error }}</small>
+            <div class="candidate-memory-actions">
+              <button
+                type="button"
+                :disabled="operationActionLoading[operationKey(operation)]"
+                @click="confirmOperation(message, operation)"
+              >
+                确认执行
+              </button>
+              <button
+                class="secondary"
+                type="button"
+                :disabled="operationActionLoading[operationKey(operation)]"
+                @click="rejectOperation(message, operation)"
+              >
+                拒绝
+              </button>
+            </div>
+          </article>
+        </div>
+
         <div
           v-if="showDebug && message.role === 'assistant' && (message.agentTrace?.length || message.sources?.length || message.toolResults?.length || reviewText(message.review))"
           class="debug-panel"
@@ -1044,7 +1370,15 @@ function escapeHtml(text: string) {
           {{ uploadingImage ? '上传中' : '上传图片' }}
           <input type="file" accept="image/*" :disabled="loading || uploadingImage" @change="handleImageSelect" />
         </label>
-        <button data-testid="chat-submit" type="submit" :disabled="loading || uploadingImage || (!input.trim() && !selectedImage)">{{ loading ? '发送中' : '发送' }}</button>
+        <button
+          v-if="!loading"
+          data-testid="chat-submit"
+          type="submit"
+          :disabled="uploadingImage || (!input.trim() && !selectedImage)"
+        >
+          发送
+        </button>
+        <button v-else class="secondary" type="button" @click="cancelStreaming">停止</button>
         <p v-if="uploadError" class="upload-error">{{ uploadError }}</p>
       </div>
     </form>

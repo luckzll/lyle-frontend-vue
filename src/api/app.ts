@@ -30,6 +30,7 @@ import type {
   MemoryItem,
   MemorySnapshot,
   PageResponse,
+  PendingOperationItem,
   PromptTemplate,
   PromptTemplateResponse,
   RagChunkResponse,
@@ -52,6 +53,7 @@ export type SseHandlers = {
   onDelta: (chunk: string) => void
   onMeta?: (meta: StreamMeta) => void
   onError?: (message: string) => void
+  onDone?: () => void
 }
 
 export function register(username: string, password: string) {
@@ -196,6 +198,20 @@ export function getAiToolAudit(limit = 50) {
   })
 }
 
+export function listPendingOperations(limit = 50) {
+  return http.get<{ items: PendingOperationItem[] }>('/agent-tools/operations', {
+    params: { limit }
+  })
+}
+
+export function confirmPendingOperation(operationId: number) {
+  return http.post<{ operation: PendingOperationItem; result: Record<string, unknown> }>(`/agent-tools/operations/${operationId}/confirm`)
+}
+
+export function rejectPendingOperation(operationId: number) {
+  return http.post<{ operation: PendingOperationItem }>(`/agent-tools/operations/${operationId}/reject`)
+}
+
 export function listAgentTodos(limit = 50) {
   return http.get<{ items: AgentTodoItem[] }>('/agent-tools/todos', {
     params: { limit }
@@ -330,7 +346,8 @@ export async function streamMessage(
     message: string
     knowledgeBaseIds: string[]
   },
-  handlers: SseHandlers
+  handlers: SseHandlers,
+  options: { signal?: AbortSignal } = {}
 ) {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
@@ -338,7 +355,8 @@ export async function streamMessage(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${getAuthToken()}`
     },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal: options.signal
   })
 
   if (!response.ok || !response.body) {
@@ -389,5 +407,7 @@ export function handleSseBlock(block: string, handlers: SseHandlers) {
     handlers.onMeta?.(data)
   } else if (event === 'error') {
     handlers.onError?.(String(data.message ?? '流式请求失败'))
+  } else if (event === 'done') {
+    handlers.onDone?.()
   }
 }

@@ -18,7 +18,7 @@ http.interceptors.response.use(
   (response) => response,
   (error) => {
     const status = error?.response?.status
-    if ((status === 401 || status === 403) && window.location.pathname !== '/login') {
+    if (status === 401 && window.location.pathname !== '/login') {
       clearAuth()
       window.location.assign('/login')
     }

@@ -341,7 +341,12 @@ onMounted(refreshKnowledgeBases)
           <article v-for="file in files" :key="file.id" class="file-row">
             <div>
               <strong>{{ file.fileName }}</strong>
-              <p class="muted">{{ file.storagePath }}</p>
+              <p class="muted">
+                {{ file.storageProvider || 'LEGACY' }} · {{ file.bucket || '-' }} · {{ file.objectKey || file.storagePath }}
+              </p>
+              <small class="memory-meta">
+                {{ file.contentType || 'unknown' }} · {{ file.fileSize ? `${file.fileSize} bytes` : 'unknown size' }} · {{ file.visibility || 'private' }}
+              </small>
             </div>
             <span class="badge" :class="statusClass(file.parseStatus)">{{ statusText(file.parseStatus) }}</span>
             <button
