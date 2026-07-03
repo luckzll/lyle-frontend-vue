@@ -48,6 +48,9 @@ export interface ChatSource {
   docId: string
   title: string
   chunk: string
+  score?: string
+  backend?: string
+  hitModes?: string
 }
 
 export interface ChatResponse {

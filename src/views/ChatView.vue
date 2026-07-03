@@ -550,6 +550,12 @@ function sourceSegmentLabel(source: ChatSource) {
   return match ? `片段 ${match[1]}` : '片段'
 }
 
+function sourceRetrievalLabel(source: ChatSource) {
+  const modes = source.hitModes || source.backend
+  if (!modes) return ''
+  return `${modes}${source.score ? ` · ${source.score}` : ''}`
+}
+
 function sourceCardKey(source: ChatSource, index: number) {
   return `${source.docId}-${source.title}-${index}`
 }
@@ -1137,7 +1143,10 @@ function escapeHtml(text: string) {
               <span class="source-index">{{ sourceIndex + 1 }}</span>
               <span>
                 <strong>{{ sourceFileName(source) }}</strong>
-                <small>{{ sourceSegmentLabel(source) }} · 文档 {{ source.docId }}</small>
+                <small>
+                  {{ sourceSegmentLabel(source) }} · 文档 {{ source.docId }}
+                  <template v-if="sourceRetrievalLabel(source)"> · {{ sourceRetrievalLabel(source) }}</template>
+                </small>
               </span>
             </summary>
             <p>{{ sourceSnippet(source) }}</p>
@@ -1344,7 +1353,7 @@ function escapeHtml(text: string) {
           <details v-if="message.sources?.length" class="debug-section">
             <summary class="debug-title">Sources</summary>
             <div v-for="source in message.sources" :key="source.docId + source.title" class="debug-line">
-              {{ source.title }}
+              {{ source.title }} · {{ sourceRetrievalLabel(source) || 'unknown' }}
             </div>
           </details>
 
