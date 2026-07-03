@@ -639,11 +639,11 @@ function formatOperationTime(value: unknown) {
 }
 
 function candidateKey(item: MemoryItem) {
-  return item.key || `${item.targetKey || 'memory'}:${item.value || ''}`
+  return item.key || `${item.schemaPath || item.targetKey || 'memory'}:${item.value || ''}`
 }
 
 function memoryTargetKey(item: MemoryItem) {
-  const key = item.targetKey || item.key || ''
+  const key = item.schemaPath || item.targetKey || item.key || ''
   if (key.startsWith('pending:')) {
     return key.split(':').slice(2).join(':') || key
   }

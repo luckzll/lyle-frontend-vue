@@ -387,7 +387,11 @@ export interface MemoryItem {
   content?: string
   key?: string
   targetKey?: string
+  schemaPath?: string
+  label?: string
+  group?: string
   value?: string
+  summary?: string
   text?: string
   score?: number
   backend?: string
@@ -395,7 +399,19 @@ export interface MemoryItem {
   status?: string
   confidence?: number
   updated_at?: number
+  updatedAt?: number
+  createdAt?: number
   expires_at?: number | null
+  evidenceCount?: number
+  id?: number
+  sourceType?: string
+  sourceId?: string
+  sourceRef?: string
+  sourceText?: string
+  normalizedText?: string
+  category?: string
+  fragment?: MemoryItem
+  relation?: string
 }
 
 export interface MemorySnapshot {
@@ -408,6 +424,10 @@ export interface MemorySnapshot {
   short_term: MemoryItem[]
   structured: MemoryItem[]
   structured_all?: MemoryItem[]
+  profiles?: MemoryItem[]
+  fragments?: MemoryItem[]
+  profile_schema?: Array<Record<string, unknown>>
+  recall_plan?: Record<string, unknown>
   semantic: MemoryItem[]
   vector: MemoryItem[]
   retrieved: MemoryItem[]

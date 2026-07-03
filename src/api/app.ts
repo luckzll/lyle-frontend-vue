@@ -162,6 +162,32 @@ export function getStructuredMemoryMergeSuggestions() {
   return http.get<{ items: StructuredMemoryMergeSuggestion[] }>('/memory/structured/merge-suggestions')
 }
 
+export function getMemoryProfiles(status?: string, limit = 200) {
+  return http.get<{ items: MemoryItem[] }>('/memory/profiles', {
+    params: { ...(status ? { status } : {}), limit }
+  })
+}
+
+export function getMemoryFragments(status?: string, category?: string, limit = 200) {
+  return http.get<{ items: MemoryItem[] }>('/memory/fragments', {
+    params: { ...(status ? { status } : {}), ...(category ? { category } : {}), limit }
+  })
+}
+
+export function getProfileEvidence(profileId: number, limit = 100) {
+  return http.get<{ items: MemoryItem[] }>(`/memory/profiles/${profileId}/evidence`, {
+    params: { limit }
+  })
+}
+
+export function changeProfileStatus(schemaPath: string, status: string) {
+  return http.put<MemoryItem>(`/memory/profiles/schema-path/${encodeURIComponent(schemaPath)}/status`, { status })
+}
+
+export function changeFragmentStatus(fragmentId: number, status: string) {
+  return http.put<MemoryItem>(`/memory/fragments/${fragmentId}/status`, { status })
+}
+
 export function getMe() {
   return http.get<User>('/users/me')
 }

@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import {
+  changeFragmentStatus,
+  changeProfileStatus,
   changeStructuredMemoryStatus,
   deleteStructuredMemory,
   getCurrentMemory,
+  getProfileEvidence,
   getStructuredMemoryHistory,
   getStructuredMemoryMergeSuggestions,
   listConversations,
@@ -23,17 +26,21 @@ const conversationId = ref('')
 const loading = ref(false)
 const error = ref('')
 const notice = ref('')
-const activeTab = ref<'overview' | 'structured' | 'history' | 'vectors'>('overview')
+const activeTab = ref<'profiles' | 'fragments' | 'evidence' | 'governance'>('profiles')
 const memoryKey = ref('')
 const memoryValue = ref('')
 const memoryConfidence = ref(1)
 const memorySource = ref('manual')
 const selectedStructuredKey = ref('')
+const selectedProfileId = ref<number | null>(null)
 const structuredHistory = ref<StructuredMemoryHistoryItem[]>([])
 const mergeSuggestions = ref<StructuredMemoryMergeSuggestion[]>([])
+const profileEvidence = ref<MemoryItem[]>([])
 const memory = ref<MemorySnapshot>({
   summary: '',
   short_term: [],
+  profiles: [],
+  fragments: [],
   structured: [],
   semantic: [],
   vector: [],
@@ -50,12 +57,23 @@ const structuredAll = computed(() => {
   return items.filter((item) => !(isPendingInternalKey(item.key) && item.status === 'disabled'))
 })
 
+const profileAll = computed(() => memory.value.profiles || [])
+
+const fragmentAll = computed(() => memory.value.fragments || [])
+
+const selectedProfile = computed(() => {
+  return profileAll.value.find((item) => item.id === selectedProfileId.value) || profileAll.value[0]
+})
+
 const selectedStructured = computed(() => {
   return structuredAll.value.find((item) => item.key === selectedStructuredKey.value) || structuredAll.value[0]
 })
 
 const conflictItems = computed(() => {
-  return structuredAll.value.filter((item) => item.status !== 'active' || (item.confidence ?? 1) < 0.8)
+  return [
+    ...structuredAll.value.filter((item) => item.status !== 'active' || (item.confidence ?? 1) < 0.8),
+    ...profileAll.value.filter((item) => item.status !== 'active' || (item.confidence ?? 1) < 0.8)
+  ]
 })
 
 const activeStructuredCount = computed(() => {
@@ -123,6 +141,9 @@ async function refresh() {
     if (selectedStructuredKey.value) {
       await refreshOptionalStructuredHistory(selectedStructuredKey.value)
     }
+    if (selectedProfile.value?.id) {
+      await refreshOptionalProfileEvidence(selectedProfile.value.id)
+    }
   } catch {
     error.value = '记忆加载失败，请稍后重试。'
   } finally {
@@ -132,7 +153,9 @@ async function refresh() {
 
 async function handleConversationChange() {
   selectedStructuredKey.value = ''
+  selectedProfileId.value = null
   structuredHistory.value = []
+  profileEvidence.value = []
   await refresh()
 }
 
@@ -154,7 +177,7 @@ async function saveMemory() {
     memoryConfidence.value = 1
     memorySource.value = 'manual'
     await refresh()
-    activeTab.value = 'structured'
+    activeTab.value = 'governance'
   } catch {
     error.value = '结构化记忆保存失败。'
   } finally {
@@ -228,7 +251,7 @@ function editStructured(item: MemoryItem) {
   memoryConfidence.value = item.confidence ?? 1
   memorySource.value = item.source || 'manual'
   selectStructured(item)
-  activeTab.value = 'structured'
+  activeTab.value = 'governance'
 }
 
 function selectStructured(item: MemoryItem) {
@@ -236,6 +259,34 @@ function selectStructured(item: MemoryItem) {
   if (selectedStructuredKey.value) {
     refreshOptionalStructuredHistory(selectedStructuredKey.value)
   }
+}
+
+function selectProfile(item: MemoryItem) {
+  selectedProfileId.value = item.id || null
+  if (selectedProfileId.value) {
+    refreshOptionalProfileEvidence(selectedProfileId.value)
+  }
+}
+
+async function refreshProfileEvidence(profileId: number) {
+  const response = await getProfileEvidence(profileId)
+  profileEvidence.value = response.data.items
+}
+
+async function refreshOptionalProfileEvidence(profileId: number) {
+  try {
+    await refreshProfileEvidence(profileId)
+  } catch {
+    profileEvidence.value = []
+  }
+}
+
+async function updateProfileStatus(schemaPath: string, status: string) {
+  await updateMemoryAction(() => changeProfileStatus(schemaPath, status), '画像状态已更新。', '画像状态更新失败。')
+}
+
+async function updateFragmentStatus(fragmentId: number, status: string) {
+  await updateMemoryAction(() => changeFragmentStatus(fragmentId, status), '片段状态已更新。', '片段状态更新失败。')
 }
 
 async function refreshStructuredHistory(key: string) {
@@ -272,6 +323,8 @@ async function refreshOptionalMemoryDetails() {
 function statusLabel(status?: string) {
   if (status === 'pending') return '待确认'
   if (status === 'disabled') return '已禁用'
+  if (status === 'forgotten') return '已遗忘'
+  if (status === 'conflicted') return '有冲突'
   if (status === 'expired') return '已过期'
   return '启用中'
 }
@@ -287,6 +340,16 @@ function statusClass(status?: string) {
 function formattedUpdatedAt(value?: number) {
   if (!value) return ''
   return new Date(value * 1000).toLocaleString()
+}
+
+function formattedMemoryTime(value?: number) {
+  if (!value) return ''
+  return new Date(value * 1000).toLocaleString()
+}
+
+function profileTitle(item?: MemoryItem) {
+  if (!item) return '未知画像'
+  return `${item.label || item.schemaPath || '画像'}`
 }
 
 function structuredKeyLabel(key?: string) {
@@ -360,10 +423,10 @@ function conversationTitle(id?: string | null) {
     <p v-if="notice" class="alert success">{{ notice }}</p>
 
     <div class="segmented memory-tabs">
-      <button type="button" :class="{ active: activeTab === 'overview' }" @click="activeTab = 'overview'">概览</button>
-      <button type="button" :class="{ active: activeTab === 'structured' }" @click="activeTab = 'structured'">结构化</button>
-      <button type="button" :class="{ active: activeTab === 'history' }" @click="activeTab = 'history'">来源历史</button>
-      <button type="button" :class="{ active: activeTab === 'vectors' }" @click="activeTab = 'vectors'">向量召回</button>
+      <button type="button" :class="{ active: activeTab === 'profiles' }" @click="activeTab = 'profiles'">用户画像</button>
+      <button type="button" :class="{ active: activeTab === 'fragments' }" @click="activeTab = 'fragments'">记忆片段</button>
+      <button type="button" :class="{ active: activeTab === 'evidence' }" @click="activeTab = 'evidence'">证据来源</button>
+      <button type="button" :class="{ active: activeTab === 'governance' }" @click="activeTab = 'governance'">治理中心</button>
     </div>
 
     <div v-if="loading" class="empty-state compact">
@@ -371,7 +434,67 @@ function conversationTitle(id?: string | null) {
       <span>请稍候。</span>
     </div>
 
-    <section v-if="activeTab === 'overview'" class="grid memory-grid">
+    <section v-if="activeTab === 'profiles'" class="grid memory-grid">
+      <article class="item">
+        <h2>用户画像</h2>
+        <p v-if="profileAll.length === 0" class="muted">暂无用户画像。确认候选记忆后会自动沉淀。</p>
+        <button
+          v-for="item in profileAll"
+          :key="item.schemaPath"
+          class="memory-list-item"
+          :class="{ active: item.id === selectedProfile?.id, disabled: item.status !== 'active' }"
+          type="button"
+          @click="selectProfile(item)"
+        >
+          <strong>{{ profileTitle(item) }}</strong>
+          <span>{{ item.summary || item.value }}</span>
+          <small>{{ item.group || '未分组' }} · {{ statusLabel(item.status) }} · 证据 {{ item.evidenceCount || 0 }}</small>
+        </button>
+      </article>
+
+      <article class="item stack">
+        <h2>画像详情</h2>
+        <div v-if="!selectedProfile" class="empty-state compact">
+          <strong>未选择画像</strong>
+          <span>确认记忆后可查看画像字段和证据数量。</span>
+        </div>
+        <template v-else>
+          <div class="source-box">
+            <strong>{{ profileTitle(selectedProfile) }}</strong>
+            <span>{{ selectedProfile.value }}</span>
+            <small class="memory-meta">
+              {{ selectedProfile.schemaPath }} · 置信度 {{ selectedProfile.confidence ?? 1 }} · {{ statusLabel(selectedProfile.status) }}
+            </small>
+            <small v-if="selectedProfile.updatedAt" class="memory-meta">更新时间：{{ formattedMemoryTime(selectedProfile.updatedAt) }}</small>
+          </div>
+          <div class="row">
+            <button
+              v-if="selectedProfile.schemaPath && selectedProfile.status !== 'disabled'"
+              class="secondary danger"
+              type="button"
+              @click="updateProfileStatus(selectedProfile.schemaPath, 'disabled')"
+            >
+              禁用
+            </button>
+            <button
+              v-if="selectedProfile.schemaPath && selectedProfile.status === 'disabled'"
+              type="button"
+              @click="updateProfileStatus(selectedProfile.schemaPath, 'active')"
+            >
+              恢复
+            </button>
+            <button
+              v-if="selectedProfile.schemaPath"
+              class="danger"
+              type="button"
+              @click="updateProfileStatus(selectedProfile.schemaPath, 'forgotten')"
+            >
+              遗忘
+            </button>
+          </div>
+        </template>
+      </article>
+
       <article class="item">
         <h2>长期摘要</h2>
         <small v-if="summarySourceLabel" class="memory-meta">{{ summarySourceLabel }}</small>
@@ -384,6 +507,14 @@ function conversationTitle(id?: string | null) {
           <div>
             <strong>结构化</strong>
             <span>{{ structuredAll.length }}</span>
+          </div>
+          <div>
+            <strong>画像</strong>
+            <span>{{ profileAll.length }}</span>
+          </div>
+          <div>
+            <strong>片段</strong>
+            <span>{{ fragmentAll.length }}</span>
           </div>
           <div>
             <strong>短期轮次</strong>
@@ -428,7 +559,7 @@ function conversationTitle(id?: string | null) {
       </article>
     </section>
 
-    <section v-if="activeTab === 'structured'" class="memory-layout">
+    <section v-if="activeTab === 'governance'" class="memory-layout">
       <article class="item stack">
         <h2>手动维护</h2>
         <input v-model="memoryKey" data-testid="memory-key-input" placeholder="记忆键，例如 preference" />
@@ -522,7 +653,18 @@ function conversationTitle(id?: string | null) {
       </article>
     </section>
 
-    <section v-if="activeTab === 'history'" class="grid memory-grid">
+    <section v-if="activeTab === 'evidence'" class="grid memory-grid">
+      <article class="item">
+        <h2>画像证据</h2>
+        <p v-if="!selectedProfile" class="muted">先在用户画像中选择一条画像。</p>
+        <p v-else-if="profileEvidence.length === 0" class="muted">暂无证据；确认后的新记忆会逐步关联。</p>
+        <div v-for="item in profileEvidence" :key="item.id" class="memory-row stacked">
+          <strong>{{ item.relation || 'support' }} · {{ item.confidence ?? 1 }}</strong>
+          <span>{{ item.fragment?.normalizedText || item.fragment?.sourceText || '-' }}</span>
+          <small class="memory-meta">{{ item.fragment?.sourceRef || 'manual' }}</small>
+        </div>
+      </article>
+
       <article class="item">
         <h2>版本历史</h2>
         <p v-if="!selectedStructured" class="muted">选择一条结构化记忆查看历史。</p>
@@ -556,7 +698,46 @@ function conversationTitle(id?: string | null) {
       </article>
     </section>
 
-    <section v-if="activeTab === 'vectors'" class="grid memory-grid">
+    <section v-if="activeTab === 'fragments'" class="grid memory-grid">
+      <article class="item">
+        <h2>记忆片段</h2>
+        <p v-if="fragmentAll.length === 0" class="muted">暂无记忆片段。</p>
+        <div v-for="item in fragmentAll" :key="item.id" class="memory-row stacked">
+          <strong>{{ item.category }} · {{ statusLabel(item.status) }}</strong>
+          <span>{{ item.normalizedText || item.sourceText }}</span>
+          <small class="memory-meta">
+            {{ item.sourceType || 'manual' }} · 置信度 {{ item.confidence ?? 1 }}
+            <template v-if="item.createdAt"> · {{ formattedMemoryTime(item.createdAt) }}</template>
+          </small>
+          <span class="row">
+            <button
+              v-if="item.id && item.status !== 'disabled'"
+              class="inline danger"
+              type="button"
+              @click="updateFragmentStatus(item.id, 'disabled')"
+            >
+              禁用
+            </button>
+            <button
+              v-if="item.id && item.status === 'disabled'"
+              class="inline"
+              type="button"
+              @click="updateFragmentStatus(item.id, 'active')"
+            >
+              恢复
+            </button>
+            <button
+              v-if="item.id"
+              class="inline danger"
+              type="button"
+              @click="updateFragmentStatus(item.id, 'forgotten')"
+            >
+              遗忘
+            </button>
+          </span>
+        </div>
+      </article>
+
       <article class="item">
         <h2>合并向量召回</h2>
         <p v-if="(memory.retrieved || []).length === 0" class="muted">暂无</p>
