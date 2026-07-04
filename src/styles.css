@@ -395,6 +395,124 @@ select {
   opacity: 0.68;
 }
 
+.execution-calendar {
+  align-self: start;
+}
+
+.calendar-strip {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.calendar-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.calendar-quick-actions button {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  min-height: 58px;
+  background: #f1f5f9;
+  color: #1e293b;
+}
+
+.calendar-quick-actions small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.calendar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.calendar-legend span {
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 8px;
+}
+
+.calendar-day {
+  display: grid;
+  gap: 4px;
+  min-height: 78px;
+  align-content: center;
+  border: 1px solid #dbe3ef;
+  background: #f8fafc;
+  color: #334155;
+  padding: 8px 6px;
+  text-align: center;
+}
+
+.calendar-day span,
+.calendar-day small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.calendar-day strong {
+  color: #0f172a;
+}
+
+.calendar-day.active {
+  border-color: #0f766e;
+  background: #ccfbf1;
+  box-shadow: 0 8px 18px rgba(15, 118, 110, 0.12);
+}
+
+.calendar-day-detail {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.calendar-agenda-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.calendar-agenda-item > div {
+  display: grid;
+  gap: 4px;
+}
+
+.calendar-agenda-item span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.calendar-agenda-item.pending {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.calendar-agenda-item.danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.calendar-agenda-item.disabled {
+  opacity: 0.68;
+}
+
 .project-tabs {
   width: fit-content;
 }
@@ -1912,9 +2030,19 @@ pre {
 	  .project-briefing-grid,
 	  .project-layout,
 	  .project-action-row,
-	  .goal-support {
+	  .goal-support,
+	  .calendar-agenda-item {
 	    grid-template-columns: 1fr;
 	  }
+
+  .calendar-strip {
+    grid-template-columns: repeat(7, minmax(86px, 1fr));
+    overflow-x: auto;
+  }
+
+  .calendar-quick-actions {
+    grid-template-columns: 1fr;
+  }
 
 	  .brief-metrics {
 	    grid-template-columns: repeat(2, minmax(0, 1fr));

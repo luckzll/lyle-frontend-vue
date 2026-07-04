@@ -20,6 +20,8 @@ const loading = ref(false)
 const activeTab = ref<'open' | 'today' | 'overdue' | 'done' | 'cancelled' | 'all'>('open')
 const dueEdits = ref<Record<number, string>>({})
 const notice = ref('')
+const selectedDate = ref(startOfDay(new Date()).toISOString())
+const calendarScope = ref<'day' | 'week'>('day')
 
 const visibleTodos = computed(() => {
   const source = activeTab.value === 'open'
@@ -44,6 +46,17 @@ const todayTodos = computed(() => todos.value.filter((item) => item.status === '
 const duplicateTodoCount = computed(() => todos.value.length - dedupeTodos(todos.value).length)
 const nextTodo = computed(() => sortTodos(openTodos.value)[0])
 const unreadReminderPreview = computed(() => unreadReminders.value[0])
+const calendarDays = computed(() => buildCalendarDays())
+const selectedDayTodos = computed(() => sortTodos(openTodos.value.filter((item) => isSameDate(item.dueAt, selectedDate.value))))
+const selectedDayEvents = computed(() => upcomingEvents.value.filter((item) => isSameDate(item.startsAt, selectedDate.value)))
+const selectedDayReminders = computed(() => reminders.value.filter((item) => isSameDate(item.createdAt, selectedDate.value)))
+const selectedDayTotal = computed(() => selectedDayTodos.value.length + selectedDayEvents.value.length + selectedDayReminders.value.length)
+const tomorrowTodos = computed(() => {
+  const tomorrow = dateOffset(1).toISOString()
+  return openTodos.value.filter((item) => isSameDate(item.dueAt, tomorrow))
+})
+const weekDueTodos = computed(() => openTodos.value.filter((item) => isInNextDays(item.dueAt, 7)))
+const calendarTotal = computed(() => calendarScope.value === 'week' ? weekDueTodos.value.length : selectedDayTotal.value)
 
 onMounted(refresh)
 
@@ -129,9 +142,20 @@ function isOverdue(item: AgentTodoItem) {
 
 function isToday(value?: string | null) {
   if (!value) return false
+  return isSameDate(value, new Date().toISOString())
+}
+
+function isSameDate(value?: string | null, compareValue?: string | null) {
+  if (!value || !compareValue) return false
   const date = new Date(value)
-  const now = new Date()
-  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
+  const compareDate = new Date(compareValue)
+  return date.getFullYear() === compareDate.getFullYear() && date.getMonth() === compareDate.getMonth() && date.getDate() === compareDate.getDate()
+}
+
+function startOfDay(value: Date) {
+  const date = new Date(value)
+  date.setHours(0, 0, 0, 0)
+  return date
 }
 
 function todoTimeText(item: AgentTodoItem) {
@@ -147,6 +171,71 @@ function reminderTimeText(value?: string | null) {
 function calendarTimeText(value?: string | null) {
   if (!value) return '未设置时间'
   return formatTime(value)
+}
+
+function shortDateText(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return `${date.getMonth() + 1}/${date.getDate()}`
+}
+
+function weekdayText(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return ['日', '一', '二', '三', '四', '五', '六'][date.getDay()]
+}
+
+function selectedDateText() {
+  const date = new Date(selectedDate.value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString()
+}
+
+function buildCalendarDays() {
+  const today = startOfDay(new Date())
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today)
+    date.setDate(today.getDate() + index)
+    const value = date.toISOString()
+    return {
+      value,
+      todoCount: openTodos.value.filter((item) => isSameDate(item.dueAt, value)).length,
+      eventCount: upcomingEvents.value.filter((item) => isSameDate(item.startsAt, value)).length,
+      reminderCount: reminders.value.filter((item) => isSameDate(item.createdAt, value)).length
+    }
+  })
+}
+
+function dateOffset(days: number) {
+  const date = startOfDay(new Date())
+  date.setDate(date.getDate() + days)
+  return date
+}
+
+function isInNextDays(value?: string | null, days = 7) {
+  if (!value) return false
+  const date = startOfDay(new Date(value))
+  const start = startOfDay(new Date())
+  const end = dateOffset(days)
+  return date.getTime() >= start.getTime() && date.getTime() <= end.getTime()
+}
+
+function selectCalendarDate(value: Date | string) {
+  calendarScope.value = 'day'
+  selectedDate.value = typeof value === 'string' ? startOfDay(new Date(value)).toISOString() : startOfDay(value).toISOString()
+}
+
+function selectTodayTimeline() {
+  selectCalendarDate(new Date())
+}
+
+function selectTomorrowTimeline() {
+  selectCalendarDate(dateOffset(1))
+}
+
+function showWeekDueTodos() {
+  calendarScope.value = 'week'
+  activeTab.value = 'open'
 }
 
 function formatTime(value: string) {
@@ -365,18 +454,123 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
         </div>
       </article>
 
-      <article class="item">
-        <h2>日历</h2>
-        <p v-if="calendar.length === 0" class="muted">暂无日历事件。你可以在聊天里说“创建日历：2026-07-01 10:00 开会”。</p>
-        <div v-for="item in calendar" :key="item.id" class="memory-row stacked">
-          <strong>{{ item.title }}</strong>
-          <span>{{ statusText(item.status) }} · {{ calendarTimeText(item.startsAt) }}</span>
-          <small v-if="item.sourceRef" class="memory-meta">来源：{{ item.sourceRef }}</small>
-          <span class="row">
-            <button class="inline" type="button" @click="setCalendarStatus(item.id, 'done')">完成</button>
-            <button class="inline secondary" type="button" @click="setCalendarStatus(item.id, 'cancelled')">取消</button>
-            <button class="inline danger" type="button" @click="removeCalendar(item.id)">删除</button>
-          </span>
+      <article class="item execution-calendar">
+        <div class="section-title">
+          <div>
+            <h2>执行日历</h2>
+            <p class="muted">点击日期查看当天待办、日历事件和提醒。</p>
+          </div>
+          <span class="badge">{{ calendarTotal }} 项</span>
+        </div>
+
+        <div class="calendar-quick-actions">
+          <button class="secondary" type="button" @click="selectTodayTimeline">
+            今日时间线
+            <small>{{ todayTodos.length + calendarDays[0]?.eventCount + calendarDays[0]?.reminderCount }} 项</small>
+          </button>
+          <button class="secondary" type="button" @click="selectTomorrowTimeline">
+            明日安排
+            <small>{{ tomorrowTodos.length + (calendarDays[1]?.eventCount || 0) + (calendarDays[1]?.reminderCount || 0) }} 项</small>
+          </button>
+          <button class="secondary" type="button" @click="showWeekDueTodos">
+            本周到期
+            <small>{{ weekDueTodos.length }} 个待办</small>
+          </button>
+        </div>
+
+        <div class="calendar-legend">
+          <span>待办截止</span>
+          <span>日历事件</span>
+          <span>提醒记录</span>
+        </div>
+
+        <div class="calendar-strip">
+          <button
+            v-for="day in calendarDays"
+            :key="day.value"
+            class="calendar-day"
+            :class="{ active: isSameDate(day.value, selectedDate) }"
+            type="button"
+            @click="selectCalendarDate(day.value)"
+          >
+            <span>周{{ weekdayText(day.value) }}</span>
+            <strong>{{ shortDateText(day.value) }}</strong>
+            <small>{{ day.todoCount + day.eventCount + day.reminderCount }} 项</small>
+          </button>
+        </div>
+
+        <div class="calendar-day-detail">
+          <div class="section-title">
+            <strong>{{ calendarScope === 'week' ? '未来 7 天到期' : selectedDateText() }}</strong>
+            <small v-if="calendarScope === 'day'" class="memory-meta">待办 {{ selectedDayTodos.length }} · 事件 {{ selectedDayEvents.length }} · 提醒 {{ selectedDayReminders.length }}</small>
+            <small v-else class="memory-meta">待办 {{ weekDueTodos.length }}</small>
+          </div>
+
+          <section v-if="calendarScope === 'week' && weekDueTodos.length" class="stack">
+            <small class="memory-meta">本周到期待办</small>
+            <div v-for="item in weekDueTodos" :key="`week-todo-${item.id}`" class="calendar-agenda-item" :class="{ danger: isOverdue(item), pending: isToday(item.dueAt) }">
+              <div>
+                <strong>{{ item.title }}</strong>
+                <span>{{ todoTimeText(item) }}</span>
+                <small v-if="goalLinkText(item)" class="memory-meta">关联目标：{{ goalLinkText(item) }}</small>
+              </div>
+              <button class="inline" type="button" @click="setTodoStatus(item.id, 'done')">完成</button>
+            </div>
+          </section>
+
+          <section v-if="calendarScope === 'day' && selectedDayTodos.length" class="stack">
+            <small class="memory-meta">待办截止</small>
+            <div v-for="item in selectedDayTodos" :key="`todo-${item.id}`" class="calendar-agenda-item" :class="{ danger: isOverdue(item), pending: isToday(item.dueAt) }">
+              <div>
+                <strong>{{ item.title }}</strong>
+                <span>{{ todoTimeText(item) }}</span>
+              </div>
+              <button class="inline" type="button" @click="setTodoStatus(item.id, 'done')">完成</button>
+            </div>
+          </section>
+
+          <section v-if="calendarScope === 'day' && selectedDayEvents.length" class="stack">
+            <small class="memory-meta">日历事件</small>
+            <div v-for="item in selectedDayEvents" :key="`event-${item.id}`" class="calendar-agenda-item">
+              <div>
+                <strong>{{ item.title }}</strong>
+                <span>{{ statusText(item.status) }} · {{ calendarTimeText(item.startsAt) }}</span>
+                <small v-if="item.sourceRef" class="memory-meta">来源：{{ item.sourceRef }}</small>
+              </div>
+              <span class="row">
+                <button class="inline" type="button" @click="setCalendarStatus(item.id, 'done')">完成</button>
+                <button class="inline secondary" type="button" @click="setCalendarStatus(item.id, 'cancelled')">取消</button>
+                <button class="inline danger" type="button" @click="removeCalendar(item.id)">删除</button>
+              </span>
+            </div>
+          </section>
+
+          <section v-if="calendarScope === 'day' && selectedDayReminders.length" class="stack">
+            <small class="memory-meta">提醒记录</small>
+            <div v-for="item in selectedDayReminders" :key="`reminder-${item.id}`" class="calendar-agenda-item" :class="{ disabled: item.status === 'read' }">
+              <div>
+                <strong>{{ item.title }}</strong>
+                <span>{{ item.message }} · {{ reminderTimeText(item.createdAt) }}</span>
+              </div>
+              <button v-if="item.status !== 'read'" class="inline" type="button" @click="readReminder(item.id)">已读</button>
+            </div>
+          </section>
+
+          <section v-if="calendarScope === 'day' && weekDueTodos.length" class="stack">
+            <small class="memory-meta">本周到期</small>
+            <div v-for="item in weekDueTodos.slice(0, 4)" :key="`week-preview-${item.id}`" class="calendar-agenda-item" :class="{ danger: isOverdue(item), pending: isToday(item.dueAt) }">
+              <div>
+                <strong>{{ item.title }}</strong>
+                <span>{{ todoTimeText(item) }}</span>
+              </div>
+              <button class="inline" type="button" @click="setTodoStatus(item.id, 'done')">完成</button>
+            </div>
+          </section>
+
+          <div v-if="calendarTotal === 0 && weekDueTodos.length === 0" class="empty-state compact">
+            <strong>{{ calendarScope === 'week' ? '未来 7 天暂无到期待办' : '当天暂无安排' }}</strong>
+            <span>可以在聊天里说“创建日历：明天 10 点开会”，或给待办设置截止时间。</span>
+          </div>
         </div>
       </article>
     </div>
