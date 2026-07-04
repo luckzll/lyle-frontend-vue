@@ -443,6 +443,24 @@ select {
   padding: 4px 8px;
 }
 
+.calendar-week-nav {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.calendar-week-nav strong {
+  color: #0f172a;
+  text-align: center;
+}
+
+.calendar-week-nav .secondary {
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
 .calendar-day {
   display: grid;
   gap: 4px;
@@ -465,10 +483,13 @@ select {
   color: #0f172a;
 }
 
+.calendar-day.today {
+  border-color: #94a3b8;
+}
+
 .calendar-day.active {
   border-color: #0f766e;
-  background: #ccfbf1;
-  box-shadow: 0 8px 18px rgba(15, 118, 110, 0.12);
+  background: #ecfdf5;
 }
 
 .calendar-day-detail {

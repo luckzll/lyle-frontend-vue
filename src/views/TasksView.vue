@@ -21,6 +21,7 @@ const activeTab = ref<'open' | 'today' | 'overdue' | 'done' | 'cancelled' | 'all
 const dueEdits = ref<Record<number, string>>({})
 const notice = ref('')
 const selectedDate = ref(startOfDay(new Date()).toISOString())
+const calendarWindowStart = ref(startOfWeek(new Date()).toISOString())
 const calendarScope = ref<'day' | 'week'>('day')
 
 const visibleTodos = computed(() => {
@@ -47,6 +48,8 @@ const duplicateTodoCount = computed(() => todos.value.length - dedupeTodos(todos
 const nextTodo = computed(() => sortTodos(openTodos.value)[0])
 const unreadReminderPreview = computed(() => unreadReminders.value[0])
 const calendarDays = computed(() => buildCalendarDays())
+const todayCalendarDay = computed(() => calendarDayStats(new Date()))
+const tomorrowCalendarDay = computed(() => calendarDayStats(dateOffset(1)))
 const selectedDayTodos = computed(() => sortTodos(openTodos.value.filter((item) => isSameDate(item.dueAt, selectedDate.value))))
 const selectedDayEvents = computed(() => upcomingEvents.value.filter((item) => isSameDate(item.startsAt, selectedDate.value)))
 const selectedDayReminders = computed(() => reminders.value.filter((item) => isSameDate(item.createdAt, selectedDate.value)))
@@ -55,7 +58,7 @@ const tomorrowTodos = computed(() => {
   const tomorrow = dateOffset(1).toISOString()
   return openTodos.value.filter((item) => isSameDate(item.dueAt, tomorrow))
 })
-const weekDueTodos = computed(() => openTodos.value.filter((item) => isInNextDays(item.dueAt, 7)))
+const weekDueTodos = computed(() => openTodos.value.filter((item) => isInDateWindow(item.dueAt, calendarWindowStart.value, 7)))
 const calendarTotal = computed(() => calendarScope.value === 'week' ? weekDueTodos.value.length : selectedDayTotal.value)
 
 onMounted(refresh)
@@ -158,6 +161,14 @@ function startOfDay(value: Date) {
   return date
 }
 
+function startOfWeek(value: Date) {
+  const date = startOfDay(value)
+  const day = date.getDay()
+  const mondayOffset = day === 0 ? -6 : 1 - day
+  date.setDate(date.getDate() + mondayOffset)
+  return date
+}
+
 function todoTimeText(item: AgentTodoItem) {
   if (!item.dueAt) return '未设置截止时间'
   return formatTime(item.dueAt)
@@ -192,18 +203,34 @@ function selectedDateText() {
 }
 
 function buildCalendarDays() {
-  const today = startOfDay(new Date())
+  const windowStart = startOfDay(new Date(calendarWindowStart.value))
   return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(today)
-    date.setDate(today.getDate() + index)
-    const value = date.toISOString()
-    return {
-      value,
-      todoCount: openTodos.value.filter((item) => isSameDate(item.dueAt, value)).length,
-      eventCount: upcomingEvents.value.filter((item) => isSameDate(item.startsAt, value)).length,
-      reminderCount: reminders.value.filter((item) => isSameDate(item.createdAt, value)).length
-    }
+    const date = new Date(windowStart)
+    date.setDate(windowStart.getDate() + index)
+    return calendarDayStats(date)
   })
+}
+
+function calendarDayStats(value: Date | string) {
+  const date = typeof value === 'string' ? new Date(value) : value
+  const dayValue = startOfDay(date).toISOString()
+  return {
+    value: dayValue,
+    todoCount: openTodos.value.filter((item) => isSameDate(item.dueAt, dayValue)).length,
+    eventCount: upcomingEvents.value.filter((item) => isSameDate(item.startsAt, dayValue)).length,
+    reminderCount: reminders.value.filter((item) => isSameDate(item.createdAt, dayValue)).length
+  }
+}
+
+function weekRangeText() {
+  const start = startOfDay(new Date(calendarWindowStart.value))
+  const end = new Date(start)
+  end.setDate(start.getDate() + 6)
+  return `${shortDateText(start.toISOString())} - ${shortDateText(end.toISOString())}`
+}
+
+function isCurrentDay(value: string) {
+  return isSameDate(value, new Date().toISOString())
 }
 
 function dateOffset(days: number) {
@@ -212,17 +239,24 @@ function dateOffset(days: number) {
   return date
 }
 
-function isInNextDays(value?: string | null, days = 7) {
+function isInDateWindow(value?: string | null, startValue?: string | null, days = 7) {
   if (!value) return false
   const date = startOfDay(new Date(value))
-  const start = startOfDay(new Date())
-  const end = dateOffset(days)
+  const start = startOfDay(startValue ? new Date(startValue) : new Date())
+  const end = new Date(start)
+  end.setDate(start.getDate() + days - 1)
   return date.getTime() >= start.getTime() && date.getTime() <= end.getTime()
+}
+
+function syncCalendarWindow(value: Date | string) {
+  const date = typeof value === 'string' ? new Date(value) : value
+  calendarWindowStart.value = startOfWeek(date).toISOString()
 }
 
 function selectCalendarDate(value: Date | string) {
   calendarScope.value = 'day'
   selectedDate.value = typeof value === 'string' ? startOfDay(new Date(value)).toISOString() : startOfDay(value).toISOString()
+  syncCalendarWindow(selectedDate.value)
 }
 
 function selectTodayTimeline() {
@@ -234,8 +268,23 @@ function selectTomorrowTimeline() {
 }
 
 function showWeekDueTodos() {
+  const today = new Date()
+  selectedDate.value = startOfDay(today).toISOString()
+  calendarWindowStart.value = startOfWeek(today).toISOString()
   calendarScope.value = 'week'
   activeTab.value = 'open'
+}
+
+function shiftCalendarWeek(offset: number) {
+  const start = startOfDay(new Date(calendarWindowStart.value))
+  start.setDate(start.getDate() + offset * 7)
+  calendarWindowStart.value = start.toISOString()
+  selectedDate.value = start.toISOString()
+  calendarScope.value = 'day'
+}
+
+function resetCalendarWeek() {
+  selectCalendarDate(new Date())
 }
 
 function formatTime(value: string) {
@@ -466,11 +515,11 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
         <div class="calendar-quick-actions">
           <button class="secondary" type="button" @click="selectTodayTimeline">
             今日时间线
-            <small>{{ todayTodos.length + calendarDays[0]?.eventCount + calendarDays[0]?.reminderCount }} 项</small>
+            <small>{{ todayTodos.length + todayCalendarDay.eventCount + todayCalendarDay.reminderCount }} 项</small>
           </button>
           <button class="secondary" type="button" @click="selectTomorrowTimeline">
             明日安排
-            <small>{{ tomorrowTodos.length + (calendarDays[1]?.eventCount || 0) + (calendarDays[1]?.reminderCount || 0) }} 项</small>
+            <small>{{ tomorrowTodos.length + tomorrowCalendarDay.eventCount + tomorrowCalendarDay.reminderCount }} 项</small>
           </button>
           <button class="secondary" type="button" @click="showWeekDueTodos">
             本周到期
@@ -484,12 +533,21 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
           <span>提醒记录</span>
         </div>
 
+        <div class="calendar-week-nav">
+          <button class="secondary" type="button" @click="shiftCalendarWeek(-1)">上一周</button>
+          <strong>{{ weekRangeText() }}</strong>
+          <span class="row">
+            <button class="secondary" type="button" @click="resetCalendarWeek">回到本周</button>
+            <button class="secondary" type="button" @click="shiftCalendarWeek(1)">下一周</button>
+          </span>
+        </div>
+
         <div class="calendar-strip">
           <button
             v-for="day in calendarDays"
             :key="day.value"
             class="calendar-day"
-            :class="{ active: isSameDate(day.value, selectedDate) }"
+            :class="{ active: isSameDate(day.value, selectedDate), today: isCurrentDay(day.value) }"
             type="button"
             @click="selectCalendarDate(day.value)"
           >
