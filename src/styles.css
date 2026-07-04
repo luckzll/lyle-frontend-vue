@@ -185,6 +185,10 @@ select {
   padding: 16px;
 }
 
+.item.wide {
+  grid-column: 1 / -1;
+}
+
 .muted {
   color: #64748b;
 }
@@ -319,6 +323,70 @@ select {
   height: 100%;
   border-radius: inherit;
   background: #0f766e;
+}
+
+.project-health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.project-health-item {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.project-suggestion-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.project-suggestion-group {
+  display: grid;
+  gap: 8px;
+}
+
+.project-suggestion-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 10px;
+}
+
+.project-suggestion-card > div {
+  display: grid;
+  gap: 4px;
+}
+
+.project-suggestion-card span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.project-suggestion-card.pending {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.project-suggestion-card.danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.project-suggestion-card.success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
 }
 
 .milestone-form {
