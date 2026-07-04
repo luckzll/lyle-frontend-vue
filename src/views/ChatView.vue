@@ -567,14 +567,17 @@ function traceSummary(item: AgentTraceItem) {
 
 function agentStatus(item: AgentTraceItem) {
   if (item.approved === false) return '未通过'
-  if (item.skipped === true) return '跳过'
+  if (item.approved === true && item.skipped === true) return '规则通过'
+  if (item.skipped === true) return '已跳过'
   if (item.action === 'write') return '写入'
+  if (item.approved === true) return '通过'
   return '执行'
 }
 
 function agentNodeClass(item: AgentTraceItem) {
   return {
-    skipped: item.skipped === true,
+    skipped: item.skipped === true && item.approved !== true,
+    approved: item.approved === true,
     rejected: item.approved === false,
     write: item.action === 'write'
   }
