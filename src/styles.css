@@ -386,6 +386,49 @@ select {
   background: #fef2f2;
 }
 
+.goal-support {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.goal-support > div {
+  display: grid;
+  gap: 4px;
+}
+
+.goal-support span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.goal-support.success {
+  border-color: #99f6e4;
+  background: #f0fdfa;
+}
+
+.goal-support.pending {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.goal-support.danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.goal-plan-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .project-briefing-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.8fr);

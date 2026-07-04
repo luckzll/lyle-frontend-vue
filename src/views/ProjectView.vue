@@ -16,6 +16,7 @@ import {
   generateWeeklyBriefing,
   getProjectOverview,
   getTodayBriefing,
+  linkTaskToGoal,
   listAgentPlans,
   listAgentTodos,
   listGoals,
@@ -369,18 +370,21 @@ async function cancelPlan(plan: AgentPlan) {
   }
 }
 
-async function createNextActionTodo() {
+async function createNextActionTodo(goalOverride?: Goal) {
   if (!selectedProjectId.value) return
-  const goal = activeGoals.value[0]
+  const goal = goalOverride ?? activeGoals.value[0]
   const title = goal ? `推进：${goal.title}` : `推进：${selectedProject.value?.name || '项目'}下一步`
   const dueAt = tomorrowAtNine().toISOString()
   saving.value = true
   try {
     const response = await createAgentTodo(title, dueAt)
+    if (goal) {
+      await linkTaskToGoal(goal.id, String(response.data.id))
+    }
     await createProjectLink(selectedProjectId.value, {
       targetType: 'todo',
       targetId: String(response.data.id),
-      relation: 'next_action',
+      relation: goal ? `next_action:${goal.id}` : 'next_action',
       confidence: 0.9
     })
     await loadOverview()
@@ -410,9 +414,9 @@ async function postponeTodo(item: AgentTodoItem) {
   }
 }
 
-async function createPlanFromActiveGoal() {
+async function createPlanFromActiveGoal(goalOverride?: Goal) {
   if (!selectedProjectId.value) return
-  const goal = activeGoals.value[0]
+  const goal = goalOverride ?? activeGoals.value[0]
   const goalTitle = goal?.title || `${selectedProject.value?.name || '项目'}阶段目标`
   saving.value = true
   try {
@@ -574,6 +578,57 @@ function todoBelongsToProject(item: AgentTodoItem) {
   const goalTitles = activeGoals.value.map((goal) => goal.title)
   const compareValues = [...goalValues, ...goalTitles]
   return compareValues.some((value) => value && (item.title.includes(value.slice(0, 12)) || value.includes(item.title.slice(0, 12))))
+}
+
+function todoBelongsToGoal(item: AgentTodoItem, goal: Goal) {
+  const goalLinkHit = (item.goalLinks || []).some((link) => String(link.schemaPath || '').endsWith(`.${goal.id}`) || String(link.value || '').includes(goal.title))
+  if (goalLinkHit) return true
+  return textMatchesGoal(item.title, goal)
+}
+
+function planBelongsToGoal(plan: AgentPlan, goal: Goal) {
+  return textMatchesGoal(`${plan.title} ${plan.objective}`, goal)
+}
+
+function textMatchesGoal(text: string, goal: Goal) {
+  const normalized = text.toLowerCase()
+  const title = goal.title.toLowerCase()
+  if (title && normalized.includes(title)) return true
+  const titleHead = title.slice(0, 12)
+  if (titleHead.length >= 6 && normalized.includes(titleHead)) return true
+  return Boolean(goal.description && normalized.includes(goal.description.toLowerCase().slice(0, 12)))
+}
+
+function goalTodos(goal: Goal) {
+  return projectTodos.value.filter((item) => todoBelongsToGoal(item, goal))
+}
+
+function goalPlans(goal: Goal) {
+  return plans.value.filter((plan) => planBelongsToGoal(plan, goal))
+}
+
+function goalNextTodo(goal: Goal) {
+  return goalTodos(goal).sort((a, b) => {
+    if (!a.dueAt && !b.dueAt) return a.id - b.id
+    if (!a.dueAt) return 1
+    if (!b.dueAt) return -1
+    return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()
+  })[0]
+}
+
+function goalSupportText(goal: Goal) {
+  const todoCount = goalTodos(goal).length
+  const planCount = goalPlans(goal).length
+  if (todoCount > 0 && planCount > 0) return `${todoCount} 个行动 · ${planCount} 个计划`
+  if (todoCount > 0) return `${todoCount} 个行动承接`
+  if (planCount > 0) return `${planCount} 个计划承接`
+  return '还没有行动或计划承接'
+}
+
+function goalSupportTone(goal: Goal) {
+  if (goalTodos(goal).length > 0 && goalPlans(goal).length > 0) return 'success'
+  if (goalTodos(goal).length > 0 || goalPlans(goal).length > 0) return 'pending'
+  return 'danger'
 }
 
 function buildProjectHealthItems() {
@@ -993,16 +1048,42 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
             <div v-if="activeGoals.length" class="stack">
               <div v-for="goal in activeGoals" :key="goal.id" class="goal-card">
                 <div class="section-title">
-                  <strong>{{ goal.title }}</strong>
+                  <div>
+                    <strong>{{ goal.title }}</strong>
+                    <p class="muted">{{ goal.description || '暂无描述' }}</p>
+                  </div>
                   <span class="badge">{{ horizonText(goal.horizon) }}</span>
                 </div>
-                <p class="muted">{{ goal.description || '暂无描述' }}</p>
                 <div class="progress-bar"><i :style="{ width: `${percent(goal.progress)}%` }" /></div>
                 <span class="row">
                   <small class="memory-meta">{{ percent(goal.progress) }}% · {{ goal.dueAt || '未设置截止时间' }}</small>
                   <button class="inline secondary" type="button" @click="setGoalProgress(goal, Math.min(100, percent(goal.progress) + 25))">+25%</button>
                   <button class="inline" type="button" @click="completeGoal(goal)">完成</button>
                 </span>
+                <div class="goal-support" :class="goalSupportTone(goal)">
+                  <div>
+                    <small class="memory-meta">推进承接</small>
+                    <strong>{{ goalSupportText(goal) }}</strong>
+                    <span v-if="goalNextTodo(goal)">下一步：{{ goalNextTodo(goal)?.title }} · {{ formatTodoTime(goalNextTodo(goal)?.dueAt) }}</span>
+                    <span v-else>建议先补一个可执行动作，目标会更容易持续推进。</span>
+                  </div>
+                  <span class="row">
+                    <button class="inline secondary" :disabled="saving" type="button" @click="createNextActionTodo(goal)">创建待办</button>
+                    <button class="inline" :disabled="saving" type="button" @click="createPlanFromActiveGoal(goal)">生成计划</button>
+                  </span>
+                </div>
+                <div v-if="goalPlans(goal).length" class="goal-plan-links">
+                  <small class="memory-meta">相关计划</small>
+                  <button
+                    v-for="plan in goalPlans(goal).slice(0, 3)"
+                    :key="plan.id"
+                    class="inline secondary"
+                    type="button"
+                    @click="openPlansTab"
+                  >
+                    {{ plan.title }} · {{ planStatusText(plan.status) }}
+                  </button>
+                </div>
                 <div class="stack">
                   <small class="memory-meta">里程碑</small>
                   <div v-if="goal.milestones?.length" class="stack">
