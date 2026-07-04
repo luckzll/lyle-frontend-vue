@@ -57,6 +57,11 @@ button.inline {
   padding: 10px 14px;
 }
 
+.button-link.primary {
+  background: #0f766e;
+  color: #fff;
+}
+
 .inline-link {
   color: #0f766e;
   font-weight: 700;
@@ -201,6 +206,15 @@ select {
 
 .muted {
   color: #64748b;
+}
+
+.notice {
+  border: 1px solid #99f6e4;
+  border-radius: 8px;
+  background: #f0fdfa;
+  color: #0f766e;
+  font-weight: 700;
+  padding: 10px 12px;
 }
 
 .row {
@@ -955,6 +969,114 @@ select {
   min-height: 88px;
   place-items: center;
   padding: 14px;
+}
+
+.conversations-page {
+  max-width: 1120px;
+}
+
+.conversation-create {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+}
+
+.conversation-create p {
+  margin: 6px 0 0;
+}
+
+.conversation-create-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.conversation-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.4fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.conversation-feature {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.conversation-feature h2,
+.conversation-row h3 {
+  margin: 0;
+  color: #0f172a;
+  line-height: 1.35;
+}
+
+.conversation-feature h2 {
+  font-size: 24px;
+}
+
+.conversation-list {
+  display: grid;
+  gap: 0;
+  padding: 14px;
+}
+
+.conversation-list .section-title {
+  margin-bottom: 8px;
+}
+
+.conversation-list h2 {
+  margin: 0;
+}
+
+.conversation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 14px;
+  align-items: center;
+  border-top: 1px solid #e2e8f0;
+  padding: 14px 0;
+}
+
+.conversation-row:first-of-type {
+  border-top: 0;
+}
+
+.conversation-list .section-title + .conversation-row {
+  border-top: 0;
+}
+
+.conversation-row p {
+  margin: 4px 0 0;
+}
+
+.conversation-id,
+.conversation-meta-row span {
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+
+.conversation-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.conversation-actions {
+  justify-content: flex-end;
+}
+
+.conversation-actions .button-link,
+.conversation-actions button {
+  padding: 8px 10px;
 }
 
 .segmented {
@@ -2051,9 +2173,17 @@ pre {
 	  .project-layout,
 	  .project-action-row,
 	  .goal-support,
-	  .calendar-agenda-item {
+	  .calendar-agenda-item,
+	  .conversation-create,
+	  .conversation-create-form,
+	  .conversation-layout,
+	  .conversation-row {
 	    grid-template-columns: 1fr;
 	  }
+
+  .conversation-actions {
+    justify-content: flex-start;
+  }
 
   .calendar-strip {
     grid-template-columns: repeat(7, minmax(86px, 1fr));
