@@ -2,6 +2,7 @@ import { http } from './http'
 import { getAuthToken } from '@/auth'
 import type {
   AdminOverview,
+  AgentPlan,
   AgentCalendarItem,
   AgentReminderItem,
   AgentTodoItem,
@@ -14,7 +15,10 @@ import type {
   ChatMessage,
   ChatResponse,
   ChatSource,
+  ConnectorInfo,
+  ConnectorResult,
   Conversation,
+  DailyBriefing,
   EvaluationBatchResponse,
   EvaluationCase,
   EvaluationRunDetail,
@@ -23,6 +27,7 @@ import type {
   EvaluationSetDetail,
   EvaluationSetItem,
   EvaluationTrendResponse,
+  Goal,
   ImageUploadResponse,
   KnowledgeFileUploadResponse,
   KnowledgeBase,
@@ -34,6 +39,11 @@ import type {
   PendingOperationItem,
   PromptTemplate,
   PromptTemplateResponse,
+  Project,
+  ProjectDecision,
+  ProjectLink,
+  ProjectOpenQuestion,
+  ProjectOverview,
   RagChunkResponse,
   RagDebugResponse,
   StructuredMemoryHistoryItem,
@@ -47,6 +57,11 @@ export type StreamMeta = {
   toolResults?: ChatResponse['toolResults']
   candidateMemories?: MemoryItem[]
   candidateTasks?: ChatResponse['candidateTasks']
+  candidateGoals?: ChatResponse['candidateGoals']
+  candidateDecisions?: ChatResponse['candidateDecisions']
+  candidateOpenQuestions?: ChatResponse['candidateOpenQuestions']
+  candidatePlans?: ChatResponse['candidatePlans']
+  projectContext?: ChatResponse['projectContext']
   review?: ChatResponse['review']
 }
 
@@ -109,6 +124,188 @@ export function listKnowledgeFiles(knowledgeBaseId: string) {
 
 export function deleteKnowledgeFile(knowledgeBaseId: string, fileId: string) {
   return http.delete(`/knowledge-bases/${knowledgeBaseId}/files/${fileId}`)
+}
+
+export function listProjects(status = 'active', limit = 100) {
+  return http.get<{ items: Project[] }>('/projects', {
+    params: { status, limit }
+  })
+}
+
+export function createProject(payload: {
+  name: string
+  description?: string
+  currentStage?: string
+  priority?: number
+}) {
+  return http.post<Project>('/projects', payload)
+}
+
+export function getProject(projectId: number) {
+  return http.get<Project>(`/projects/${projectId}`)
+}
+
+export function updateProject(projectId: number, payload: Partial<Project>) {
+  return http.patch<Project>(`/projects/${projectId}`, payload)
+}
+
+export function getProjectOverview(projectId: number) {
+  return http.get<ProjectOverview>(`/projects/${projectId}/overview`)
+}
+
+export function listProjectLinks(projectId: number, targetType?: string, limit = 100) {
+  return http.get<{ items: ProjectLink[] }>(`/projects/${projectId}/links`, {
+    params: { ...(targetType ? { targetType } : {}), limit }
+  })
+}
+
+export function createProjectLink(projectId: number, payload: {
+  targetType: string
+  targetId: string
+  relation?: string
+  confidence?: number
+}) {
+  return http.post<ProjectLink>(`/projects/${projectId}/links`, payload)
+}
+
+export function deleteProjectLink(projectId: number, linkId: number) {
+  return http.delete(`/projects/${projectId}/links/${linkId}`)
+}
+
+export function createProjectDecision(projectId: number, payload: {
+  title: string
+  content: string
+  rationale?: string
+  sourceType?: string
+  sourceId?: string
+}) {
+  return http.post<ProjectDecision>(`/projects/${projectId}/decisions`, payload)
+}
+
+export function createProjectOpenQuestion(projectId: number, payload: {
+  question: string
+  sourceType?: string
+  sourceId?: string
+}) {
+  return http.post<ProjectOpenQuestion>(`/projects/${projectId}/open-questions`, payload)
+}
+
+export function updateProjectOpenQuestion(questionId: number, status: string) {
+  return http.patch<ProjectOpenQuestion>(`/projects/open-questions/${questionId}`, { status })
+}
+
+export function listGoals(projectId?: number, status = 'active', limit = 100) {
+  return http.get<{ items: Goal[] }>('/goals', {
+    params: { ...(projectId ? { projectId } : {}), status, limit }
+  })
+}
+
+export function createGoal(payload: {
+  projectId?: number
+  title: string
+  description?: string
+  horizon?: string
+  dueAt?: string | null
+}) {
+  return http.post<Goal>('/goals', payload)
+}
+
+export function updateGoal(goalId: number, payload: Partial<Goal>) {
+  return http.patch<Goal>(`/goals/${goalId}`, payload)
+}
+
+export function createMilestone(goalId: number, payload: {
+  title: string
+  description?: string
+  status?: string
+  sortOrder?: number
+  dueAt?: string | null
+}) {
+  return http.post(`/goals/${goalId}/milestones`, payload)
+}
+
+export function linkTaskToGoal(goalId: number, taskId: string, milestoneId?: number | null) {
+  return http.post(`/goals/${goalId}/tasks/${encodeURIComponent(taskId)}/link`, { milestoneId })
+}
+
+export function listAgentPlans(projectId?: number, status?: string, limit = 100) {
+  return http.get<{ items: AgentPlan[] }>('/agent/plans', {
+    params: { ...(projectId ? { projectId } : {}), ...(status ? { status } : {}), limit }
+  })
+}
+
+export function createAgentPlan(payload: {
+  projectId?: number
+  conversationId?: string
+  title: string
+  objective: string
+  steps?: Array<{ title: string; description?: string; toolName?: string }>
+}) {
+  return http.post<AgentPlan>('/agent/plans', payload)
+}
+
+export function confirmAgentPlan(planId: number) {
+  return http.post<AgentPlan>(`/agent/plans/${planId}/confirm`)
+}
+
+export function pauseAgentPlan(planId: number) {
+  return http.post<AgentPlan>(`/agent/plans/${planId}/pause`)
+}
+
+export function resumeAgentPlan(planId: number) {
+  return http.post<AgentPlan>(`/agent/plans/${planId}/resume`)
+}
+
+export function cancelAgentPlan(planId: number) {
+  return http.post<AgentPlan>(`/agent/plans/${planId}/cancel`)
+}
+
+export function getTodayBriefing(projectId?: number) {
+  return http.get<DailyBriefing>('/briefings/today', {
+    params: { ...(projectId ? { projectId } : {}) }
+  })
+}
+
+export function generateDailyBriefing(projectId?: number) {
+  return http.post<DailyBriefing>('/briefings/daily/generate', undefined, {
+    params: { ...(projectId ? { projectId } : {}) }
+  })
+}
+
+export function generateEveningBriefing(projectId?: number) {
+  return http.post<DailyBriefing>('/briefings/evening/generate', undefined, {
+    params: { ...(projectId ? { projectId } : {}) }
+  })
+}
+
+export function generateWeeklyBriefing(projectId?: number) {
+  return http.post<DailyBriefing>('/briefings/weekly/generate', undefined, {
+    params: { ...(projectId ? { projectId } : {}) }
+  })
+}
+
+export function listConnectors() {
+  return http.get<{ items: ConnectorInfo[] }>('/connectors')
+}
+
+export function listConnectorResources(connectorName: string, params: {
+  repo?: string
+  state?: string
+  limit?: number
+} = {}) {
+  return http.get<ConnectorResult>(`/connectors/${connectorName}/list`, { params })
+}
+
+export function searchConnector(connectorName: string, params: {
+  q: string
+  repo?: string
+  limit?: number
+}) {
+  return http.get<ConnectorResult>(`/connectors/${connectorName}/search`, { params })
+}
+
+export function previewConnectorCreate(connectorName: string, payload: Record<string, unknown>) {
+  return http.post<ConnectorResult>(`/connectors/${connectorName}/preview-create`, payload)
 }
 
 export function rebuildKnowledgeFile(knowledgeBaseId: string, fileId: string) {

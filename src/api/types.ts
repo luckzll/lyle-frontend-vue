@@ -44,6 +44,188 @@ export interface KnowledgeFileUploadResponse {
   candidateMemories?: MemoryItem[]
 }
 
+export interface Project {
+  id: number
+  name: string
+  slug?: string | null
+  description?: string | null
+  status: string
+  currentStage?: string | null
+  priority: number
+  lastActivityAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectLink {
+  id: number
+  projectId: number
+  targetType: string
+  targetId: string
+  relation: string
+  confidence: number
+  createdAt: string
+}
+
+export interface ProjectDecision {
+  id: number
+  title: string
+  content: string
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectOpenQuestion {
+  id: number
+  question: string
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectOverview {
+  project: Project
+  linkCounts: Record<string, number>
+  links: ProjectLink[]
+  decisions: ProjectDecision[]
+  openQuestions: ProjectOpenQuestion[]
+  nextStepSuggestions: string[]
+}
+
+export interface Milestone {
+  id: number
+  goalId: number
+  title: string
+  description?: string | null
+  status: string
+  sortOrder: number
+  dueAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Goal {
+  id: number
+  projectId?: number | null
+  title: string
+  description?: string | null
+  horizon: string
+  status: string
+  progress: number
+  dueAt?: string | null
+  createdAt: string
+  updatedAt: string
+  milestones?: Milestone[]
+}
+
+export interface ProjectChatContext {
+  resolver?: {
+    projectId?: number | null
+    projectName?: string
+    confidence?: number
+    requiresClarification?: boolean
+    reason?: string
+    candidates?: Array<Record<string, unknown>>
+    linkedConversation?: boolean
+  }
+  context?: {
+    project?: Project
+    goals?: Goal[]
+    linkCounts?: Record<string, number>
+    decisions?: ProjectDecision[]
+    openQuestions?: ProjectOpenQuestion[]
+    nextStepSuggestions?: string[]
+    summary?: string
+    error?: string
+  }
+}
+
+export interface AgentPlanStep {
+  id: number
+  planId: number
+  sortOrder: number
+  title: string
+  description?: string | null
+  status: string
+  toolName?: string | null
+  outputRef?: string | null
+  errorCode?: string | null
+  errorMessage?: string | null
+  startedAt?: string | null
+  completedAt?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AgentPlan {
+  id: number
+  projectId?: number | null
+  conversationId?: string | null
+  title: string
+  objective: string
+  status: string
+  requiresConfirmation: boolean
+  steps?: AgentPlanStep[]
+  createdAt: string
+  updatedAt: string
+  completedAt?: string | null
+}
+
+export interface DailyBriefing {
+  id?: number | null
+  projectId?: number | null
+  briefingType: string
+  title: string
+  content: string
+  todayFocus: string[]
+  projects: Project[]
+  goals: Goal[]
+  dueTasks: AgentTodoItem[]
+  overdueTasks: AgentTodoItem[]
+  pendingOperations: PendingOperationItem[]
+  createdAt: string
+}
+
+export interface ConnectorInfo {
+  name: string
+  label: string
+  status: string
+  capabilities: string[]
+  message: string
+}
+
+export interface ConnectorItem {
+  id: string
+  title: string
+  resourceType?: string
+  path?: string
+  url?: string
+  state?: string
+  number?: number
+  updatedAt?: string | number | null
+  author?: string | null
+  snippet?: string
+  content?: string
+  score?: number
+  [key: string]: unknown
+}
+
+export interface ConnectorResult {
+  connector: string
+  ok: boolean
+  content: string
+  items: ConnectorItem[]
+  sources: Array<Record<string, unknown>>
+  requiresConfirmation?: boolean
+  operation?: PendingOperationItem
+  error?: {
+    code: string
+    message: string
+    retryable: boolean
+  }
+}
+
 export interface ChatSource {
   docId: string
   title: string
@@ -65,6 +247,11 @@ export interface ChatResponse {
   toolResults: ToolResult[]
   candidateMemories?: MemoryItem[]
   candidateTasks?: CandidateTaskItem[]
+  candidateGoals?: CandidateGoalItem[]
+  candidateDecisions?: CandidateDecisionItem[]
+  candidateOpenQuestions?: CandidateOpenQuestionItem[]
+  candidatePlans?: CandidatePlanItem[]
+  projectContext?: ProjectChatContext
   review: Record<string, unknown>
 }
 
@@ -227,6 +414,59 @@ export interface CandidateTaskItem {
   source?: string
   confidence?: number
   status?: string
+  error?: string
+}
+
+export interface CandidateGoalItem {
+  type: 'goal'
+  projectId: number
+  title: string
+  description?: string
+  horizon?: string
+  confidence?: number
+  status?: string
+  source?: string
+  error?: string
+}
+
+export interface CandidateDecisionItem {
+  type: 'decision'
+  projectId: number
+  title: string
+  content: string
+  rationale?: string
+  confidence?: number
+  status?: string
+  source?: string
+  error?: string
+}
+
+export interface CandidateOpenQuestionItem {
+  type: 'open_question'
+  projectId: number
+  question: string
+  confidence?: number
+  status?: string
+  source?: string
+  error?: string
+}
+
+export interface CandidatePlanItem {
+  type: 'agent_plan'
+  projectId?: number | null
+  title: string
+  objective: string
+  requiresConfirmation?: boolean
+  confidence?: number
+  status?: string
+  source?: string
+  steps: Array<{
+    title: string
+    description?: string
+    status?: string
+    toolName?: string
+  }>
+  createdPlan?: AgentPlan
   error?: string
 }
 

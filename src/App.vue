@@ -88,11 +88,14 @@ onBeforeUnmount(() => {
   <div v-else class="app-shell">
     <aside class="sidebar">
       <div class="brand">Lyle AI</div>
+      <RouterLink to="/dashboard">工作台</RouterLink>
       <RouterLink to="/">聊天</RouterLink>
       <RouterLink to="/knowledge-bases">知识库</RouterLink>
       <RouterLink to="/conversations">会话</RouterLink>
       <RouterLink to="/memory">记忆</RouterLink>
       <RouterLink to="/tasks">任务</RouterLink>
+      <RouterLink to="/projects">项目</RouterLink>
+      <RouterLink to="/connectors">连接器</RouterLink>
       <RouterLink to="/operations">操作</RouterLink>
       <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/evaluation">评测</RouterLink>
       <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/prompts">Prompt</RouterLink>

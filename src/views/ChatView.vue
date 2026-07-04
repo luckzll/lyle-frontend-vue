@@ -4,6 +4,10 @@ import { useRoute } from 'vue-router'
 import {
   createConversation,
   createAgentTodo,
+  createAgentPlan,
+  createGoal,
+  createProjectDecision,
+  createProjectOpenQuestion,
   confirmPendingOperation,
   getCurrentMemory,
   listChatMessages,
@@ -18,7 +22,7 @@ import {
   changeStructuredMemoryStatus,
   uploadChatImage
 } from '@/api/app'
-import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateTaskItem, ChatSource, Conversation, KnowledgeBase, MemoryItem, MemorySnapshot, PendingOperationItem, ToolResult } from '@/api/types'
+import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, Conversation, KnowledgeBase, MemoryItem, MemorySnapshot, PendingOperationItem, ProjectChatContext, ToolResult } from '@/api/types'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -33,6 +37,11 @@ interface Message {
   toolResults?: ToolResult[]
   candidateMemories?: MemoryItem[]
   candidateTasks?: CandidateTaskItem[]
+  candidateGoals?: CandidateGoalItem[]
+  candidateDecisions?: CandidateDecisionItem[]
+  candidateOpenQuestions?: CandidateOpenQuestionItem[]
+  candidatePlans?: CandidatePlanItem[]
+  projectContext?: ProjectChatContext
   review?: Record<string, unknown>
 }
 
@@ -52,6 +61,7 @@ const knowledgeBases = ref<KnowledgeBase[]>([])
 const selectedKnowledgeBaseId = ref('')
 const memoryActionLoading = ref<Record<string, boolean>>({})
 const taskActionLoading = ref<Record<string, boolean>>({})
+const projectCandidateActionLoading = ref<Record<string, boolean>>({})
 const operationActionLoading = ref<Record<string, boolean>>({})
 const briefTodos = ref<AgentTodoItem[]>([])
 const briefReminders = ref<AgentReminderItem[]>([])
@@ -264,6 +274,11 @@ async function submit() {
         messages.value[assistantIndex].toolResults = meta.toolResults || []
         messages.value[assistantIndex].candidateMemories = meta.candidateMemories || []
         messages.value[assistantIndex].candidateTasks = meta.candidateTasks || []
+        messages.value[assistantIndex].candidateGoals = meta.candidateGoals || []
+        messages.value[assistantIndex].candidateDecisions = meta.candidateDecisions || []
+        messages.value[assistantIndex].candidateOpenQuestions = meta.candidateOpenQuestions || []
+        messages.value[assistantIndex].candidatePlans = meta.candidatePlans || []
+        messages.value[assistantIndex].projectContext = meta.projectContext
         messages.value[assistantIndex].review = meta.review || {}
       },
       onError: (errorMessage) => {
@@ -473,6 +488,7 @@ async function copyDebugPayload(message: Message) {
     agentTrace: message.agentTrace || [],
     toolResults: message.toolResults || [],
     sources: message.sources || [],
+    projectContext: message.projectContext || {},
     review: message.review || {}
   }
   await navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
@@ -564,6 +580,42 @@ function reviewText(review?: Record<string, unknown>) {
   return `${approved}${score}${reason}`
 }
 
+function reviewStatusText(review?: Record<string, unknown>) {
+  if (!review || Object.keys(review).length === 0) return '无结果'
+  if (review.approved === false) return '未通过'
+  if (review.skipped === true) return '规则通过'
+  return '通过'
+}
+
+function reviewRuleText(review?: Record<string, unknown>) {
+  const rule = String(review?.v3Rule || '')
+  const labels: Record<string, string> = {
+    connector_failure: '连接器失败检查',
+    plan_confirmation: '长任务确认检查',
+    project_fact_grounding: '项目事实来源检查',
+    project_clarification: '项目归属澄清检查'
+  }
+  if (rule) return labels[rule] || rule
+  if (review?.ruleBlocked) return '基础规则拦截'
+  if (review?.skipped) return '规则审核'
+  return '模型审核'
+}
+
+function reviewReason(review?: Record<string, unknown>) {
+  return String(review?.reason || '无原因')
+}
+
+function reviewRewriteInstruction(review?: Record<string, unknown>) {
+  return String(review?.rewrite_instruction || '')
+}
+
+function reviewCardClass(review?: Record<string, unknown>) {
+  return {
+    rejected: review?.approved === false,
+    passed: review?.approved === true
+  }
+}
+
 function sourceSnippet(source: ChatSource, limit = 220) {
   const chunk = source.chunk.trim()
   return chunk.length > limit ? `${chunk.slice(0, limit)}...` : chunk
@@ -586,6 +638,23 @@ function sourceRetrievalLabel(source: ChatSource) {
 
 function sourceCardKey(source: ChatSource, index: number) {
   return `${source.docId}-${source.title}-${index}`
+}
+
+function projectResolver(message: Message) {
+  return message.projectContext?.resolver
+}
+
+function projectContext(message: Message) {
+  return message.projectContext?.context
+}
+
+function projectConfidenceText(message: Message) {
+  const confidence = projectResolver(message)?.confidence
+  return typeof confidence === 'number' ? `${Math.round(confidence * 100)}%` : '未评分'
+}
+
+function projectSuggestions(message: Message) {
+  return projectContext(message)?.nextStepSuggestions || []
 }
 
 function usedMemorySummary(message: Message) {
@@ -644,6 +713,22 @@ function pendingCandidateMemories(message: Message) {
 
 function pendingCandidateTasks(message: Message) {
   return (message.candidateTasks || []).filter((item) => item.status !== 'active' && item.status !== 'disabled')
+}
+
+function pendingCandidateGoals(message: Message) {
+  return (message.candidateGoals || []).filter((item) => item.status !== 'active' && item.status !== 'disabled')
+}
+
+function pendingCandidateDecisions(message: Message) {
+  return (message.candidateDecisions || []).filter((item) => item.status !== 'active' && item.status !== 'disabled')
+}
+
+function pendingCandidateOpenQuestions(message: Message) {
+  return (message.candidateOpenQuestions || []).filter((item) => item.status !== 'active' && item.status !== 'disabled')
+}
+
+function pendingCandidatePlans(message: Message) {
+  return (message.candidatePlans || []).filter((item) => item.status !== 'active' && item.status !== 'disabled')
 }
 
 function pendingOperations(message: Message) {
@@ -790,6 +875,15 @@ function taskKey(item: CandidateTaskItem) {
   return `${item.type}:${item.title}:${item.dueAt || ''}`
 }
 
+function projectCandidateKey(item: CandidateGoalItem | CandidateDecisionItem | CandidateOpenQuestionItem) {
+  const content = 'title' in item ? item.title : item.question
+  return `${item.type}:${item.projectId}:${content}`
+}
+
+function planCandidateKey(item: CandidatePlanItem) {
+  return `plan:${item.projectId || 'none'}:${item.title}`
+}
+
 function setCandidateTaskTitle(item: CandidateTaskItem, event: Event) {
   item.title = (event.target as HTMLInputElement).value
 }
@@ -837,6 +931,107 @@ async function confirmCandidateTask(message: Message, item: CandidateTaskItem) {
 function dismissCandidateTask(message: Message, item: CandidateTaskItem) {
   item.status = 'disabled'
   message.candidateTasks = [...(message.candidateTasks || [])]
+}
+
+async function confirmCandidateGoal(message: Message, item: CandidateGoalItem) {
+  const key = projectCandidateKey(item)
+  projectCandidateActionLoading.value[key] = true
+  item.error = ''
+  try {
+    await createGoal({
+      projectId: item.projectId,
+      title: item.title,
+      description: item.description || item.source || '',
+      horizon: item.horizon || 'week'
+    })
+    item.status = 'active'
+    message.candidateGoals = [...(message.candidateGoals || [])]
+  } catch (exception) {
+    item.error = getRequestErrorMessage(exception, '目标确认失败，请稍后重试。')
+    error.value = item.error
+  } finally {
+    projectCandidateActionLoading.value[key] = false
+  }
+}
+
+async function confirmCandidateDecision(message: Message, item: CandidateDecisionItem) {
+  const key = projectCandidateKey(item)
+  projectCandidateActionLoading.value[key] = true
+  item.error = ''
+  try {
+    await createProjectDecision(item.projectId, {
+      title: item.title,
+      content: item.content,
+      rationale: item.rationale || '',
+      sourceType: 'conversation',
+      sourceId: conversationId.value
+    })
+    item.status = 'active'
+    message.candidateDecisions = [...(message.candidateDecisions || [])]
+  } catch (exception) {
+    item.error = getRequestErrorMessage(exception, '决策确认失败，请稍后重试。')
+    error.value = item.error
+  } finally {
+    projectCandidateActionLoading.value[key] = false
+  }
+}
+
+async function confirmCandidateOpenQuestion(message: Message, item: CandidateOpenQuestionItem) {
+  const key = projectCandidateKey(item)
+  projectCandidateActionLoading.value[key] = true
+  item.error = ''
+  try {
+    await createProjectOpenQuestion(item.projectId, {
+      question: item.question,
+      sourceType: 'conversation',
+      sourceId: conversationId.value
+    })
+    item.status = 'active'
+    message.candidateOpenQuestions = [...(message.candidateOpenQuestions || [])]
+  } catch (exception) {
+    item.error = getRequestErrorMessage(exception, '开放问题确认失败，请稍后重试。')
+    error.value = item.error
+  } finally {
+    projectCandidateActionLoading.value[key] = false
+  }
+}
+
+function dismissProjectCandidate(
+  message: Message,
+  item: CandidateGoalItem | CandidateDecisionItem | CandidateOpenQuestionItem
+) {
+  item.status = 'disabled'
+  message.candidateGoals = [...(message.candidateGoals || [])]
+  message.candidateDecisions = [...(message.candidateDecisions || [])]
+  message.candidateOpenQuestions = [...(message.candidateOpenQuestions || [])]
+}
+
+async function confirmCandidatePlan(message: Message, item: CandidatePlanItem) {
+  const key = planCandidateKey(item)
+  projectCandidateActionLoading.value[key] = true
+  item.error = ''
+  try {
+    const response = await createAgentPlan({
+      projectId: item.projectId || undefined,
+      conversationId: conversationId.value,
+      title: item.title,
+      objective: item.objective,
+      steps: item.steps
+    })
+    item.createdPlan = response.data
+    item.status = 'active'
+    message.candidatePlans = [...(message.candidatePlans || [])]
+  } catch (exception) {
+    item.error = getRequestErrorMessage(exception, '计划创建失败，请稍后重试。')
+    error.value = item.error
+  } finally {
+    projectCandidateActionLoading.value[key] = false
+  }
+}
+
+function dismissCandidatePlan(message: Message, item: CandidatePlanItem) {
+  item.status = 'disabled'
+  message.candidatePlans = [...(message.candidatePlans || [])]
 }
 
 async function confirmOperation(message: Message, item: PendingOperationItem) {
@@ -1203,6 +1398,28 @@ function escapeHtml(text: string) {
           </div>
         </template>
 
+        <div
+          v-if="message.role === 'assistant' && projectResolver(message)?.projectId"
+          class="source-panel project-context-panel"
+        >
+          <div class="source-panel-head">
+            <strong>当前项目：{{ projectResolver(message)?.projectName }}</strong>
+            <span class="badge">{{ projectConfidenceText(message) }}</span>
+          </div>
+          <p class="muted">{{ projectResolver(message)?.reason }}</p>
+          <RouterLink class="inline-link" :to="`/projects/${projectResolver(message)?.projectId}`">打开项目页</RouterLink>
+          <div v-if="projectContext(message)?.goals?.length" class="memory-used-card">
+            <strong>进行中目标</strong>
+            <span>{{ projectContext(message)?.goals?.slice(0, 3).map((goal) => goal.title).join('、') }}</span>
+            <small>来自项目空间</small>
+          </div>
+          <div v-if="projectSuggestions(message).length" class="stack">
+            <div v-for="suggestion in projectSuggestions(message).slice(0, 3)" :key="suggestion" class="brief-focus-item">
+              <strong>{{ suggestion }}</strong>
+            </div>
+          </div>
+        </div>
+
         <div v-if="message.role === 'assistant' && message.sources?.length" class="source-panel">
           <div class="source-panel-head">
             <strong>资料来源</strong>
@@ -1344,6 +1561,136 @@ function escapeHtml(text: string) {
           </article>
         </div>
 
+        <div v-if="message.role === 'assistant' && pendingCandidateGoals(message).length" class="candidate-memory-list">
+          <div class="candidate-memory-title">
+            <span>待确认目标</span>
+            <span class="badge pending">{{ pendingCandidateGoals(message).length }} 条</span>
+          </div>
+          <article
+            v-for="candidate in pendingCandidateGoals(message)"
+            :key="projectCandidateKey(candidate)"
+            class="candidate-memory-card"
+          >
+            <div class="candidate-memory-fields">
+              <label>
+                <span>标题</span>
+                <input v-model="candidate.title" :disabled="projectCandidateActionLoading[projectCandidateKey(candidate)]" />
+              </label>
+              <label>
+                <span>周期</span>
+                <select v-model="candidate.horizon" :disabled="projectCandidateActionLoading[projectCandidateKey(candidate)]">
+                  <option value="day">今日</option>
+                  <option value="week">本周</option>
+                  <option value="month">本月</option>
+                  <option value="quarter">季度</option>
+                  <option value="long_term">长期</option>
+                </select>
+              </label>
+            </div>
+            <small class="memory-meta">项目 {{ candidate.projectId }} · 置信度 {{ candidate.confidence ?? 0.7 }}</small>
+            <small v-if="candidate.error" class="candidate-error">{{ candidate.error }}</small>
+            <div class="candidate-memory-actions">
+              <button type="button" :disabled="projectCandidateActionLoading[projectCandidateKey(candidate)] || !candidate.title.trim()" @click="confirmCandidateGoal(message, candidate)">确认</button>
+              <button class="secondary" type="button" :disabled="projectCandidateActionLoading[projectCandidateKey(candidate)]" @click="dismissProjectCandidate(message, candidate)">忽略</button>
+            </div>
+          </article>
+        </div>
+
+        <div v-if="message.role === 'assistant' && pendingCandidateDecisions(message).length" class="candidate-memory-list">
+          <div class="candidate-memory-title">
+            <span>待确认决策</span>
+            <span class="badge pending">{{ pendingCandidateDecisions(message).length }} 条</span>
+          </div>
+          <article
+            v-for="candidate in pendingCandidateDecisions(message)"
+            :key="projectCandidateKey(candidate)"
+            class="candidate-memory-card"
+          >
+            <div class="candidate-memory-fields">
+              <label>
+                <span>标题</span>
+                <input v-model="candidate.title" :disabled="projectCandidateActionLoading[projectCandidateKey(candidate)]" />
+              </label>
+              <label>
+                <span>内容</span>
+                <input v-model="candidate.content" :disabled="projectCandidateActionLoading[projectCandidateKey(candidate)]" />
+              </label>
+            </div>
+            <small class="memory-meta">项目 {{ candidate.projectId }} · 置信度 {{ candidate.confidence ?? 0.7 }}</small>
+            <small v-if="candidate.error" class="candidate-error">{{ candidate.error }}</small>
+            <div class="candidate-memory-actions">
+              <button type="button" :disabled="projectCandidateActionLoading[projectCandidateKey(candidate)] || !candidate.title.trim() || !candidate.content.trim()" @click="confirmCandidateDecision(message, candidate)">确认</button>
+              <button class="secondary" type="button" :disabled="projectCandidateActionLoading[projectCandidateKey(candidate)]" @click="dismissProjectCandidate(message, candidate)">忽略</button>
+            </div>
+          </article>
+        </div>
+
+        <div v-if="message.role === 'assistant' && pendingCandidateOpenQuestions(message).length" class="candidate-memory-list">
+          <div class="candidate-memory-title">
+            <span>待确认开放问题</span>
+            <span class="badge pending">{{ pendingCandidateOpenQuestions(message).length }} 条</span>
+          </div>
+          <article
+            v-for="candidate in pendingCandidateOpenQuestions(message)"
+            :key="projectCandidateKey(candidate)"
+            class="candidate-memory-card"
+          >
+            <label class="stack">
+              <span>问题</span>
+              <input v-model="candidate.question" :disabled="projectCandidateActionLoading[projectCandidateKey(candidate)]" />
+            </label>
+            <small class="memory-meta">项目 {{ candidate.projectId }} · 置信度 {{ candidate.confidence ?? 0.68 }}</small>
+            <small v-if="candidate.error" class="candidate-error">{{ candidate.error }}</small>
+            <div class="candidate-memory-actions">
+              <button type="button" :disabled="projectCandidateActionLoading[projectCandidateKey(candidate)] || !candidate.question.trim()" @click="confirmCandidateOpenQuestion(message, candidate)">确认</button>
+              <button class="secondary" type="button" :disabled="projectCandidateActionLoading[projectCandidateKey(candidate)]" @click="dismissProjectCandidate(message, candidate)">忽略</button>
+            </div>
+          </article>
+        </div>
+
+        <div v-if="message.role === 'assistant' && pendingCandidatePlans(message).length" class="candidate-memory-list">
+          <div class="candidate-memory-title">
+            <span>待确认计划</span>
+            <span class="badge pending">{{ pendingCandidatePlans(message).length }} 条</span>
+          </div>
+          <article
+            v-for="candidate in pendingCandidatePlans(message)"
+            :key="planCandidateKey(candidate)"
+            class="candidate-memory-card"
+          >
+            <div class="operation-preview-head">
+              <strong>{{ candidate.title }}</strong>
+              <span class="badge pending">{{ candidate.steps.length }} 步</span>
+            </div>
+            <p class="operation-preview-text">{{ candidate.objective }}</p>
+            <ol class="plan-step-preview">
+              <li v-for="step in candidate.steps" :key="step.title">
+                <strong>{{ step.title }}</strong>
+                <span>{{ step.description }}</span>
+              </li>
+            </ol>
+            <small class="memory-meta">项目 {{ candidate.projectId || '未关联' }} · 创建后等待你确认执行</small>
+            <small v-if="candidate.error" class="candidate-error">{{ candidate.error }}</small>
+            <div class="candidate-memory-actions">
+              <button
+                type="button"
+                :disabled="projectCandidateActionLoading[planCandidateKey(candidate)] || !candidate.title.trim()"
+                @click="confirmCandidatePlan(message, candidate)"
+              >
+                创建计划
+              </button>
+              <button
+                class="secondary"
+                type="button"
+                :disabled="projectCandidateActionLoading[planCandidateKey(candidate)]"
+                @click="dismissCandidatePlan(message, candidate)"
+              >
+                忽略
+              </button>
+            </div>
+          </article>
+        </div>
+
         <div v-if="message.role === 'assistant' && pendingOperations(message).length" class="candidate-memory-list">
           <div class="candidate-memory-title">
             <span>待确认操作</span>
@@ -1435,7 +1782,19 @@ function escapeHtml(text: string) {
 
           <details v-if="reviewText(message.review)" class="debug-section">
             <summary class="debug-title">Review</summary>
-            <div class="debug-line">{{ reviewText(message.review) }}</div>
+            <div class="review-card" :class="reviewCardClass(message.review)">
+              <div class="review-card-head">
+                <strong>{{ reviewRuleText(message.review) }}</strong>
+                <span class="badge" :class="{ danger: message.review?.approved === false, success: message.review?.approved === true }">
+                  {{ reviewStatusText(message.review) }}
+                </span>
+              </div>
+              <div class="debug-line">{{ reviewText(message.review) }}</div>
+              <p>{{ reviewReason(message.review) }}</p>
+              <small v-if="reviewRewriteInstruction(message.review)" class="memory-meta">
+                {{ reviewRewriteInstruction(message.review) }}
+              </small>
+            </div>
           </details>
         </div>
       </div>
