@@ -112,7 +112,39 @@ function isToday(value?: string | null) {
 
 function todoTimeText(item: AgentTodoItem) {
   if (!item.dueAt) return '未设置截止时间'
-  return new Date(item.dueAt).toLocaleString()
+  return formatTime(item.dueAt)
+}
+
+function reminderTimeText(value?: string | null) {
+  if (!value) return ''
+  return formatTime(value)
+}
+
+function calendarTimeText(value?: string | null) {
+  if (!value) return '未设置时间'
+  return formatTime(value)
+}
+
+function formatTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
+}
+
+function goalLinkText(item: AgentTodoItem) {
+  const goals = (item.goalLinks || [])
+    .filter((goal) => goal.schemaPath?.startsWith('goals.'))
+    .map((goal) => cleanGoalLinkValue(String(goal.value || '')))
+    .filter(Boolean)
+  return Array.from(new Set(goals)).join('、')
+}
+
+function cleanGoalLinkValue(value: string) {
+  return value
+    .replace(/^用户当前目标包括/, '')
+    .replace(/^当前目标包括/, '')
+    .replace(/[。.]$/, '')
+    .trim()
 }
 
 function todoDueInputValue(item: AgentTodoItem) {
@@ -170,7 +202,7 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
         :class="{ disabled: item.status === 'read' }"
       >
         <strong>{{ item.title }}</strong>
-        <span>{{ item.message }} · {{ item.createdAt }}</span>
+        <span>{{ item.message }} · {{ reminderTimeText(item.createdAt) }}</span>
         <span class="row">
           <button
             v-if="item.status !== 'read'"
@@ -207,8 +239,8 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
           </strong>
           <span>{{ statusText(item.status) }} · {{ todoTimeText(item) }}</span>
           <small v-if="item.sourceRef" class="memory-meta">来源：{{ item.sourceRef }}</small>
-          <small v-if="item.goalLinks?.length" class="memory-meta">
-            关联目标：{{ item.goalLinks.map((goal) => goal.value).join('、') }}
+          <small v-if="goalLinkText(item)" class="memory-meta">
+            关联目标：{{ goalLinkText(item) }}
           </small>
           <span v-if="item.status === 'open'" class="row">
             <input
@@ -234,7 +266,7 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
         <p v-if="calendar.length === 0" class="muted">暂无日历事件。你可以在聊天里说“创建日历：2026-07-01 10:00 开会”。</p>
         <div v-for="item in calendar" :key="item.id" class="memory-row stacked">
           <strong>{{ item.title }}</strong>
-          <span>{{ statusText(item.status) }} · {{ item.startsAt || '未设置时间' }}</span>
+          <span>{{ statusText(item.status) }} · {{ calendarTimeText(item.startsAt) }}</span>
           <small v-if="item.sourceRef" class="memory-meta">来源：{{ item.sourceRef }}</small>
           <span class="row">
             <button class="inline" type="button" @click="setCalendarStatus(item.id, 'done')">完成</button>
