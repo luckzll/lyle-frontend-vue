@@ -206,6 +206,10 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
             <span v-else-if="isToday(item.dueAt)" class="badge pending">今日</span>
           </strong>
           <span>{{ statusText(item.status) }} · {{ todoTimeText(item) }}</span>
+          <small v-if="item.sourceRef" class="memory-meta">来源：{{ item.sourceRef }}</small>
+          <small v-if="item.goalLinks?.length" class="memory-meta">
+            关联目标：{{ item.goalLinks.map((goal) => goal.value).join('、') }}
+          </small>
           <span v-if="item.status === 'open'" class="row">
             <input
               class="inline-input"
@@ -231,6 +235,7 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
         <div v-for="item in calendar" :key="item.id" class="memory-row stacked">
           <strong>{{ item.title }}</strong>
           <span>{{ statusText(item.status) }} · {{ item.startsAt || '未设置时间' }}</span>
+          <small v-if="item.sourceRef" class="memory-meta">来源：{{ item.sourceRef }}</small>
           <span class="row">
             <button class="inline" type="button" @click="setCalendarStatus(item.id, 'done')">完成</button>
             <button class="inline secondary" type="button" @click="setCalendarStatus(item.id, 'cancelled')">取消</button>

@@ -40,7 +40,7 @@ test('registers, uploads knowledge, debugs RAG, and chats with sources', async (
 
   await expect(page.locator('.source-card').filter({ hasText: answerText })).toBeVisible()
 
-  await page.getByRole('link', { name: '记忆' }).click()
+  await page.getByRole('link', { name: '记忆', exact: true }).click()
   const conversationTitle = chatQuestion.length > 18 ? `${chatQuestion.slice(0, 18)}...` : chatQuestion
   await page.getByTestId('memory-conversation-select').selectOption({ label: conversationTitle })
   await expect(page.locator('[data-testid="short-term-memory-row"]').filter({ hasText: chatQuestion })).toBeVisible()

@@ -71,8 +71,31 @@ const selectedStructured = computed(() => {
 
 const conflictItems = computed(() => {
   return [
-    ...structuredAll.value.filter((item) => item.status !== 'active' || (item.confidence ?? 1) < 0.8),
-    ...profileAll.value.filter((item) => item.status !== 'active' || (item.confidence ?? 1) < 0.8)
+    ...structuredAll.value.filter((item) => item.status !== 'active' || (item.confidence ?? 1) < 0.75),
+    ...profileAll.value.filter((item) => item.status !== 'active' || (item.confidence ?? 1) < 0.75)
+  ]
+})
+
+const forgottenItems = computed(() => {
+  return dedupeGovernanceItems([
+    ...structuredAll.value.filter((item) => item.status === 'forgotten'),
+    ...profileAll.value.filter((item) => item.status === 'forgotten'),
+    ...fragmentAll.value.filter((item) => item.status === 'forgotten')
+  ])
+})
+
+const sensitiveItems = computed(() => {
+  return dedupeGovernanceItems([
+    ...profileAll.value.filter((item) => item.schemaPath === 'memory_control.sensitive_info'),
+    ...structuredAll.value.filter((item) => structuredDisplayKey(item.key) === 'sensitive_info'),
+    ...fragmentAll.value.filter((item) => item.category === 'memory_control.sensitive_info')
+  ])
+})
+
+const lowConfidenceItems = computed(() => {
+  return [
+    ...structuredAll.value.filter((item) => item.status === 'active' && (item.confidence ?? 1) < 0.75),
+    ...profileAll.value.filter((item) => item.status === 'active' && (item.confidence ?? 1) < 0.75)
   ]
 })
 
@@ -359,6 +382,69 @@ function structuredKeyLabel(key?: string) {
   return label ? `${label} (${displayKey})` : displayKey
 }
 
+function governanceItemTitle(item: MemoryItem) {
+  if (item.label) return item.label
+  if (item.key) return structuredKeyLabel(item.key)
+  if (item.schemaPath === 'memory_control.sensitive_info' || item.category === 'memory_control.sensitive_info') return '敏感信息'
+  if (item.schemaPath === 'memory_control.forget_requests' || item.category === 'memory_control.forget_requests') return '遗忘请求'
+  if (item.schemaPath) return item.schemaPath
+  if (item.category) return item.category
+  return '记忆'
+}
+
+function governanceItemValue(item: MemoryItem) {
+  return String(item.value || item.normalizedText || item.sourceText || item.text || '').trim()
+}
+
+function dedupeGovernanceItems(items: MemoryItem[]) {
+  const result: MemoryItem[] = []
+  for (const item of items) {
+    const index = result.findIndex((existing) => isSameGovernanceItem(existing, item))
+    if (index < 0) {
+      result.push(item)
+    } else if (governanceItemRank(item) > governanceItemRank(result[index])) {
+      result[index] = item
+    }
+  }
+  return result
+}
+
+function isSameGovernanceItem(left: MemoryItem, right: MemoryItem) {
+  if (governanceItemGroup(left) !== governanceItemGroup(right)) return false
+  const leftValue = normaliseGovernanceValue(governanceItemValue(left))
+  const rightValue = normaliseGovernanceValue(governanceItemValue(right))
+  if (!leftValue || !rightValue) return false
+  return leftValue === rightValue || leftValue.includes(rightValue) || rightValue.includes(leftValue)
+}
+
+function governanceItemGroup(item: MemoryItem) {
+  if (isSensitiveGovernanceItem(item)) return 'sensitive'
+  if (isForgetGovernanceItem(item)) return 'forget'
+  return governanceItemTitle(item)
+}
+
+function isSensitiveGovernanceItem(item: MemoryItem) {
+  return structuredDisplayKey(item.key) === 'sensitive_info'
+    || item.schemaPath === 'memory_control.sensitive_info'
+    || item.category === 'memory_control.sensitive_info'
+}
+
+function isForgetGovernanceItem(item: MemoryItem) {
+  return structuredDisplayKey(item.key) === 'forget_request'
+    || item.schemaPath === 'memory_control.forget_requests'
+    || item.category === 'memory_control.forget_requests'
+}
+
+function governanceItemRank(item: MemoryItem) {
+  if (item.key) return 3
+  if (item.schemaPath) return 2
+  return 1
+}
+
+function normaliseGovernanceValue(value: string) {
+  return value.replace(/[\s，。,.!！?？：:、"'“”‘’（）()[\]【】]/g, '')
+}
+
 function structuredDisplayKey(key?: string) {
   if (!key) return ''
   if (!isPendingInternalKey(key)) return key
@@ -391,7 +477,7 @@ function confidenceHint(item?: MemoryItem) {
   const confidence = item?.confidence
   if (confidence === undefined) return ''
   if (confidence < 0.75) return '低置信度：回答时仅作参考，建议核对来源后再采用。'
-  if (confidence >= 0.95) return '高置信度：多次确认或长期稳定使用。'
+  if (confidence >= 0.85) return '高置信度：明确表达、多次确认或长期稳定使用。'
   return ''
 }
 
@@ -426,7 +512,7 @@ function conversationTitle(id?: string | null) {
       <button type="button" :class="{ active: activeTab === 'profiles' }" @click="activeTab = 'profiles'">用户画像</button>
       <button type="button" :class="{ active: activeTab === 'fragments' }" @click="activeTab = 'fragments'">记忆片段</button>
       <button type="button" :class="{ active: activeTab === 'evidence' }" @click="activeTab = 'evidence'">证据来源</button>
-      <button type="button" :class="{ active: activeTab === 'governance' }" @click="activeTab = 'governance'">治理中心</button>
+      <button data-testid="memory-governance-tab" type="button" :class="{ active: activeTab === 'governance' }" @click="activeTab = 'governance'">治理中心</button>
     </div>
 
     <div v-if="loading" class="empty-state compact">
@@ -569,6 +655,45 @@ function conversationTitle(id?: string | null) {
         <button data-testid="memory-save-button" type="button" :disabled="loading || !memoryKey.trim() || !memoryValue.trim()" @click="saveMemory">
           保存结构化记忆
         </button>
+      </article>
+
+      <article class="item stack">
+        <div class="section-title">
+          <h2>遗忘</h2>
+          <span class="badge">{{ forgottenItems.length }} 条</span>
+        </div>
+        <p v-if="forgottenItems.length === 0" class="muted">暂无已遗忘记忆。</p>
+        <div v-for="item in forgottenItems" :key="`forgotten-${item.id || item.key || item.schemaPath}-${item.value || item.normalizedText}`" class="memory-row stacked">
+          <strong>{{ governanceItemTitle(item) }}</strong>
+          <span>{{ governanceItemValue(item) }}</span>
+          <small class="memory-meta">{{ statusLabel(item.status) }} · 后续不会主动召回</small>
+        </div>
+      </article>
+
+      <article class="item stack">
+        <div class="section-title">
+          <h2>敏感</h2>
+          <span class="badge">{{ sensitiveItems.length }} 条</span>
+        </div>
+        <p v-if="sensitiveItems.length === 0" class="muted">暂无敏感信息标记。</p>
+        <div v-for="item in sensitiveItems" :key="`sensitive-${item.id || item.key || item.schemaPath}-${item.value || item.normalizedText}`" class="memory-row stacked">
+          <strong>{{ governanceItemTitle(item) }}</strong>
+          <span>{{ governanceItemValue(item) }}</span>
+          <small class="memory-meta">{{ statusLabel(item.status) }} · 默认不进入回答上下文</small>
+        </div>
+      </article>
+
+      <article class="item stack" data-testid="low-confidence-memory-section">
+        <div class="section-title">
+          <h2>低置信度</h2>
+          <span class="badge">{{ lowConfidenceItems.length }} 条</span>
+        </div>
+        <p v-if="lowConfidenceItems.length === 0" class="muted">暂无低置信度记忆。</p>
+        <div v-for="item in lowConfidenceItems" :key="`low-${item.key || item.schemaPath}-${item.value}`" class="memory-row stacked">
+          <strong>{{ item.label || item.schemaPath || structuredKeyLabel(item.key) }}</strong>
+          <span>{{ item.summary || item.value }}</span>
+          <small class="memory-meta">置信度 {{ item.confidence ?? 1 }} · 回答时需谨慎表达</small>
+        </div>
       </article>
 
       <article class="item stack">

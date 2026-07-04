@@ -74,7 +74,7 @@ const todayBriefTodos = computed(() => openBriefTodos.value.filter((item) => isT
 const overdueBriefTodos = computed(() => openBriefTodos.value.filter((item) => isOverdueTodo(item)))
 const pendingBriefMemories = computed(() => {
   const items = briefMemory.value?.structured_all || []
-  return items.filter((item) => item.status === 'pending')
+  return items.filter((item) => item.status === 'pending' && memoryBelongsToConversation(item, conversationId.value))
 })
 const unreadBriefReminders = computed(() => briefReminders.value.filter((item) => item.status !== 'read'))
 const pendingBriefOperations = computed(() => briefOperations.value.filter((item) => item.status === 'pending'))
@@ -160,7 +160,7 @@ async function refreshBrief() {
     const [todoResponse, reminderResponse, memoryResponse, operationResponse] = await Promise.all([
       listAgentTodos(),
       listAgentReminders(),
-      getCurrentMemory(),
+      getCurrentMemory(conversationId.value),
       listPendingOperations(20)
     ])
     briefTodos.value = todoResponse.data.items
@@ -301,27 +301,55 @@ async function submit() {
 
 function syncPendingMemoriesToLatestAssistant(snapshot = briefMemory.value) {
   const pending = (snapshot?.structured_all || snapshot?.structured || [])
-    .filter((item) => item.status === 'pending')
-  if (!pending.length || !messages.value.length) return
+    .filter((item) => item.status === 'pending' && memoryBelongsToConversation(item, conversationId.value))
+  if (!messages.value.length) return
 
-  const assistantIndex = findLatestAssistantIndex()
-  if (assistantIndex < 0) return
+  const targetByKey = new Map<string, number>()
+  for (const item of pending) {
+    const assistantIndex = findAssistantIndexForMemory(item)
+    if (assistantIndex >= 0) {
+      targetByKey.set(candidateKey(item), assistantIndex)
+    }
+  }
 
-  const message = messages.value[assistantIndex]
-  const existing = new Set((message.candidateMemories || []).map((item) => candidateKey(item)))
-  const next = [
-    ...(message.candidateMemories || []),
-    ...pending.filter((item) => !existing.has(candidateKey(item)))
-  ]
-  if (next.length !== (message.candidateMemories || []).length) {
-    message.candidateMemories = next
+  messages.value.forEach((message, index) => {
+    if (message.role !== 'assistant' || !message.candidateMemories?.length) return
+    const next = message.candidateMemories.filter((item) => {
+      if (item.status === 'active' || item.status === 'disabled') return true
+      const targetIndex = targetByKey.get(candidateKey(item))
+      return targetIndex === undefined || targetIndex === index
+    })
+    if (next.length !== message.candidateMemories.length) {
+      message.candidateMemories = next
+    }
+  })
+
+  for (const item of pending) {
+    const assistantIndex = targetByKey.get(candidateKey(item))
+    if (assistantIndex === undefined) continue
+
+    const message = messages.value[assistantIndex]
+    const existing = new Set((message.candidateMemories || []).map((candidate) => candidateKey(candidate)))
+    if (!existing.has(candidateKey(item))) {
+      message.candidateMemories = [...(message.candidateMemories || []), item]
+    }
   }
 }
 
-function findLatestAssistantIndex() {
-  for (let index = messages.value.length - 1; index >= 0; index -= 1) {
-    if (messages.value[index].role === 'assistant') {
-      return index
+function findAssistantIndexForMemory(item: MemoryItem) {
+  const sourceText = normaliseCandidateValue(memorySourceText(item))
+  if (!sourceText) return -1
+
+  for (let index = 0; index < messages.value.length - 1; index += 1) {
+    const message = messages.value[index]
+    if (message.role !== 'user') continue
+    const userText = normaliseCandidateValue(message.content)
+    if (!userText || (userText !== sourceText && !userText.includes(sourceText) && !sourceText.includes(userText))) {
+      continue
+    }
+    for (let nextIndex = index + 1; nextIndex < messages.value.length; nextIndex += 1) {
+      if (messages.value[nextIndex].role === 'assistant') return nextIndex
+      if (messages.value[nextIndex].role === 'user') break
     }
   }
   return -1
@@ -609,7 +637,9 @@ function structuredMemoryLabel(key: string) {
 }
 
 function pendingCandidateMemories(message: Message) {
-  return (message.candidateMemories || []).filter((item) => item.status !== 'active' && item.status !== 'disabled')
+  return dedupeCandidateMemories(
+    (message.candidateMemories || []).filter((item) => item.status !== 'active' && item.status !== 'disabled')
+  )
 }
 
 function pendingCandidateTasks(message: Message) {
@@ -646,6 +676,50 @@ function formatOperationTime(value: unknown) {
 
 function candidateKey(item: MemoryItem) {
   return item.key || `${item.schemaPath || item.targetKey || 'memory'}:${item.value || ''}`
+}
+
+function dedupeCandidateMemories(items: MemoryItem[]) {
+  const byTarget = new Map<string, MemoryItem>()
+  for (const item of items) {
+    const target = memoryTargetKey(item) || item.schemaPath || item.key || 'memory'
+    const value = normaliseCandidateValue(item.value || item.text || '')
+    const existing = byTarget.get(target)
+    if (!existing) {
+      byTarget.set(target, item)
+      continue
+    }
+    const existingValue = normaliseCandidateValue(existing.value || existing.text || '')
+    if (value && existingValue && (value.includes(existingValue) || existingValue.includes(value))) {
+      if (value.length < existingValue.length) {
+        byTarget.set(target, item)
+      }
+      continue
+    }
+    byTarget.set(`${target}:${value}`, item)
+  }
+  return Array.from(byTarget.values())
+}
+
+function normaliseCandidateValue(value: string) {
+  return value.replace(/[\s，。,.!！?？：:、"'“”‘’（）()[\]【】]/g, '')
+}
+
+function memoryBelongsToConversation(item: MemoryItem, currentConversationId?: string) {
+  if (!currentConversationId) return false
+  const sourceConversationId = memorySourceConversationId(item)
+  return sourceConversationId === currentConversationId
+}
+
+function memorySourceConversationId(item: MemoryItem) {
+  const source = item.source || item.sourceRef || ''
+  const match = source.match(/^source_ref:conversation:([^\n]+)|^conversation:([^\n]+)/)
+  return match?.[1] || match?.[2] || ''
+}
+
+function memorySourceText(item: MemoryItem) {
+  const source = item.source || ''
+  const match = source.match(/^source_ref:[^\n]+\n?([\s\S]*)$/)
+  return (match?.[1] || item.sourceText || '').trim()
 }
 
 function memoryTargetKey(item: MemoryItem) {
@@ -1290,6 +1364,7 @@ function escapeHtml(text: string) {
             <div class="candidate-memory-actions">
               <button
                 type="button"
+                data-testid="chat-operation-confirm"
                 :disabled="operationActionLoading[operationKey(operation)]"
                 @click="confirmOperation(message, operation)"
               >
@@ -1298,6 +1373,7 @@ function escapeHtml(text: string) {
               <button
                 class="secondary"
                 type="button"
+                data-testid="chat-operation-reject"
                 :disabled="operationActionLoading[operationKey(operation)]"
                 @click="rejectOperation(message, operation)"
               >

@@ -51,6 +51,10 @@ export interface ChatSource {
   score?: string
   backend?: string
   hitModes?: string
+  chunkIndex?: string
+  parentTitle?: string
+  startChar?: string
+  endChar?: string
 }
 
 export interface ChatResponse {
@@ -179,6 +183,14 @@ export interface AgentTodoItem {
   status: string
   dueAt?: string | null
   conversationId: string
+  sourceRef?: string
+  goalLinks?: Array<{
+    schemaPath: string
+    label: string
+    value: string
+    confidence?: number
+    reason?: string
+  }>
   createdAt: string
   updatedAt: string
 }
@@ -198,7 +210,14 @@ export interface PendingOperationItem {
   updatedAt: string
   confirmedAt?: string | null
   rejectedAt?: string | null
+  idempotencyKey?: string
   error?: string
+}
+
+export interface OperationConfirmResponse {
+  operation: PendingOperationItem
+  result: Record<string, unknown>
+  idempotentReplay?: boolean
 }
 
 export interface CandidateTaskItem {
@@ -217,6 +236,7 @@ export interface AgentCalendarItem {
   startsAt?: string | null
   status: string
   conversationId: string
+  sourceRef?: string
   createdAt: string
   updatedAt: string
 }
@@ -356,6 +376,11 @@ export interface RagDebugResponse {
     chunk: string
     score?: string
     backend?: string
+    hitModes?: string
+    chunkIndex?: string
+    parentTitle?: string
+    startChar?: string
+    endChar?: string
     query?: string
   }>
   sufficiency: Record<string, unknown>
@@ -381,6 +406,10 @@ export interface RagChunkResponse {
     knowledge_base_id: string
     title: string
     chunk: string
+    chunkIndex?: string
+    parentTitle?: string
+    startChar?: string
+    endChar?: string
     backend: string
   }>
 }

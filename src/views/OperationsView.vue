@@ -10,6 +10,7 @@ import type { PendingOperationItem } from '@/api/types'
 const operations = ref<PendingOperationItem[]>([])
 const loading = ref(false)
 const error = ref('')
+const notice = ref('')
 const activeTab = ref<'pending' | 'confirmed' | 'rejected' | 'all'>('pending')
 const actionLoading = ref<Record<number, boolean>>({})
 
@@ -39,8 +40,10 @@ async function refresh() {
 async function confirmOperation(item: PendingOperationItem) {
   actionLoading.value[item.id] = true
   error.value = ''
+  notice.value = ''
   try {
-    await confirmPendingOperation(item.id)
+    const response = await confirmPendingOperation(item.id)
+    notice.value = response.data.idempotentReplay ? '该操作已经执行过，本次没有重复执行。' : '操作已确认执行。'
     await refresh()
   } catch {
     error.value = '操作确认失败，可能已经被处理或不存在。'
@@ -52,8 +55,10 @@ async function confirmOperation(item: PendingOperationItem) {
 async function rejectOperation(item: PendingOperationItem) {
   actionLoading.value[item.id] = true
   error.value = ''
+  notice.value = ''
   try {
     await rejectPendingOperation(item.id)
+    notice.value = '操作已拒绝。'
     await refresh()
   } catch {
     error.value = '操作拒绝失败，可能已经被处理或不存在。'
@@ -128,6 +133,7 @@ function resultText(item: PendingOperationItem) {
     </div>
 
     <p v-if="error" class="alert danger">{{ error }}</p>
+    <p v-if="notice" class="alert success">{{ notice }}</p>
 
     <div class="status-grid">
       <div>
@@ -195,6 +201,7 @@ function resultText(item: PendingOperationItem) {
           <button
             class="inline"
             type="button"
+            data-testid="operation-confirm-button"
             :disabled="actionLoading[item.id]"
             @click="confirmOperation(item)"
           >
@@ -203,6 +210,7 @@ function resultText(item: PendingOperationItem) {
           <button
             class="inline secondary"
             type="button"
+            data-testid="operation-reject-button"
             :disabled="actionLoading[item.id]"
             @click="rejectOperation(item)"
           >

@@ -29,6 +29,7 @@ import type {
   KnowledgeFile,
   MemoryItem,
   MemorySnapshot,
+  OperationConfirmResponse,
   PageResponse,
   PendingOperationItem,
   PromptTemplate,
@@ -231,7 +232,7 @@ export function listPendingOperations(limit = 50) {
 }
 
 export function confirmPendingOperation(operationId: number) {
-  return http.post<{ operation: PendingOperationItem; result: Record<string, unknown> }>(`/agent-tools/operations/${operationId}/confirm`)
+  return http.post<OperationConfirmResponse>(`/agent-tools/operations/${operationId}/confirm`)
 }
 
 export function rejectPendingOperation(operationId: number) {

@@ -407,7 +407,12 @@ onMounted(refreshKnowledgeBases)
             </div>
             <article v-for="context in ragDebug.contexts" :key="`${context.title}-${context.chunk}`" class="source-box">
               <strong>{{ context.title }}</strong>
-              <span>score={{ context.score || '-' }} · backend={{ context.backend || '-' }} · query={{ context.query || '-' }}</span>
+              <span>
+                score={{ context.score || '-' }} · backend={{ context.backend || '-' }} · hitModes={{ context.hitModes || '-' }} · query={{ context.query || '-' }}
+              </span>
+              <small class="memory-meta">
+                {{ context.parentTitle || '文档内容' }} · #{{ context.chunkIndex || '-' }} · {{ context.startChar || '-' }}-{{ context.endChar || '-' }}
+              </small>
               <p>{{ context.chunk }}</p>
             </article>
           </div>
@@ -417,6 +422,9 @@ onMounted(refreshKnowledgeBases)
             <article v-for="chunk in ragChunks" :key="`${chunk.doc_id}-${chunk.title}`" class="source-box">
               <strong>{{ chunk.title }}</strong>
               <span>{{ chunk.doc_id }} · {{ chunk.backend }}</span>
+              <small class="memory-meta">
+                {{ chunk.parentTitle || '文档内容' }} · #{{ chunk.chunkIndex || '-' }} · {{ chunk.startChar || '-' }}-{{ chunk.endChar || '-' }}
+              </small>
               <p>{{ chunk.chunk }}</p>
             </article>
             <div v-if="ragChunks.length === 0" class="empty-state compact">
