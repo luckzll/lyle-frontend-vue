@@ -13,14 +13,17 @@ import {
   deleteProjectLink,
   getProjectOverview,
   listAgentPlans,
+  listAgentTodos,
   listGoals,
   listProjects,
   pauseAgentPlan,
   resumeAgentPlan,
+  updateAgentTodoDueAt,
+  updateAgentTodoStatus,
   updateGoal,
   updateProject
 } from '@/api/app'
-import type { AgentPlan, Goal, Project, ProjectOverview } from '@/api/types'
+import type { AgentPlan, AgentTodoItem, Goal, Project, ProjectOverview } from '@/api/types'
 
 type ProjectSuggestion = {
   id: string
@@ -38,6 +41,7 @@ const projects = ref<Project[]>([])
 const overview = ref<ProjectOverview | null>(null)
 const goals = ref<Goal[]>([])
 const plans = ref<AgentPlan[]>([])
+const todos = ref<AgentTodoItem[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -80,6 +84,17 @@ const averageProgress = computed(() => {
   if (!activeGoals.value.length) return 0
   return Math.round(activeGoals.value.reduce((sum, item) => sum + Number(item.progress || 0), 0) / activeGoals.value.length * 100)
 })
+const projectTodos = computed(() => todos.value.filter((item) => item.status === 'open' && todoBelongsToProject(item)).slice(0, 8))
+const overdueProjectTodos = computed(() => projectTodos.value.filter((item) => isOverdueTodo(item)))
+const nextProjectTodo = computed(() => {
+  return [...projectTodos.value].sort((a, b) => {
+    if (!a.dueAt && !b.dueAt) return a.id - b.id
+    if (!a.dueAt) return 1
+    if (!b.dueAt) return -1
+    return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()
+  })[0]
+})
+const secondaryProjectTodos = computed(() => projectTodos.value.filter((item) => item.id !== nextProjectTodo.value?.id))
 const projectHealthItems = computed(() => buildProjectHealthItems())
 const projectHealthScore = computed(() => {
   const items = projectHealthItems.value
@@ -126,6 +141,7 @@ async function loadOverview() {
     overview.value = null
     goals.value = []
     plans.value = []
+    todos.value = []
     return
   }
   const response = await getProjectOverview(selectedProjectId.value)
@@ -137,6 +153,7 @@ async function loadOverview() {
   }
   await loadGoals()
   await loadPlans()
+  await loadTodos()
 }
 
 async function loadGoals() {
@@ -155,6 +172,11 @@ async function loadPlans() {
   }
   const response = await listAgentPlans(selectedProjectId.value, undefined, 50)
   plans.value = response.data.items
+}
+
+async function loadTodos() {
+  const response = await listAgentTodos(100)
+  todos.value = response.data.items
 }
 
 async function submitProject() {
@@ -323,6 +345,27 @@ async function createNextActionTodo() {
       confidence: 0.9
     })
     await loadOverview()
+    await loadTodos()
+  } finally {
+    saving.value = false
+  }
+}
+
+async function completeTodo(item: AgentTodoItem) {
+  saving.value = true
+  try {
+    await updateAgentTodoStatus(item.id, 'done')
+    await loadTodos()
+  } finally {
+    saving.value = false
+  }
+}
+
+async function postponeTodo(item: AgentTodoItem) {
+  saving.value = true
+  try {
+    await updateAgentTodoDueAt(item.id, tomorrowAtNine().toISOString())
+    await loadTodos()
   } finally {
     saving.value = false
   }
@@ -457,11 +500,41 @@ function tomorrowAtNine() {
   return date
 }
 
+function isOverdueTodo(item: AgentTodoItem) {
+  return Boolean(item.dueAt) && new Date(item.dueAt as string).getTime() < Date.now()
+}
+
+function isToday(value?: string | null) {
+  if (!value) return false
+  const date = new Date(value)
+  const now = new Date()
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
+}
+
+function formatTodoTime(value?: string | null) {
+  if (!value) return '未设置截止时间'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
+}
+
+function todoBelongsToProject(item: AgentTodoItem) {
+  const projectName = selectedProject.value?.name || ''
+  if (projectName && item.title.includes(projectName)) return true
+  const goalValues = (item.goalLinks || [])
+    .filter((goal) => goal.schemaPath?.startsWith('goals.'))
+    .map((goal) => String(goal.value || ''))
+  const goalTitles = activeGoals.value.map((goal) => goal.title)
+  const compareValues = [...goalValues, ...goalTitles]
+  return compareValues.some((value) => value && (item.title.includes(value.slice(0, 12)) || value.includes(item.title.slice(0, 12))))
+}
+
 function buildProjectHealthItems() {
   const linkCounts = overview.value?.linkCounts ?? {}
   const openQuestionCount = overview.value?.openQuestions.length ?? 0
   const decisionCount = overview.value?.decisions.length ?? 0
   const planCount = plans.value.length
+  const actionCount = Math.max(linkCounts.todo ?? 0, projectTodos.value.length)
   return [
     {
       label: '目标清晰度',
@@ -470,8 +543,8 @@ function buildProjectHealthItems() {
     },
     {
       label: '任务覆盖度',
-      score: (linkCounts.todo ?? 0) > 0 ? 100 : 30,
-      detail: (linkCounts.todo ?? 0) > 0 ? `${linkCounts.todo} 个关联任务` : '缺少承接目标的任务'
+      score: actionCount > 0 ? 100 : 30,
+      detail: actionCount > 0 ? `${actionCount} 个关联或匹配任务` : '缺少承接目标的任务'
     },
     {
       label: '资料完整度',
@@ -498,12 +571,13 @@ function buildProjectHealthItems() {
 
 function buildProjectSuggestions(): ProjectSuggestion[] {
   const linkCounts = overview.value?.linkCounts ?? {}
+  const actionCount = Math.max(linkCounts.todo ?? 0, projectTodos.value.length)
   const openQuestion = overview.value?.openQuestions[0]
   const goal = activeGoals.value[0]
   const pendingPlan = plans.value.find((plan) => plan.status === 'awaiting_confirmation' || plan.status === 'draft')
   const suggestions: ProjectSuggestion[] = []
 
-  if ((linkCounts.todo ?? 0) === 0) {
+  if (actionCount === 0) {
     suggestions.push({
       id: 'create-next-action-todo',
       group: '立即可做',
@@ -522,6 +596,17 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
       tone: 'pending',
       actionLabel: '查看关联',
       action: openLinksTab
+    })
+  }
+  if (overdueProjectTodos.value.length > 0) {
+    suggestions.unshift({
+      id: 'overdue-project-todo',
+      group: '立即可做',
+      title: `先处理逾期任务：${overdueProjectTodos.value[0].title}`,
+      detail: '这个任务已经超过截止时间，建议完成、顺延或取消。',
+      tone: 'danger',
+      actionLabel: '顺延到明天',
+      action: () => postponeTodo(overdueProjectTodos.value[0])
     })
   }
   if (goal && plans.value.length === 0) {
@@ -664,6 +749,10 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
               <span class="metric">{{ averageProgress }}%</span>
               <span class="muted">目标平均进度</span>
             </div>
+            <div>
+              <span class="metric">{{ projectTodos.length }}</span>
+              <span class="muted">本周行动</span>
+            </div>
           </div>
         </article>
 
@@ -694,6 +783,43 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
                 <div class="progress-bar"><i :style="{ width: `${item.score}%` }" /></div>
                 <small class="memory-meta">{{ item.detail }}</small>
               </div>
+            </div>
+          </article>
+
+          <article class="item">
+            <div class="section-title">
+              <div>
+                <h2>本周行动</h2>
+                <p class="muted">从任务和目标关联里聚合出的项目下一步。</p>
+              </div>
+              <span class="badge" :class="{ danger: overdueProjectTodos.length > 0, success: projectTodos.length > 0 && overdueProjectTodos.length === 0 }">
+                {{ overdueProjectTodos.length > 0 ? `${overdueProjectTodos.length} 个逾期` : `${projectTodos.length} 个任务` }}
+              </span>
+            </div>
+            <div v-if="projectTodos.length" class="stack">
+              <div v-if="nextProjectTodo" class="project-next-action">
+                <small class="memory-meta">优先行动</small>
+                <strong>{{ nextProjectTodo.title }}</strong>
+                <span>{{ formatTodoTime(nextProjectTodo.dueAt) }}</span>
+                <span class="row">
+                  <button class="inline secondary" :disabled="saving" type="button" @click="postponeTodo(nextProjectTodo)">明天 9 点</button>
+                  <button class="inline" :disabled="saving" type="button" @click="completeTodo(nextProjectTodo)">完成</button>
+                </span>
+              </div>
+              <div v-for="item in secondaryProjectTodos" :key="item.id" class="project-action-row" :class="{ danger: isOverdueTodo(item), pending: isToday(item.dueAt) }">
+                <div>
+                  <strong>{{ item.title }}</strong>
+                  <span>{{ formatTodoTime(item.dueAt) }}</span>
+                </div>
+                <span class="row">
+                  <button class="inline secondary" :disabled="saving" type="button" @click="postponeTodo(item)">明天 9 点</button>
+                  <button class="inline" :disabled="saving" type="button" @click="completeTodo(item)">完成</button>
+                </span>
+              </div>
+            </div>
+            <div v-else class="empty-state compact">
+              <strong>还没有项目行动</strong>
+              <span>可以从右侧建议一键创建下一步待办。</span>
             </div>
           </article>
 
