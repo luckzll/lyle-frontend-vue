@@ -79,6 +79,12 @@ const activeKnowledgeBaseName = computed(() => {
   if (!selectedKnowledgeBaseId.value) return '未使用知识库'
   return knowledgeBases.value.find((item) => String(item.id) === selectedKnowledgeBaseId.value)?.name || '已选择知识库'
 })
+const activeProjectId = computed(() => {
+  const value = route.params.projectId
+  const raw = Array.isArray(value) ? value[0] : value
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+})
 const openBriefTodos = computed(() => briefTodos.value.filter((item) => item.status === 'open'))
 const todayBriefTodos = computed(() => openBriefTodos.value.filter((item) => isToday(item.dueAt)))
 const overdueBriefTodos = computed(() => openBriefTodos.value.filter((item) => isOverdueTodo(item)))
@@ -262,6 +268,7 @@ async function submit() {
 
     await streamMessage({
       conversationId: activeConversationId,
+      projectId: activeProjectId.value,
       message,
       knowledgeBaseIds: selectedKnowledgeBaseId.value ? [selectedKnowledgeBaseId.value] : []
     }, {
@@ -706,9 +713,11 @@ function structuredMemoryLabel(key: string) {
 }
 
 function pendingCandidateMemories(message: Message) {
-  return dedupeCandidateMemories(
+  const items = dedupeCandidateMemories(
     (message.candidateMemories || []).filter((item) => item.status !== 'active' && item.status !== 'disabled')
   )
+  if (!hasPendingProjectCandidates(message)) return items
+  return items.filter((item) => !['goal', 'current_project', 'constraint'].includes(memoryTargetKey(item)))
 }
 
 function pendingCandidateTasks(message: Message) {
@@ -735,6 +744,16 @@ function pendingOperations(message: Message) {
   return (message.toolResults || [])
     .filter((item) => item.requiresConfirmation && item.operation && item.operation.status === 'pending')
     .map((item) => item.operation as PendingOperationItem)
+    .filter((item) => !(hasPendingProjectCandidates(message) && item.operationType === 'todo.create'))
+}
+
+function hasPendingProjectCandidates(message: Message) {
+  return Boolean(
+    pendingCandidateGoals(message).length ||
+    pendingCandidateDecisions(message).length ||
+    pendingCandidateOpenQuestions(message).length ||
+    pendingCandidatePlans(message).length
+  )
 }
 
 function operationKey(item: PendingOperationItem) {

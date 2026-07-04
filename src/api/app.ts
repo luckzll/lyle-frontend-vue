@@ -318,6 +318,7 @@ export function rebuildKnowledgeBaseFiles(knowledgeBaseId: string) {
 
 export function sendMessage(payload: {
   conversationId?: string
+  projectId?: number
   message: string
   knowledgeBaseIds: string[]
 }) {
@@ -567,6 +568,7 @@ export function listRagChunks(knowledgeBaseId?: string, limit = 50) {
 export async function streamMessage(
   payload: {
     conversationId?: string
+    projectId?: number
     message: string
     knowledgeBaseIds: string[]
   },
