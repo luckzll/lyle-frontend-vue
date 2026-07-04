@@ -32,7 +32,7 @@ async function create() {
 }
 
 async function remove(id: string) {
-  if (!window.confirm('删除这个会话？')) return
+  if (!window.confirm('删除后只会移除该会话和聊天消息，不会删除由它创建的待办、目标、计划、项目关联和记忆。确认删除这个会话？')) return
   removingId.value = id
   try {
     await deleteConversation(id)
