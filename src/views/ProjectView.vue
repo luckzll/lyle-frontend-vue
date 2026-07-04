@@ -6,8 +6,10 @@ import {
   confirmAgentPlan,
   createAgentPlan,
   createAgentTodo,
+  createProjectDecision,
   createProject,
   createProjectLink,
+  createProjectOpenQuestion,
   createGoal,
   createMilestone,
   deleteProjectLink,
@@ -26,9 +28,10 @@ import {
   updateAgentTodoDueAt,
   updateAgentTodoStatus,
   updateGoal,
-  updateProject
+  updateProject,
+  updateProjectOpenQuestion
 } from '@/api/app'
-import type { AgentPlan, AgentTodoItem, DailyBriefing, Goal, Project, ProjectOverview } from '@/api/types'
+import type { AgentPlan, AgentTodoItem, DailyBriefing, Goal, Project, ProjectDecision, ProjectOpenQuestion, ProjectOverview } from '@/api/types'
 
 type ProjectSuggestion = {
   id: string
@@ -78,6 +81,13 @@ const goalForm = ref({
   dueAt: ''
 })
 const milestoneForms = ref<Record<number, { title: string; description: string; dueAt: string }>>({})
+const decisionForm = ref({
+  title: '',
+  content: ''
+})
+const questionForm = ref({
+  question: ''
+})
 
 const selectedProjectId = computed(() => {
   const value = route.params.projectId
@@ -119,6 +129,7 @@ const groupedProjectSuggestions = computed(() => {
     }))
     .filter((group) => group.items.length > 0)
 })
+const projectRisks = computed(() => buildProjectRisks())
 
 watch(() => route.params.projectId, () => {
   loadOverview()
@@ -271,6 +282,49 @@ async function removeLink(linkId: number) {
   if (!selectedProjectId.value) return
   await deleteProjectLink(selectedProjectId.value, linkId)
   await loadOverview()
+}
+
+async function submitDecision() {
+  if (!selectedProjectId.value || !decisionForm.value.title.trim() || !decisionForm.value.content.trim()) return
+  saving.value = true
+  try {
+    await createProjectDecision(selectedProjectId.value, {
+      title: decisionForm.value.title.trim(),
+      content: decisionForm.value.content.trim(),
+      sourceType: 'manual',
+      sourceId: `project:${selectedProjectId.value}`
+    })
+    decisionForm.value = { title: '', content: '' }
+    await loadOverview()
+  } finally {
+    saving.value = false
+  }
+}
+
+async function submitOpenQuestion() {
+  if (!selectedProjectId.value || !questionForm.value.question.trim()) return
+  saving.value = true
+  try {
+    await createProjectOpenQuestion(selectedProjectId.value, {
+      question: questionForm.value.question.trim(),
+      sourceType: 'manual',
+      sourceId: `project:${selectedProjectId.value}`
+    })
+    questionForm.value = { question: '' }
+    await loadOverview()
+  } finally {
+    saving.value = false
+  }
+}
+
+async function closeOpenQuestion(question: ProjectOpenQuestion) {
+  saving.value = true
+  try {
+    await updateProjectOpenQuestion(question.id, 'resolved')
+    await loadOverview()
+  } finally {
+    saving.value = false
+  }
 }
 
 async function submitGoal() {
@@ -631,6 +685,56 @@ function goalSupportTone(goal: Goal) {
   return 'danger'
 }
 
+function buildProjectRisks() {
+  const risks: Array<{ id: string; title: string; detail: string; tone: 'danger' | 'pending' | 'normal' }> = []
+  const linkCounts = overview.value?.linkCounts ?? {}
+  if (overdueProjectTodos.value.length > 0) {
+    risks.push({
+      id: 'overdue-todo',
+      title: `${overdueProjectTodos.value.length} 个项目任务已逾期`,
+      detail: overdueProjectTodos.value[0].title,
+      tone: 'danger'
+    })
+  }
+  if ((overview.value?.openQuestions.length ?? 0) > 0) {
+    risks.push({
+      id: 'open-question',
+      title: `${overview.value?.openQuestions.length ?? 0} 个开放问题待关闭`,
+      detail: overview.value?.openQuestions[0]?.question || '建议先明确阻塞项。',
+      tone: 'pending'
+    })
+  }
+  if (activeGoals.value.some((goal) => goalTodos(goal).length === 0)) {
+    risks.push({
+      id: 'goal-without-action',
+      title: '部分目标还没有行动承接',
+      detail: '目标页可直接为对应目标创建待办或推进计划。',
+      tone: 'pending'
+    })
+  }
+  if ((overview.value?.decisions.length ?? 0) === 0) {
+    risks.push({
+      id: 'missing-decision',
+      title: '还没有关键决策记录',
+      detail: '建议记录验收口径、范围边界或优先级判断。',
+      tone: 'normal'
+    })
+  }
+  if ((linkCounts.knowledge_file ?? 0) === 0 && (linkCounts.memory_fragment ?? 0) === 0) {
+    risks.push({
+      id: 'missing-source',
+      title: '项目缺少资料来源',
+      detail: '关联资料或记忆后，计划和简报会更稳定。',
+      tone: 'normal'
+    })
+  }
+  return risks.slice(0, 5)
+}
+
+function decisionSummary(decision: ProjectDecision) {
+  return decision.content.length > 96 ? `${decision.content.slice(0, 96)}...` : decision.content
+}
+
 function buildProjectHealthItems() {
   const linkCounts = overview.value?.linkCounts ?? {}
   const openQuestionCount = overview.value?.openQuestions.length ?? 0
@@ -978,6 +1082,75 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
             <div v-else class="empty-state compact">
               <strong>还没有项目行动</strong>
               <span>可以从右侧建议一键创建下一步待办。</span>
+            </div>
+          </article>
+
+          <article class="item wide">
+            <div class="section-title">
+              <div>
+                <h2>风险与决策</h2>
+                <p class="muted">把阻塞问题、关键判断和项目缺口沉淀到项目空间。</p>
+              </div>
+              <span class="badge" :class="{ pending: (overview?.openQuestions.length ?? 0) > 0, success: (overview?.decisions.length ?? 0) > 0 }">
+                {{ overview?.decisions.length ?? 0 }} 决策 · {{ overview?.openQuestions.length ?? 0 }} 问题
+              </span>
+            </div>
+            <div class="project-risk-grid">
+              <section class="project-risk-column">
+                <div class="section-title">
+                  <strong>当前风险</strong>
+                  <span class="badge">{{ projectRisks.length }}</span>
+                </div>
+                <div v-if="projectRisks.length" class="stack">
+                  <div v-for="risk in projectRisks" :key="risk.id" class="project-risk-card" :class="risk.tone">
+                    <strong>{{ risk.title }}</strong>
+                    <span>{{ risk.detail }}</span>
+                  </div>
+                </div>
+                <div v-else class="empty-state compact">
+                  <strong>风险状态稳定</strong>
+                  <span>当前没有明显阻塞，可以继续推进。</span>
+                </div>
+              </section>
+
+              <section class="project-risk-column">
+                <div class="section-title">
+                  <strong>开放问题</strong>
+                  <span class="badge">{{ overview?.openQuestions.length ?? 0 }}</span>
+                </div>
+                <div v-if="overview?.openQuestions.length" class="stack">
+                  <div v-for="question in overview.openQuestions.slice(0, 4)" :key="question.id" class="project-action-row pending">
+                    <div>
+                      <strong>{{ question.question }}</strong>
+                      <span>{{ question.status }} · {{ question.createdAt }}</span>
+                    </div>
+                    <button class="inline" :disabled="saving" type="button" @click="closeOpenQuestion(question)">关闭</button>
+                  </div>
+                </div>
+                <form class="row project-quick-form" @submit.prevent="submitOpenQuestion">
+                  <input v-model="questionForm.question" placeholder="记录一个待澄清问题" />
+                  <button :disabled="saving || !questionForm.question.trim()" type="submit">记录</button>
+                </form>
+              </section>
+
+              <section class="project-risk-column">
+                <div class="section-title">
+                  <strong>关键决策</strong>
+                  <span class="badge">{{ overview?.decisions.length ?? 0 }}</span>
+                </div>
+                <div v-if="overview?.decisions.length" class="stack">
+                  <div v-for="decision in overview.decisions.slice(0, 3)" :key="decision.id" class="project-decision-card">
+                    <strong>{{ decision.title }}</strong>
+                    <span>{{ decisionSummary(decision) }}</span>
+                    <small class="memory-meta">{{ decision.status }} · {{ decision.createdAt }}</small>
+                  </div>
+                </div>
+                <form class="stack" @submit.prevent="submitDecision">
+                  <input v-model="decisionForm.title" placeholder="决策标题" />
+                  <textarea v-model="decisionForm.content" rows="3" placeholder="决策内容、依据或验收口径" />
+                  <button :disabled="saving || !decisionForm.title.trim() || !decisionForm.content.trim()" type="submit">记录决策</button>
+                </form>
+              </section>
             </div>
           </article>
 

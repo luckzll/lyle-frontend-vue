@@ -429,6 +429,60 @@ select {
   align-items: center;
 }
 
+.project-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+  align-items: start;
+}
+
+.project-risk-column {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.project-risk-card,
+.project-decision-card {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.project-risk-card span,
+.project-decision-card span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.project-risk-card.pending {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.project-risk-card.danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.project-risk-card.normal {
+  border-color: #dbe3ef;
+  background: #fff;
+}
+
+.project-quick-form {
+  align-items: stretch;
+}
+
+.project-quick-form input {
+  min-width: 0;
+}
+
 .project-briefing-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.8fr);
@@ -1718,7 +1772,12 @@ pre {
 	  .memory-row,
 	  .kb-layout,
 	  .memory-layout,
-	  .file-row {
+	  .file-row,
+	  .project-risk-grid,
+	  .project-briefing-grid,
+	  .project-layout,
+	  .project-action-row,
+	  .goal-support {
 	    grid-template-columns: 1fr;
 	  }
 
