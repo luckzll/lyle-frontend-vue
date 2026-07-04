@@ -88,19 +88,19 @@ onBeforeUnmount(() => {
   <div v-else class="app-shell">
     <aside class="sidebar">
       <div class="brand">Lyle AI</div>
-      <RouterLink to="/dashboard">工作台</RouterLink>
-      <RouterLink to="/">聊天</RouterLink>
-      <RouterLink to="/knowledge-bases">知识库</RouterLink>
-      <RouterLink to="/conversations">会话</RouterLink>
-      <RouterLink to="/memory">记忆</RouterLink>
-      <RouterLink to="/tasks">任务</RouterLink>
-      <RouterLink to="/projects">项目</RouterLink>
-      <RouterLink to="/connectors">连接器</RouterLink>
-      <RouterLink to="/operations">操作</RouterLink>
-      <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/evaluation">评测</RouterLink>
-      <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/prompts">Prompt</RouterLink>
-      <RouterLink to="/settings">设置</RouterLink>
-      <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/admin">管理</RouterLink>
+      <RouterLink to="/dashboard" active-class="is-active">工作台</RouterLink>
+      <RouterLink to="/" active-class="is-active">聊天</RouterLink>
+      <RouterLink to="/knowledge-bases" active-class="is-active">知识库</RouterLink>
+      <RouterLink to="/conversations" active-class="is-active">会话</RouterLink>
+      <RouterLink to="/memory" active-class="is-active">记忆</RouterLink>
+      <RouterLink to="/tasks" active-class="is-active">任务</RouterLink>
+      <RouterLink to="/projects" active-class="is-active">项目</RouterLink>
+      <RouterLink to="/connectors" active-class="is-active">连接器</RouterLink>
+      <RouterLink to="/operations" active-class="is-active">操作</RouterLink>
+      <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/evaluation" active-class="is-active">评测</RouterLink>
+      <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/prompts" active-class="is-active">Prompt</RouterLink>
+      <RouterLink to="/settings" active-class="is-active">设置</RouterLink>
+      <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/admin" active-class="is-active">管理</RouterLink>
       <div class="sidebar-footer">
         <span class="muted">{{ currentUser?.username }}</span>
         <button class="secondary" type="button" @click="logout">退出</button>

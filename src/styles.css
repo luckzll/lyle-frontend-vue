@@ -106,14 +106,25 @@ select {
 }
 
 .sidebar a {
+  position: relative;
   border-radius: 8px;
   color: #475569;
   padding: 10px 12px;
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
 }
 
-.sidebar a.router-link-active {
+.sidebar a:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.sidebar a.router-link-active,
+.sidebar a.router-link-exact-active,
+.sidebar a.is-active {
   background: #ccfbf1;
   color: #0f766e;
+  box-shadow: inset 3px 0 0 #0f766e, 0 8px 18px rgba(15, 118, 110, 0.12);
+  font-weight: 800;
 }
 
 .main-panel {
@@ -338,6 +349,50 @@ select {
 .project-list-item span {
   color: #64748b;
   font-size: 12px;
+}
+
+.task-command-center {
+  border-color: #99f6e4;
+  background: #fbfffe;
+}
+
+.task-focus-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.task-focus-card,
+.task-row {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.task-focus-card span,
+.task-row span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.task-focus-card.pending,
+.task-row.pending {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.task-focus-card.danger,
+.task-row.danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.task-row.disabled {
+  opacity: 0.68;
 }
 
 .project-tabs {
