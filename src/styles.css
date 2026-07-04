@@ -972,7 +972,8 @@ select {
 }
 
 .conversations-page {
-  max-width: 1180px;
+  width: 100%;
+  max-width: none;
 }
 
 .conversation-create {
