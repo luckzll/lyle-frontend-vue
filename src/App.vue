@@ -94,7 +94,7 @@ onBeforeUnmount(() => {
       <RouterLink to="/conversations" active-class="is-active">会话</RouterLink>
       <RouterLink to="/memory" active-class="is-active">记忆</RouterLink>
       <RouterLink to="/tasks" active-class="is-active">任务</RouterLink>
-      <RouterLink to="/projects" active-class="is-active">项目</RouterLink>
+      <RouterLink to="/projects" active-class="is-active" :class="{ 'is-active': route.path.startsWith('/projects') }">项目</RouterLink>
       <RouterLink to="/connectors" active-class="is-active">连接器</RouterLink>
       <RouterLink to="/operations" active-class="is-active">操作</RouterLink>
       <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/evaluation" active-class="is-active">评测</RouterLink>

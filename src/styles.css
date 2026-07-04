@@ -110,7 +110,7 @@ select {
   border-radius: 8px;
   color: #475569;
   padding: 10px 12px;
-  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+  transition: background 0.16s ease, color 0.16s ease;
 }
 
 .sidebar a:hover {
@@ -121,10 +121,9 @@ select {
 .sidebar a.router-link-active,
 .sidebar a.router-link-exact-active,
 .sidebar a.is-active {
-  background: #ccfbf1;
-  color: #0f766e;
-  box-shadow: inset 3px 0 0 #0f766e, 0 8px 18px rgba(15, 118, 110, 0.12);
-  font-weight: 800;
+  background: #eef2f7;
+  color: #0f172a;
+  font-weight: 700;
 }
 
 .main-panel {
