@@ -11,7 +11,11 @@ import {
   createGoal,
   createMilestone,
   deleteProjectLink,
+  generateDailyBriefing,
+  generateEveningBriefing,
+  generateWeeklyBriefing,
   getProjectOverview,
+  getTodayBriefing,
   listAgentPlans,
   listAgentTodos,
   listGoals,
@@ -23,7 +27,7 @@ import {
   updateGoal,
   updateProject
 } from '@/api/app'
-import type { AgentPlan, AgentTodoItem, Goal, Project, ProjectOverview } from '@/api/types'
+import type { AgentPlan, AgentTodoItem, DailyBriefing, Goal, Project, ProjectOverview } from '@/api/types'
 
 type ProjectSuggestion = {
   id: string
@@ -42,10 +46,13 @@ const overview = ref<ProjectOverview | null>(null)
 const goals = ref<Goal[]>([])
 const plans = ref<AgentPlan[]>([])
 const todos = ref<AgentTodoItem[]>([])
+const projectBriefing = ref<DailyBriefing | null>(null)
 const loading = ref(false)
 const saving = ref(false)
+const briefingLoading = ref(false)
 const error = ref('')
 const activeTab = ref<'overview' | 'goals' | 'plans' | 'links'>('overview')
+const briefingMode = ref<'daily' | 'evening' | 'weekly'>('daily')
 const projectForm = ref({
   name: '',
   description: '',
@@ -154,6 +161,7 @@ async function loadOverview() {
   await loadGoals()
   await loadPlans()
   await loadTodos()
+  await loadProjectBriefing()
 }
 
 async function loadGoals() {
@@ -177,6 +185,37 @@ async function loadPlans() {
 async function loadTodos() {
   const response = await listAgentTodos(100)
   todos.value = response.data.items
+}
+
+async function loadProjectBriefing() {
+  if (!selectedProjectId.value) {
+    projectBriefing.value = null
+    return
+  }
+  try {
+    const response = await getTodayBriefing(selectedProjectId.value)
+    projectBriefing.value = response.data
+  } catch {
+    projectBriefing.value = null
+  }
+}
+
+async function generateProjectBriefing() {
+  if (!selectedProjectId.value) return
+  briefingLoading.value = true
+  error.value = ''
+  try {
+    const response = briefingMode.value === 'weekly'
+      ? await generateWeeklyBriefing(selectedProjectId.value)
+      : briefingMode.value === 'evening'
+        ? await generateEveningBriefing(selectedProjectId.value)
+        : await generateDailyBriefing(selectedProjectId.value)
+    projectBriefing.value = response.data
+  } catch (exception) {
+    error.value = exception instanceof Error ? exception.message : '项目简报生成失败'
+  } finally {
+    briefingLoading.value = false
+  }
 }
 
 async function submitProject() {
@@ -493,6 +532,14 @@ function stepStatusText(status: string) {
   }[status] ?? status
 }
 
+function briefingModeText(mode: string) {
+  return {
+    daily: '今日重点',
+    evening: '晚间复盘',
+    weekly: '周复盘'
+  }[mode] ?? mode
+}
+
 function tomorrowAtNine() {
   const date = new Date()
   date.setDate(date.getDate() + 1)
@@ -783,6 +830,62 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
                 <div class="progress-bar"><i :style="{ width: `${item.score}%` }" /></div>
                 <small class="memory-meta">{{ item.detail }}</small>
               </div>
+            </div>
+          </article>
+
+          <article class="item wide">
+            <div class="section-title">
+              <div>
+                <h2>项目简报</h2>
+                <p class="muted">围绕当前项目生成重点、复盘和待确认事项。</p>
+              </div>
+              <span class="row">
+                <span class="segmented compact">
+                  <button :class="{ active: briefingMode === 'daily' }" type="button" @click="briefingMode = 'daily'">今日</button>
+                  <button :class="{ active: briefingMode === 'evening' }" type="button" @click="briefingMode = 'evening'">晚间</button>
+                  <button :class="{ active: briefingMode === 'weekly' }" type="button" @click="briefingMode = 'weekly'">每周</button>
+                </span>
+                <button :disabled="briefingLoading" type="button" @click="generateProjectBriefing">
+                  生成{{ briefingModeText(briefingMode) }}
+                </button>
+              </span>
+            </div>
+            <div v-if="projectBriefing" class="project-briefing-grid">
+              <section class="project-briefing-main">
+                <div class="section-title">
+                  <strong>{{ projectBriefing.title || briefingModeText(projectBriefing.briefingType) }}</strong>
+                  <span class="badge">{{ projectBriefing.briefingType }}</span>
+                </div>
+                <pre>{{ projectBriefing.content }}</pre>
+              </section>
+              <section class="project-briefing-side">
+                <div class="project-health-item">
+                  <div class="section-title">
+                    <strong>重点</strong>
+                    <span class="badge">{{ projectBriefing.todayFocus.length }}</span>
+                  </div>
+                  <p v-for="item in projectBriefing.todayFocus.slice(0, 4)" :key="item" class="memory-meta">{{ item }}</p>
+                  <p v-if="projectBriefing.todayFocus.length === 0" class="muted">暂无重点建议。</p>
+                </div>
+                <div class="brief-metrics compact">
+                  <RouterLink class="brief-metric pending" to="/tasks">
+                    <strong>{{ projectBriefing.dueTasks.length }}</strong>
+                    <span>今日到期</span>
+                  </RouterLink>
+                  <RouterLink class="brief-metric danger" to="/tasks">
+                    <strong>{{ projectBriefing.overdueTasks.length }}</strong>
+                    <span>已逾期</span>
+                  </RouterLink>
+                  <RouterLink class="brief-metric" to="/operations">
+                    <strong>{{ projectBriefing.pendingOperations.length }}</strong>
+                    <span>待确认</span>
+                  </RouterLink>
+                </div>
+              </section>
+            </div>
+            <div v-else class="empty-state compact">
+              <strong>{{ briefingLoading ? '正在生成项目简报' : '暂无项目简报' }}</strong>
+              <span>可以生成今日重点、晚间复盘或周复盘。</span>
             </div>
           </article>
 
