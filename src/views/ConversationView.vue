@@ -10,8 +10,6 @@ const notice = ref('')
 const removingId = ref('')
 
 const sortedConversations = computed(() => [...conversations.value].sort((a, b) => dateTime(b.updatedAt || b.createdAt) - dateTime(a.updatedAt || a.createdAt)))
-const latestConversation = computed(() => sortedConversations.value[0])
-const olderConversations = computed(() => sortedConversations.value.slice(1))
 
 async function refresh() {
   const response = await listConversations()
@@ -86,31 +84,21 @@ function shortId(value: string) {
       </form>
     </div>
 
-    <div v-if="latestConversation" class="conversation-layout">
-      <article class="conversation-feature panel">
-        <small class="memory-meta">最近会话</small>
-        <h2>{{ latestConversation.title }}</h2>
-        <p class="muted">更新于 {{ formatDateTime(latestConversation.updatedAt || latestConversation.createdAt) }}</p>
-        <div class="conversation-meta-row">
-          <span>ID {{ shortId(latestConversation.id) }}</span>
-          <span>创建于 {{ formatDateTime(latestConversation.createdAt) }}</span>
-        </div>
-        <div class="row">
-          <RouterLink class="button-link primary" :to="{ name: 'chat', query: { conversationId: latestConversation.id } }">打开聊天</RouterLink>
-          <button class="secondary danger" type="button" :disabled="removingId === latestConversation.id" @click="remove(latestConversation.id)">
-            {{ removingId === latestConversation.id ? '删除中' : '删除' }}
-          </button>
-        </div>
-      </article>
-
-      <div class="conversation-list panel">
+    <div v-if="sortedConversations.length" class="conversation-list panel">
+      <div class="conversation-list-inner">
         <div class="section-title">
-          <h2>历史会话</h2>
-          <span class="badge">{{ olderConversations.length }}</span>
-        </div>
-        <article v-for="item in olderConversations" :key="item.id" class="conversation-row">
           <div>
-            <h3>{{ item.title }}</h3>
+            <h2>全部会话</h2>
+            <p class="muted">按最近更新时间排序。</p>
+          </div>
+          <span class="badge">{{ sortedConversations.length }}</span>
+        </div>
+        <article v-for="(item, index) in sortedConversations" :key="item.id" class="conversation-row">
+          <div>
+            <h3>
+              {{ item.title }}
+              <span v-if="index === 0" class="conversation-tag">最近</span>
+            </h3>
             <p class="muted">更新于 {{ formatDateTime(item.updatedAt || item.createdAt) }}</p>
           </div>
           <span class="conversation-id">ID {{ shortId(item.id) }}</span>
@@ -121,10 +109,6 @@ function shortId(value: string) {
             </button>
           </div>
         </article>
-        <div v-if="olderConversations.length === 0" class="empty-state compact">
-          <strong>暂无更多历史会话</strong>
-          <span>新的聊天会在这里沉淀下来。</span>
-        </div>
       </div>
     </div>
 

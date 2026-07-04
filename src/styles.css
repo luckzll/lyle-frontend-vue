@@ -972,7 +972,7 @@ select {
 }
 
 .conversations-page {
-  max-width: 1120px;
+  max-width: 1180px;
 }
 
 .conversation-create {
@@ -993,38 +993,24 @@ select {
   gap: 10px;
 }
 
-.conversation-layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.4fr);
-  gap: 12px;
-  align-items: start;
-}
-
-.conversation-feature {
-  display: grid;
-  gap: 12px;
-  padding: 18px;
-}
-
-.conversation-feature h2,
 .conversation-row h3 {
   margin: 0;
   color: #0f172a;
   line-height: 1.35;
 }
 
-.conversation-feature h2 {
-  font-size: 24px;
+.conversation-list {
+  padding: 0;
 }
 
-.conversation-list {
+.conversation-list-inner {
   display: grid;
   gap: 0;
-  padding: 14px;
+  padding: 18px;
 }
 
 .conversation-list .section-title {
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .conversation-list h2 {
@@ -1033,11 +1019,16 @@ select {
 
 .conversation-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 132px 128px;
+  gap: 16px;
   align-items: center;
   border-top: 1px solid #e2e8f0;
-  padding: 14px 0;
+  padding: 15px 0;
+}
+
+.conversation-row:hover {
+  background: #f8fafc;
+  box-shadow: -18px 0 0 #f8fafc, 18px 0 0 #f8fafc;
 }
 
 .conversation-row:first-of-type {
@@ -1052,8 +1043,7 @@ select {
   margin: 4px 0 0;
 }
 
-.conversation-id,
-.conversation-meta-row span {
+.conversation-id {
   border: 1px solid #e2e8f0;
   border-radius: 999px;
   background: #f8fafc;
@@ -1064,10 +1054,17 @@ select {
   white-space: nowrap;
 }
 
-.conversation-meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.conversation-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 7px;
+  vertical-align: middle;
 }
 
 .conversation-actions {
@@ -2176,7 +2173,6 @@ pre {
 	  .calendar-agenda-item,
 	  .conversation-create,
 	  .conversation-create-form,
-	  .conversation-layout,
 	  .conversation-row {
 	    grid-template-columns: 1fr;
 	  }
