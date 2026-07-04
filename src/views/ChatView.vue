@@ -63,6 +63,7 @@ const memoryActionLoading = ref<Record<string, boolean>>({})
 const taskActionLoading = ref<Record<string, boolean>>({})
 const projectCandidateActionLoading = ref<Record<string, boolean>>({})
 const operationActionLoading = ref<Record<string, boolean>>({})
+const traceCopyState = ref<Record<number, 'copied' | 'failed'>>({})
 const briefTodos = ref<AgentTodoItem[]>([])
 const briefReminders = ref<AgentReminderItem[]>([])
 const briefMemory = ref<MemorySnapshot | null>(null)
@@ -490,7 +491,7 @@ function assistantImages(message: Message) {
   }))
 }
 
-async function copyDebugPayload(message: Message) {
+async function copyDebugPayload(message: Message, index: number) {
   const payload = {
     agentTrace: message.agentTrace || [],
     toolResults: message.toolResults || [],
@@ -498,7 +499,18 @@ async function copyDebugPayload(message: Message) {
     projectContext: message.projectContext || {},
     review: message.review || {}
   }
-  await navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
+    traceCopyState.value[index] = 'copied'
+  } catch {
+    traceCopyState.value[index] = 'failed'
+  }
+  window.setTimeout(() => {
+    if (!traceCopyState.value[index]) return
+    const nextState = { ...traceCopyState.value }
+    delete nextState[index]
+    traceCopyState.value = nextState
+  }, 1600)
 }
 
 function writerInputSummary(item: AgentTraceItem) {
@@ -1755,7 +1767,9 @@ function escapeHtml(text: string) {
         >
           <div class="debug-actions">
             <span>调试信息</span>
-            <button class="inline" type="button" @click="copyDebugPayload(message)">复制 Trace</button>
+            <button class="inline" type="button" @click="copyDebugPayload(message, index)">
+              {{ traceCopyState[index] === 'copied' ? '已复制' : traceCopyState[index] === 'failed' ? '复制失败' : '复制 Trace' }}
+            </button>
           </div>
           <details v-if="message.agentTrace?.length" class="debug-section">
             <summary class="debug-title">Agent Trace</summary>
