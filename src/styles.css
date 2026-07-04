@@ -259,6 +259,27 @@ select {
   color: #166534;
 }
 
+.alert.pending {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.toast {
+  position: sticky;
+  z-index: 10;
+  top: 12px;
+  width: fit-content;
+  margin: 0 0 0 auto;
+  border: 1px solid #99f6e4;
+  border-radius: 8px;
+  background: #f0fdfa;
+  color: #0f766e;
+  font-weight: 700;
+  padding: 10px 12px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+}
+
 .home-brief {
   display: grid;
   grid-template-columns: repeat(3, minmax(220px, 1fr));
@@ -276,6 +297,27 @@ select {
 .project-sidebar {
   display: grid;
   gap: 10px;
+}
+
+.project-overview-grid {
+  align-items: start;
+}
+
+.collapsible-section {
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.collapsible-head {
+  gap: 12px;
+}
+
+.priority-section {
+  border-color: #99f6e4;
+  background: #fbfffe;
+}
+
+.subtle-section {
+  background: #fbfdff;
 }
 
 .project-list-item {
@@ -481,6 +523,44 @@ select {
 
 .project-quick-form input {
   min-width: 0;
+}
+
+.project-timeline {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.project-timeline-item {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.project-timeline-item > div {
+  display: grid;
+  gap: 4px;
+}
+
+.project-timeline-item span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.timeline-dot {
+  display: inline-grid;
+  min-height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: #e0f2fe;
+  color: #0369a1 !important;
+  font-size: 12px !important;
+  font-weight: 800;
 }
 
 .project-briefing-grid {

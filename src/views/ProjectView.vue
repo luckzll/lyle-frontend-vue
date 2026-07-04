@@ -43,6 +43,16 @@ type ProjectSuggestion = {
   action: () => Promise<void> | void
 }
 
+type OverviewSectionKey = 'health' | 'actions' | 'briefing' | 'risk' | 'timeline' | 'suggestions' | 'settings'
+
+type ProjectTimelineItem = {
+  id: string
+  title: string
+  detail: string
+  type: string
+  at: string
+}
+
 const route = useRoute()
 const router = useRouter()
 const projects = ref<Project[]>([])
@@ -55,8 +65,18 @@ const loading = ref(false)
 const saving = ref(false)
 const briefingLoading = ref(false)
 const error = ref('')
+const notice = ref('')
 const activeTab = ref<'overview' | 'goals' | 'plans' | 'links'>('overview')
 const briefingMode = ref<'daily' | 'evening' | 'weekly'>('daily')
+const overviewSections = ref<Record<OverviewSectionKey, boolean>>({
+  health: true,
+  actions: true,
+  briefing: true,
+  risk: true,
+  timeline: true,
+  suggestions: true,
+  settings: false
+})
 const projectForm = ref({
   name: '',
   description: '',
@@ -98,11 +118,14 @@ const selectedProjectId = computed(() => {
 const selectedProject = computed(() => overview.value?.project ?? projects.value.find((item) => item.id === selectedProjectId.value))
 const linkTypeItems = computed(() => Object.entries(overview.value?.linkCounts ?? {}))
 const activeGoals = computed(() => goals.value.filter((item) => item.status === 'active'))
+const visibleActiveGoals = computed(() => dedupeGoals(activeGoals.value))
+const duplicateGoalCount = computed(() => activeGoals.value.length - visibleActiveGoals.value.length)
 const averageProgress = computed(() => {
-  if (!activeGoals.value.length) return 0
-  return Math.round(activeGoals.value.reduce((sum, item) => sum + Number(item.progress || 0), 0) / activeGoals.value.length * 100)
+  if (!visibleActiveGoals.value.length) return 0
+  return Math.round(visibleActiveGoals.value.reduce((sum, item) => sum + Number(item.progress || 0), 0) / visibleActiveGoals.value.length * 100)
 })
-const projectTodos = computed(() => todos.value.filter((item) => item.status === 'open' && todoBelongsToProject(item)).slice(0, 8))
+const projectAllTodos = computed(() => todos.value.filter((item) => todoBelongsToProject(item)))
+const projectTodos = computed(() => projectAllTodos.value.filter((item) => item.status === 'open').slice(0, 8))
 const overdueProjectTodos = computed(() => projectTodos.value.filter((item) => isOverdueTodo(item)))
 const nextProjectTodo = computed(() => {
   return [...projectTodos.value].sort((a, b) => {
@@ -130,6 +153,7 @@ const groupedProjectSuggestions = computed(() => {
     .filter((group) => group.items.length > 0)
 })
 const projectRisks = computed(() => buildProjectRisks())
+const projectTimeline = computed(() => buildProjectTimeline())
 
 watch(() => route.params.projectId, () => {
   loadOverview()
@@ -223,6 +247,7 @@ async function generateProjectBriefing() {
         ? await generateEveningBriefing(selectedProjectId.value)
         : await generateDailyBriefing(selectedProjectId.value)
     projectBriefing.value = response.data
+    showNotice('项目简报已生成')
   } catch (exception) {
     error.value = exception instanceof Error ? exception.message : '项目简报生成失败'
   } finally {
@@ -236,6 +261,7 @@ async function submitProject() {
   try {
     const response = await createProject(projectForm.value)
     projectForm.value = { name: '', description: '', currentStage: '', priority: 0 }
+    showNotice('项目已创建')
     await refresh()
     await router.push(`/projects/${response.data.id}`)
   } finally {
@@ -248,6 +274,7 @@ async function saveProject() {
   saving.value = true
   try {
     await updateProject(selectedProjectId.value, editForm.value)
+    showNotice('项目设置已保存')
     await refresh()
   } finally {
     saving.value = false
@@ -259,6 +286,7 @@ async function archiveProject() {
   saving.value = true
   try {
     await updateProject(selectedProjectId.value, { status: 'archived' })
+    showNotice('项目已归档')
     await router.push('/projects')
     await refresh()
   } finally {
@@ -272,6 +300,7 @@ async function addLink() {
   try {
     await createProjectLink(selectedProjectId.value, linkForm.value)
     linkForm.value.targetId = ''
+    showNotice('关联已添加')
     await loadOverview()
   } finally {
     saving.value = false
@@ -281,6 +310,7 @@ async function addLink() {
 async function removeLink(linkId: number) {
   if (!selectedProjectId.value) return
   await deleteProjectLink(selectedProjectId.value, linkId)
+  showNotice('关联已移除')
   await loadOverview()
 }
 
@@ -295,6 +325,7 @@ async function submitDecision() {
       sourceId: `project:${selectedProjectId.value}`
     })
     decisionForm.value = { title: '', content: '' }
+    showNotice('关键决策已记录')
     await loadOverview()
   } finally {
     saving.value = false
@@ -311,6 +342,7 @@ async function submitOpenQuestion() {
       sourceId: `project:${selectedProjectId.value}`
     })
     questionForm.value = { question: '' }
+    showNotice('开放问题已记录')
     await loadOverview()
   } finally {
     saving.value = false
@@ -321,6 +353,7 @@ async function closeOpenQuestion(question: ProjectOpenQuestion) {
   saving.value = true
   try {
     await updateProjectOpenQuestion(question.id, 'resolved')
+    showNotice('开放问题已关闭')
     await loadOverview()
   } finally {
     saving.value = false
@@ -340,6 +373,7 @@ async function submitGoal() {
     })
     goalForm.value = { title: '', description: '', horizon: 'week', dueAt: '' }
     activeTab.value = 'goals'
+    showNotice('目标已创建')
     await loadOverview()
   } finally {
     saving.value = false
@@ -350,6 +384,7 @@ async function setGoalProgress(goal: Goal, progressPercent: number) {
   saving.value = true
   try {
     await updateGoal(goal.id, { progress: progressPercent / 100 })
+    showNotice('目标进度已更新')
     await loadGoals()
   } finally {
     saving.value = false
@@ -360,6 +395,7 @@ async function completeGoal(goal: Goal) {
   saving.value = true
   try {
     await updateGoal(goal.id, { status: 'completed', progress: 1 })
+    showNotice('目标已完成')
     await loadGoals()
   } finally {
     saving.value = false
@@ -378,6 +414,7 @@ async function addMilestone(goal: Goal) {
       sortOrder: goal.milestones?.length ?? 0
     })
     milestoneForms.value[goal.id] = { title: '', description: '', dueAt: '' }
+    showNotice('里程碑已添加')
     await loadGoals()
   } finally {
     saving.value = false
@@ -388,6 +425,7 @@ async function confirmPlan(plan: AgentPlan) {
   saving.value = true
   try {
     await confirmAgentPlan(plan.id)
+    showNotice('计划已确认执行')
     await loadPlans()
   } finally {
     saving.value = false
@@ -398,6 +436,7 @@ async function pausePlan(plan: AgentPlan) {
   saving.value = true
   try {
     await pauseAgentPlan(plan.id)
+    showNotice('计划已暂停')
     await loadPlans()
   } finally {
     saving.value = false
@@ -408,6 +447,7 @@ async function resumePlan(plan: AgentPlan) {
   saving.value = true
   try {
     await resumeAgentPlan(plan.id)
+    showNotice('计划已继续')
     await loadPlans()
   } finally {
     saving.value = false
@@ -418,6 +458,7 @@ async function cancelPlan(plan: AgentPlan) {
   saving.value = true
   try {
     await cancelAgentPlan(plan.id)
+    showNotice('计划已取消')
     await loadPlans()
   } finally {
     saving.value = false
@@ -426,7 +467,7 @@ async function cancelPlan(plan: AgentPlan) {
 
 async function createNextActionTodo(goalOverride?: Goal) {
   if (!selectedProjectId.value) return
-  const goal = goalOverride ?? activeGoals.value[0]
+  const goal = goalOverride ?? visibleActiveGoals.value[0]
   const title = goal ? `推进：${goal.title}` : `推进：${selectedProject.value?.name || '项目'}下一步`
   const dueAt = tomorrowAtNine().toISOString()
   saving.value = true
@@ -441,6 +482,7 @@ async function createNextActionTodo(goalOverride?: Goal) {
       relation: goal ? `next_action:${goal.id}` : 'next_action',
       confidence: 0.9
     })
+    showNotice('下一步待办已创建')
     await loadOverview()
     await loadTodos()
   } finally {
@@ -452,6 +494,7 @@ async function completeTodo(item: AgentTodoItem) {
   saving.value = true
   try {
     await updateAgentTodoStatus(item.id, 'done')
+    showNotice('任务已完成')
     await loadTodos()
   } finally {
     saving.value = false
@@ -462,6 +505,7 @@ async function postponeTodo(item: AgentTodoItem) {
   saving.value = true
   try {
     await updateAgentTodoDueAt(item.id, tomorrowAtNine().toISOString())
+    showNotice('任务已顺延到明天 9 点')
     await loadTodos()
   } finally {
     saving.value = false
@@ -470,11 +514,11 @@ async function postponeTodo(item: AgentTodoItem) {
 
 async function createPlanFromActiveGoal(goalOverride?: Goal) {
   if (!selectedProjectId.value) return
-  const goal = goalOverride ?? activeGoals.value[0]
+  const goal = goalOverride ?? visibleActiveGoals.value[0]
   const goalTitle = goal?.title || `${selectedProject.value?.name || '项目'}阶段目标`
   saving.value = true
   try {
-    await createAgentPlan({
+    const response = await createAgentPlan({
       projectId: selectedProjectId.value,
       title: `${goalTitle}推进计划`,
       objective: `围绕「${goalTitle}」拆解本周可执行推进计划。`,
@@ -485,7 +529,14 @@ async function createPlanFromActiveGoal(goalOverride?: Goal) {
         { title: '复盘和更新项目页', description: '同步进展、风险和下一步建议。' }
       ]
     })
+    await createProjectLink(selectedProjectId.value, {
+      targetType: 'agent_plan',
+      targetId: String(response.data.id),
+      relation: goal ? `goal_plan:${goal.id}` : 'project_plan',
+      confidence: 0.9
+    })
     activeTab.value = 'plans'
+    showNotice('推进计划已生成')
     await loadPlans()
     await loadOverview()
   } finally {
@@ -513,6 +564,23 @@ async function openLinksTab() {
 async function openPlansTab() {
   activeTab.value = 'plans'
   await loadPlans()
+}
+
+function toggleOverviewSection(section: OverviewSectionKey) {
+  overviewSections.value[section] = !overviewSections.value[section]
+}
+
+function sectionToggleText(section: OverviewSectionKey) {
+  return overviewSections.value[section] ? '收起' : '展开'
+}
+
+function showNotice(message: string) {
+  notice.value = message
+  window.setTimeout(() => {
+    if (notice.value === message) {
+      notice.value = ''
+    }
+  }, 2200)
 }
 
 function milestoneForm(goalId: number) {
@@ -623,13 +691,42 @@ function formatTodoTime(value?: string | null) {
   return date.toLocaleString()
 }
 
+function formatTimelineTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
+}
+
+function projectLinksBy(type: string, relationPrefix?: string) {
+  return (overview.value?.links || []).filter((link) => {
+    if (link.targetType !== type) return false
+    return relationPrefix ? link.relation.startsWith(relationPrefix) : true
+  })
+}
+
+function normalizeTitle(value: string) {
+  return value.trim().replace(/\s+/g, '').replace(/^在.+?下新增一个目标[:：]/, '').toLowerCase()
+}
+
+function dedupeGoals(items: Goal[]) {
+  const seen = new Set<string>()
+  return items.filter((goal) => {
+    const key = normalizeTitle(goal.title)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function todoBelongsToProject(item: AgentTodoItem) {
+  const linkedTodoIds = new Set(projectLinksBy('todo').map((link) => link.targetId))
+  if (linkedTodoIds.has(String(item.id))) return true
   const projectName = selectedProject.value?.name || ''
   if (projectName && item.title.includes(projectName)) return true
   const goalValues = (item.goalLinks || [])
     .filter((goal) => goal.schemaPath?.startsWith('goals.'))
     .map((goal) => String(goal.value || ''))
-  const goalTitles = activeGoals.value.map((goal) => goal.title)
+  const goalTitles = visibleActiveGoals.value.map((goal) => goal.title)
   const compareValues = [...goalValues, ...goalTitles]
   return compareValues.some((value) => value && (item.title.includes(value.slice(0, 12)) || value.includes(item.title.slice(0, 12))))
 }
@@ -637,10 +734,16 @@ function todoBelongsToProject(item: AgentTodoItem) {
 function todoBelongsToGoal(item: AgentTodoItem, goal: Goal) {
   const goalLinkHit = (item.goalLinks || []).some((link) => String(link.schemaPath || '').endsWith(`.${goal.id}`) || String(link.value || '').includes(goal.title))
   if (goalLinkHit) return true
+  const explicitLinkHit = projectLinksBy('todo', 'next_action:')
+    .some((link) => link.targetId === String(item.id) && link.relation === `next_action:${goal.id}`)
+  if (explicitLinkHit) return true
   return textMatchesGoal(item.title, goal)
 }
 
 function planBelongsToGoal(plan: AgentPlan, goal: Goal) {
+  const explicitLinkHit = projectLinksBy('agent_plan', 'goal_plan:')
+    .some((link) => link.targetId === String(plan.id) && link.relation === `goal_plan:${goal.id}`)
+  if (explicitLinkHit) return true
   return textMatchesGoal(`${plan.title} ${plan.objective}`, goal)
 }
 
@@ -685,6 +788,59 @@ function goalSupportTone(goal: Goal) {
   return 'danger'
 }
 
+function buildProjectTimeline() {
+  const items: ProjectTimelineItem[] = []
+  visibleActiveGoals.value.forEach((goal) => {
+    items.push({
+      id: `goal-${goal.id}`,
+      title: `目标：${goal.title}`,
+      detail: `${horizonText(goal.horizon)} · ${percent(goal.progress)}%`,
+      type: '目标',
+      at: goal.updatedAt || goal.createdAt
+    })
+  })
+  projectAllTodos.value.slice(0, 12).forEach((todo) => {
+    items.push({
+      id: `todo-${todo.id}`,
+      title: `任务：${todo.title}`,
+      detail: `${todo.status}${todo.dueAt ? ` · ${formatTodoTime(todo.dueAt)}` : ''}`,
+      type: '任务',
+      at: todo.updatedAt || todo.createdAt
+    })
+  })
+  plans.value.forEach((plan) => {
+    items.push({
+      id: `plan-${plan.id}`,
+      title: `计划：${plan.title}`,
+      detail: planStatusText(plan.status),
+      type: '计划',
+      at: plan.updatedAt || plan.createdAt
+    })
+  })
+  ;(overview.value?.decisions || []).forEach((decision) => {
+    items.push({
+      id: `decision-${decision.id}`,
+      title: `决策：${decision.title}`,
+      detail: decisionSummary(decision),
+      type: '决策',
+      at: decision.updatedAt || decision.createdAt
+    })
+  })
+  ;(overview.value?.openQuestions || []).forEach((question) => {
+    items.push({
+      id: `question-${question.id}`,
+      title: `问题：${question.question}`,
+      detail: question.status,
+      type: '问题',
+      at: question.updatedAt || question.createdAt
+    })
+  })
+  return items
+    .filter((item) => item.at)
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+    .slice(0, 10)
+}
+
 function buildProjectRisks() {
   const risks: Array<{ id: string; title: string; detail: string; tone: 'danger' | 'pending' | 'normal' }> = []
   const linkCounts = overview.value?.linkCounts ?? {}
@@ -704,7 +860,7 @@ function buildProjectRisks() {
       tone: 'pending'
     })
   }
-  if (activeGoals.value.some((goal) => goalTodos(goal).length === 0)) {
+  if (visibleActiveGoals.value.some((goal) => goalTodos(goal).length === 0)) {
     risks.push({
       id: 'goal-without-action',
       title: '部分目标还没有行动承接',
@@ -744,8 +900,8 @@ function buildProjectHealthItems() {
   return [
     {
       label: '目标清晰度',
-      score: activeGoals.value.length > 0 ? 100 : 35,
-      detail: activeGoals.value.length > 0 ? `${activeGoals.value.length} 个进行中目标` : '还没有进行中目标'
+      score: visibleActiveGoals.value.length > 0 ? 100 : 35,
+      detail: visibleActiveGoals.value.length > 0 ? `${visibleActiveGoals.value.length} 个进行中目标` : '还没有进行中目标'
     },
     {
       label: '任务覆盖度',
@@ -779,7 +935,7 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
   const linkCounts = overview.value?.linkCounts ?? {}
   const actionCount = Math.max(linkCounts.todo ?? 0, projectTodos.value.length)
   const openQuestion = overview.value?.openQuestions[0]
-  const goal = activeGoals.value[0]
+  const goal = visibleActiveGoals.value[0]
   const pendingPlan = plans.value.find((plan) => plan.status === 'awaiting_confirmation' || plan.status === 'draft')
   const suggestions: ProjectSuggestion[] = []
 
@@ -892,6 +1048,7 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
     </div>
 
     <p v-if="error" class="alert danger">{{ error }}</p>
+    <p v-if="notice" class="toast">{{ notice }}</p>
 
     <div class="project-layout">
       <aside class="item project-sidebar">
@@ -948,7 +1105,7 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
               <span class="muted">近期关联</span>
             </div>
             <div>
-              <span class="metric">{{ activeGoals.length }}</span>
+              <span class="metric">{{ visibleActiveGoals.length }}</span>
               <span class="muted">进行中目标</span>
             </div>
             <div>
@@ -969,16 +1126,20 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
           <button :class="{ active: activeTab === 'links' }" type="button" @click="switchTab('links')">关联</button>
         </div>
 
-        <div v-if="activeTab === 'overview'" class="grid">
-          <article class="item wide">
-            <div class="section-title">
+        <div v-if="activeTab === 'overview'" class="grid project-overview-grid">
+          <article class="item wide collapsible-section">
+            <div class="section-title collapsible-head">
               <div>
                 <h2>项目健康度</h2>
                 <p class="muted">从目标、任务、资料、决策、计划和风险看当前推进状态。</p>
               </div>
-              <span class="metric">{{ projectHealthScore }}%</span>
+              <span class="row">
+                <span v-if="duplicateGoalCount > 0" class="badge pending">已隐藏 {{ duplicateGoalCount }} 个重复目标</span>
+                <span class="metric">{{ projectHealthScore }}%</span>
+                <button class="inline secondary" type="button" @click="toggleOverviewSection('health')">{{ sectionToggleText('health') }}</button>
+              </span>
             </div>
-            <div class="project-health-grid">
+            <div v-if="overviewSections.health" class="project-health-grid">
               <div v-for="item in projectHealthItems" :key="item.label" class="project-health-item">
                 <div class="section-title">
                   <strong>{{ item.label }}</strong>
@@ -992,8 +1153,50 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
             </div>
           </article>
 
-          <article class="item wide">
-            <div class="section-title">
+          <article class="item wide collapsible-section priority-section">
+            <div class="section-title collapsible-head">
+              <div>
+                <h2>本周行动</h2>
+                <p class="muted">从任务和目标关联里聚合出的项目下一步。</p>
+              </div>
+              <span class="row">
+                <span class="badge" :class="{ danger: overdueProjectTodos.length > 0, success: projectTodos.length > 0 && overdueProjectTodos.length === 0 }">
+                  {{ overdueProjectTodos.length > 0 ? `${overdueProjectTodos.length} 个逾期` : `${projectTodos.length} 个任务` }}
+                </span>
+                <button class="inline secondary" type="button" @click="toggleOverviewSection('actions')">{{ sectionToggleText('actions') }}</button>
+              </span>
+            </div>
+            <div v-if="overviewSections.actions">
+              <div v-if="projectTodos.length" class="stack">
+                <div v-if="nextProjectTodo" class="project-next-action">
+                  <small class="memory-meta">优先行动</small>
+                  <strong>{{ nextProjectTodo.title }}</strong>
+                  <span>{{ formatTodoTime(nextProjectTodo.dueAt) }}</span>
+                  <span class="row">
+                    <button class="inline secondary" :disabled="saving" type="button" @click="postponeTodo(nextProjectTodo)">明天 9 点</button>
+                    <button class="inline" :disabled="saving" type="button" @click="completeTodo(nextProjectTodo)">完成</button>
+                  </span>
+                </div>
+                <div v-for="item in secondaryProjectTodos" :key="item.id" class="project-action-row" :class="{ danger: isOverdueTodo(item), pending: isToday(item.dueAt) }">
+                  <div>
+                    <strong>{{ item.title }}</strong>
+                    <span>{{ formatTodoTime(item.dueAt) }}</span>
+                  </div>
+                  <span class="row">
+                    <button class="inline secondary" :disabled="saving" type="button" @click="postponeTodo(item)">明天 9 点</button>
+                    <button class="inline" :disabled="saving" type="button" @click="completeTodo(item)">完成</button>
+                  </span>
+                </div>
+              </div>
+              <div v-else class="empty-state compact">
+                <strong>还没有项目行动</strong>
+                <span>可以从右侧建议一键创建下一步待办。</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="item wide collapsible-section">
+            <div class="section-title collapsible-head">
               <div>
                 <h2>项目简报</h2>
                 <p class="muted">围绕当前项目生成重点、复盘和待确认事项。</p>
@@ -1007,95 +1210,64 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
                 <button :disabled="briefingLoading" type="button" @click="generateProjectBriefing">
                   生成{{ briefingModeText(briefingMode) }}
                 </button>
+                <button class="inline secondary" type="button" @click="toggleOverviewSection('briefing')">{{ sectionToggleText('briefing') }}</button>
               </span>
             </div>
-            <div v-if="projectBriefing" class="project-briefing-grid">
-              <section class="project-briefing-main">
-                <div class="section-title">
-                  <strong>{{ projectBriefing.title || briefingModeText(projectBriefing.briefingType) }}</strong>
-                  <span class="badge">{{ projectBriefing.briefingType }}</span>
-                </div>
-                <pre>{{ projectBriefing.content }}</pre>
-              </section>
-              <section class="project-briefing-side">
-                <div class="project-health-item">
+            <div v-if="overviewSections.briefing">
+              <div v-if="projectBriefing" class="project-briefing-grid">
+                <section class="project-briefing-main">
                   <div class="section-title">
-                    <strong>重点</strong>
-                    <span class="badge">{{ projectBriefing.todayFocus.length }}</span>
+                    <strong>{{ projectBriefing.title || briefingModeText(projectBriefing.briefingType) }}</strong>
+                    <span class="badge">{{ projectBriefing.briefingType }}</span>
                   </div>
-                  <p v-for="item in projectBriefing.todayFocus.slice(0, 4)" :key="item" class="memory-meta">{{ item }}</p>
-                  <p v-if="projectBriefing.todayFocus.length === 0" class="muted">暂无重点建议。</p>
-                </div>
-                <div class="brief-metrics compact">
-                  <RouterLink class="brief-metric pending" to="/tasks">
-                    <strong>{{ projectBriefing.dueTasks.length }}</strong>
-                    <span>今日到期</span>
-                  </RouterLink>
-                  <RouterLink class="brief-metric danger" to="/tasks">
-                    <strong>{{ projectBriefing.overdueTasks.length }}</strong>
-                    <span>已逾期</span>
-                  </RouterLink>
-                  <RouterLink class="brief-metric" to="/operations">
-                    <strong>{{ projectBriefing.pendingOperations.length }}</strong>
-                    <span>待确认</span>
-                  </RouterLink>
-                </div>
-              </section>
-            </div>
-            <div v-else class="empty-state compact">
-              <strong>{{ briefingLoading ? '正在生成项目简报' : '暂无项目简报' }}</strong>
-              <span>可以生成今日重点、晚间复盘或周复盘。</span>
+                  <pre>{{ projectBriefing.content }}</pre>
+                </section>
+                <section class="project-briefing-side">
+                  <div class="project-health-item">
+                    <div class="section-title">
+                      <strong>重点</strong>
+                      <span class="badge">{{ projectBriefing.todayFocus.length }}</span>
+                    </div>
+                    <p v-for="item in projectBriefing.todayFocus.slice(0, 4)" :key="item" class="memory-meta">{{ item }}</p>
+                    <p v-if="projectBriefing.todayFocus.length === 0" class="muted">暂无重点建议。</p>
+                  </div>
+                  <div class="brief-metrics compact">
+                    <RouterLink class="brief-metric pending" to="/tasks">
+                      <strong>{{ projectBriefing.dueTasks.length }}</strong>
+                      <span>今日到期</span>
+                    </RouterLink>
+                    <RouterLink class="brief-metric danger" to="/tasks">
+                      <strong>{{ projectBriefing.overdueTasks.length }}</strong>
+                      <span>已逾期</span>
+                    </RouterLink>
+                    <RouterLink class="brief-metric" to="/operations">
+                      <strong>{{ projectBriefing.pendingOperations.length }}</strong>
+                      <span>待确认</span>
+                    </RouterLink>
+                  </div>
+                </section>
+              </div>
+              <div v-else class="empty-state compact">
+                <strong>{{ briefingLoading ? '正在生成项目简报' : '暂无项目简报' }}</strong>
+                <span>可以生成今日重点、晚间复盘或周复盘。</span>
+              </div>
             </div>
           </article>
 
-          <article class="item">
-            <div class="section-title">
-              <div>
-                <h2>本周行动</h2>
-                <p class="muted">从任务和目标关联里聚合出的项目下一步。</p>
-              </div>
-              <span class="badge" :class="{ danger: overdueProjectTodos.length > 0, success: projectTodos.length > 0 && overdueProjectTodos.length === 0 }">
-                {{ overdueProjectTodos.length > 0 ? `${overdueProjectTodos.length} 个逾期` : `${projectTodos.length} 个任务` }}
-              </span>
-            </div>
-            <div v-if="projectTodos.length" class="stack">
-              <div v-if="nextProjectTodo" class="project-next-action">
-                <small class="memory-meta">优先行动</small>
-                <strong>{{ nextProjectTodo.title }}</strong>
-                <span>{{ formatTodoTime(nextProjectTodo.dueAt) }}</span>
-                <span class="row">
-                  <button class="inline secondary" :disabled="saving" type="button" @click="postponeTodo(nextProjectTodo)">明天 9 点</button>
-                  <button class="inline" :disabled="saving" type="button" @click="completeTodo(nextProjectTodo)">完成</button>
-                </span>
-              </div>
-              <div v-for="item in secondaryProjectTodos" :key="item.id" class="project-action-row" :class="{ danger: isOverdueTodo(item), pending: isToday(item.dueAt) }">
-                <div>
-                  <strong>{{ item.title }}</strong>
-                  <span>{{ formatTodoTime(item.dueAt) }}</span>
-                </div>
-                <span class="row">
-                  <button class="inline secondary" :disabled="saving" type="button" @click="postponeTodo(item)">明天 9 点</button>
-                  <button class="inline" :disabled="saving" type="button" @click="completeTodo(item)">完成</button>
-                </span>
-              </div>
-            </div>
-            <div v-else class="empty-state compact">
-              <strong>还没有项目行动</strong>
-              <span>可以从右侧建议一键创建下一步待办。</span>
-            </div>
-          </article>
-
-          <article class="item wide">
-            <div class="section-title">
+          <article class="item wide collapsible-section">
+            <div class="section-title collapsible-head">
               <div>
                 <h2>风险与决策</h2>
                 <p class="muted">把阻塞问题、关键判断和项目缺口沉淀到项目空间。</p>
               </div>
-              <span class="badge" :class="{ pending: (overview?.openQuestions.length ?? 0) > 0, success: (overview?.decisions.length ?? 0) > 0 }">
-                {{ overview?.decisions.length ?? 0 }} 决策 · {{ overview?.openQuestions.length ?? 0 }} 问题
+              <span class="row">
+                <span class="badge" :class="{ pending: (overview?.openQuestions.length ?? 0) > 0, success: (overview?.decisions.length ?? 0) > 0 }">
+                  {{ overview?.decisions.length ?? 0 }} 决策 · {{ overview?.openQuestions.length ?? 0 }} 问题
+                </span>
+                <button class="inline secondary" type="button" @click="toggleOverviewSection('risk')">{{ sectionToggleText('risk') }}</button>
               </span>
             </div>
-            <div class="project-risk-grid">
+            <div v-if="overviewSections.risk" class="project-risk-grid">
               <section class="project-risk-column">
                 <div class="section-title">
                   <strong>当前风险</strong>
@@ -1154,22 +1326,42 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
             </div>
           </article>
 
-          <article class="item">
-            <h2>项目设置</h2>
-            <div class="stack">
-              <textarea v-model="editForm.description" rows="4" placeholder="项目定位" />
-              <input v-model="editForm.currentStage" placeholder="当前阶段" />
-              <input v-model.number="editForm.priority" type="number" placeholder="优先级" />
+          <article class="item wide collapsible-section">
+            <div class="section-title collapsible-head">
+              <div>
+                <h2>最近动态</h2>
+                <p class="muted">目标、任务、计划、决策和问题的近期变化。</p>
+              </div>
               <span class="row">
-                <button :disabled="saving" type="button" @click="saveProject">保存</button>
-                <button class="secondary" :disabled="saving" type="button" @click="archiveProject">归档</button>
+                <span class="badge">{{ projectTimeline.length }}</span>
+                <button class="inline secondary" type="button" @click="toggleOverviewSection('timeline')">{{ sectionToggleText('timeline') }}</button>
               </span>
+            </div>
+            <div v-if="overviewSections.timeline" class="project-timeline">
+              <div v-for="item in projectTimeline" :key="item.id" class="project-timeline-item">
+                <span class="timeline-dot">{{ item.type }}</span>
+                <div>
+                  <strong>{{ item.title }}</strong>
+                  <span>{{ item.detail }}</span>
+                  <small class="memory-meta">{{ formatTimelineTime(item.at) }}</small>
+                </div>
+              </div>
+              <div v-if="projectTimeline.length === 0" class="empty-state compact">
+                <strong>暂无动态</strong>
+                <span>创建目标、任务、计划或决策后会出现在这里。</span>
+              </div>
             </div>
           </article>
 
-          <article class="item">
-            <h2>下一步建议</h2>
-            <div v-if="groupedProjectSuggestions.length" class="project-suggestion-groups">
+          <article class="item wide collapsible-section">
+            <div class="section-title collapsible-head">
+              <div>
+                <h2>下一步建议</h2>
+                <p class="muted">根据项目缺口生成可执行建议。</p>
+              </div>
+              <button class="inline secondary" type="button" @click="toggleOverviewSection('suggestions')">{{ sectionToggleText('suggestions') }}</button>
+            </div>
+            <div v-if="overviewSections.suggestions && groupedProjectSuggestions.length" class="project-suggestion-groups">
               <section v-for="group in groupedProjectSuggestions" :key="group.group" class="project-suggestion-group">
                 <div class="section-title">
                   <strong>{{ group.group }}</strong>
@@ -1186,12 +1378,31 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
                 </div>
               </section>
             </div>
-            <div v-else-if="overview?.nextStepSuggestions.length" class="stack">
+            <div v-else-if="overviewSections.suggestions && overview?.nextStepSuggestions.length" class="stack">
               <div v-for="suggestion in overview.nextStepSuggestions" :key="suggestion" class="brief-focus-item">
                 <strong>{{ suggestion }}</strong>
               </div>
             </div>
-            <p v-else class="muted">项目基础信息比较完整，可以继续推进目标拆解。</p>
+            <p v-else-if="overviewSections.suggestions" class="muted">项目基础信息比较完整，可以继续推进目标拆解。</p>
+          </article>
+
+          <article class="item wide collapsible-section subtle-section">
+            <div class="section-title collapsible-head">
+              <div>
+                <h2>项目设置</h2>
+                <p class="muted">低频项默认收起，需要调整阶段、优先级或归档时再展开。</p>
+              </div>
+              <button class="inline secondary" type="button" @click="toggleOverviewSection('settings')">{{ sectionToggleText('settings') }}</button>
+            </div>
+            <div v-if="overviewSections.settings" class="stack">
+              <textarea v-model="editForm.description" rows="4" placeholder="项目定位" />
+              <input v-model="editForm.currentStage" placeholder="当前阶段" />
+              <input v-model.number="editForm.priority" type="number" placeholder="优先级" />
+              <span class="row">
+                <button :disabled="saving" type="button" @click="saveProject">保存</button>
+                <button class="secondary" :disabled="saving" type="button" @click="archiveProject">归档</button>
+              </span>
+            </div>
           </article>
         </div>
 
@@ -1216,10 +1427,11 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
           <article class="item">
             <div class="section-title">
               <h2>目标进展</h2>
-              <span class="badge">{{ activeGoals.length }}</span>
+              <span class="badge">{{ visibleActiveGoals.length }}</span>
             </div>
-            <div v-if="activeGoals.length" class="stack">
-              <div v-for="goal in activeGoals" :key="goal.id" class="goal-card">
+            <p v-if="duplicateGoalCount > 0" class="alert pending">已隐藏 {{ duplicateGoalCount }} 个重复标题目标，避免测试数据干扰判断。</p>
+            <div v-if="visibleActiveGoals.length" class="stack">
+              <div v-for="goal in visibleActiveGoals" :key="goal.id" class="goal-card">
                 <div class="section-title">
                   <div>
                     <strong>{{ goal.title }}</strong>
