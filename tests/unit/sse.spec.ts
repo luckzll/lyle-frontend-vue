@@ -17,7 +17,7 @@ describe('SSE parsing', () => {
         'data: {"text":"紫藤花"}',
         '',
         'event: meta',
-        'data: {"sources":[{"fileId":"1","title":"doc.txt","chunk":"hit"}],"review":{"approved":true}}',
+        'data: {"sources":[{"fileId":"1","title":"doc.txt","chunk":"hit"}],"candidateMemories":[{"schemaPath":"preferences.visual.dislikes","value":"帽子","status":"pending"}],"review":{"approved":true}}',
         '',
         'event: error',
         'data: {"message":"boom"}',
@@ -34,6 +34,7 @@ describe('SSE parsing', () => {
     expect(handlers.onDelta).toHaveBeenCalledWith('紫藤花')
     expect(handlers.onMeta).toHaveBeenCalledWith({
       sources: [{ fileId: '1', title: 'doc.txt', chunk: 'hit' }],
+      candidateMemories: [{ schemaPath: 'preferences.visual.dislikes', value: '帽子', status: 'pending' }],
       review: { approved: true }
     })
     expect(handlers.onError).toHaveBeenCalledWith('boom')

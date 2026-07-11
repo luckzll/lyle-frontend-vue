@@ -59,8 +59,10 @@ test('covers V3 project plan controls and connector states', async ({ page }) =>
   await planCard.getByRole('button', { name: '继续' }).click()
   await expect(planCard).toContainText('已完成')
 
-  await page.getByRole('link', { name: '连接器', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '连接器' })).toBeVisible()
+  await page.getByRole('link', { name: '工具', exact: true }).click()
+  await page.getByTestId('workbench-tab-connectors').click()
+  await expect(page).toHaveURL('/advanced-settings?tab=connectors')
+  await expect(page.getByRole('heading', { name: '工具' })).toBeVisible()
   await expect(page.getByRole('button', { name: /本地文档/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /GitHub/ })).toBeVisible()
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onActivated, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   createConversation,
   createAgentTodo,
@@ -16,13 +16,14 @@ import {
   listAgentTodos,
   listKnowledgeBases,
   listPendingOperations,
+  purgeStructuredMemory,
   saveStructuredMemory,
   rejectPendingOperation,
   streamMessage,
   changeStructuredMemoryStatus,
   uploadChatImage
 } from '@/api/app'
-import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, Conversation, KnowledgeBase, MemoryItem, MemorySnapshot, PendingOperationItem, ProjectChatContext, ToolResult } from '@/api/types'
+import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, Conversation, KnowledgeBase, MemoryItem, MemorySnapshot, PendingOperationItem, ProjectChatContext, ToolResult, ExecutionSuggestionItem } from '@/api/types'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -41,12 +42,14 @@ interface Message {
   candidateDecisions?: CandidateDecisionItem[]
   candidateOpenQuestions?: CandidateOpenQuestionItem[]
   candidatePlans?: CandidatePlanItem[]
+  executionSuggestions?: ExecutionSuggestionItem[]
   projectContext?: ProjectChatContext
   review?: Record<string, unknown>
 }
 
 const input = ref('')
 const route = useRoute()
+const router = useRouter()
 const selectedImage = ref<{ name: string; previewUrl: string; url: string } | null>(null)
 const uploadingImage = ref(false)
 const uploadError = ref('')
@@ -63,6 +66,7 @@ const memoryActionLoading = ref<Record<string, boolean>>({})
 const taskActionLoading = ref<Record<string, boolean>>({})
 const projectCandidateActionLoading = ref<Record<string, boolean>>({})
 const operationActionLoading = ref<Record<string, boolean>>({})
+const executionSuggestionActionLoading = ref<Record<string, boolean>>({})
 const traceCopyState = ref<Record<number, 'copied' | 'failed'>>({})
 const briefTodos = ref<AgentTodoItem[]>([])
 const briefReminders = ref<AgentReminderItem[]>([])
@@ -286,6 +290,7 @@ async function submit() {
         messages.value[assistantIndex].candidateDecisions = meta.candidateDecisions || []
         messages.value[assistantIndex].candidateOpenQuestions = meta.candidateOpenQuestions || []
         messages.value[assistantIndex].candidatePlans = meta.candidatePlans || []
+        messages.value[assistantIndex].executionSuggestions = meta.executionSuggestions || []
         messages.value[assistantIndex].projectContext = meta.projectContext
         messages.value[assistantIndex].review = meta.review || {}
       },
@@ -875,7 +880,7 @@ async function confirmCandidateMemory(message: Message, item: MemoryItem) {
   try {
     await saveStructuredMemory(targetKey, value, item.confidence ?? 0.8, item.source || 'chat_candidate')
     if (item.key && item.key !== targetKey) {
-      await changeStructuredMemoryStatus(item.key, 'disabled')
+      await purgeStructuredMemory(item.key)
     }
     item.status = 'active'
     item.targetKey = targetKey
@@ -1066,6 +1071,42 @@ async function confirmCandidatePlan(message: Message, item: CandidatePlanItem) {
 function dismissCandidatePlan(message: Message, item: CandidatePlanItem) {
   item.status = 'disabled'
   message.candidatePlans = [...(message.candidatePlans || [])]
+}
+
+function pendingExecutionSuggestions(message: Message) {
+  return (message.executionSuggestions || []).filter((item) => item.status === 'pending')
+}
+
+function executionSuggestionKey(item: ExecutionSuggestionItem) {
+  return `${item.type}:${item.id}`
+}
+
+async function acceptExecutionSuggestion(message: Message, item: ExecutionSuggestionItem) {
+  const key = executionSuggestionKey(item)
+  executionSuggestionActionLoading.value[key] = true
+  item.error = ''
+  try {
+    if (item.action === 'create_workflow') {
+      item.status = 'active'
+      message.executionSuggestions = [...(message.executionSuggestions || [])]
+      await router.push({
+        path: '/automations',
+        query: { intent: `${item.title}。${item.description}` }
+      })
+      return
+    }
+    await router.push({ path: '/connections', query: { suggestion: item.type } })
+  } catch (exception) {
+    item.error = getRequestErrorMessage(exception, '执行建议处理失败，请稍后重试。')
+    error.value = item.error
+  } finally {
+    executionSuggestionActionLoading.value[key] = false
+  }
+}
+
+function dismissExecutionSuggestion(message: Message, item: ExecutionSuggestionItem) {
+  item.status = 'disabled'
+  message.executionSuggestions = [...(message.executionSuggestions || [])]
 }
 
 async function confirmOperation(message: Message, item: PendingOperationItem) {
@@ -1721,6 +1762,42 @@ function escapeHtml(text: string) {
               >
                 忽略
               </button>
+            </div>
+          </article>
+        </div>
+
+        <div v-if="message.role === 'assistant' && pendingExecutionSuggestions(message).length" class="candidate-memory-list">
+          <div class="candidate-memory-title">
+            <span>执行建议</span>
+            <span class="badge pending">{{ pendingExecutionSuggestions(message).length }} 条</span>
+          </div>
+          <article
+            v-for="suggestion in pendingExecutionSuggestions(message)"
+            :key="executionSuggestionKey(suggestion)"
+            class="candidate-memory-card"
+          >
+            <div class="operation-preview-head">
+              <strong>{{ suggestion.title }}</strong>
+              <span class="badge" :class="{ danger: ['write_high', 'dangerous'].includes(suggestion.riskLevel) }">
+                {{ suggestion.type.toUpperCase() }} · {{ suggestion.riskLevel }}
+              </span>
+            </div>
+            <p class="operation-preview-text">{{ suggestion.description }}</p>
+            <small v-if="suggestion.error" class="candidate-error">{{ suggestion.error }}</small>
+            <div class="candidate-memory-actions">
+              <button
+                type="button"
+                :disabled="executionSuggestionActionLoading[executionSuggestionKey(suggestion)]"
+                @click="acceptExecutionSuggestion(message, suggestion)"
+              >
+                {{ suggestion.action === 'create_workflow' ? '生成安全预览' : '检查连接' }}
+              </button>
+              <button
+                class="secondary"
+                type="button"
+                :disabled="executionSuggestionActionLoading[executionSuggestionKey(suggestion)]"
+                @click="dismissExecutionSuggestion(message, suggestion)"
+              >忽略</button>
             </div>
           </article>
         </div>

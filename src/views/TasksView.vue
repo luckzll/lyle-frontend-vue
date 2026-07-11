@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import {
+  createAgentTodo,
   deleteAgentCalendar,
   deleteAgentTodo,
   listAgentCalendar,
@@ -20,6 +21,8 @@ const loading = ref(false)
 const activeTab = ref<'open' | 'today' | 'overdue' | 'done' | 'cancelled' | 'all'>('open')
 const dueEdits = ref<Record<number, string>>({})
 const notice = ref('')
+const newTodoTitle = ref('')
+const newTodoDueAt = ref('')
 const selectedDate = ref(startOfDay(new Date()).toISOString())
 const calendarWindowStart = ref(startOfWeek(new Date()).toISOString())
 const calendarScope = ref<'day' | 'week'>('day')
@@ -74,6 +77,22 @@ async function refresh() {
     todos.value = todoResponse.data.items
     calendar.value = calendarResponse.data.items
     reminders.value = reminderResponse.data.items
+  } finally {
+    loading.value = false
+  }
+}
+
+async function createTodoManually() {
+  const title = newTodoTitle.value.trim()
+  if (!title || loading.value) return
+  loading.value = true
+  try {
+    await createAgentTodo(title, newTodoDueAt.value ? new Date(newTodoDueAt.value).toISOString() : null)
+    newTodoTitle.value = ''
+    newTodoDueAt.value = ''
+    activeTab.value = 'open'
+    showNotice('待办已创建')
+    await refresh()
   } finally {
     loading.value = false
   }
@@ -472,7 +491,12 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
             <button :class="{ active: activeTab === 'all' }" type="button" @click="activeTab = 'all'">全部 {{ tabCount('all') }}</button>
           </div>
         </div>
-        <p v-if="visibleTodos.length === 0" class="muted">暂无待办。你可以在聊天里说“创建待办：整理知识库”。</p>
+        <form class="manual-todo-form" @submit.prevent="createTodoManually">
+          <input v-model="newTodoTitle" data-testid="manual-todo-title" placeholder="输入待办标题" aria-label="待办标题" />
+          <input v-model="newTodoDueAt" data-testid="manual-todo-due-at" type="datetime-local" aria-label="截止时间" />
+          <button data-testid="manual-todo-submit" type="submit" :disabled="loading || !newTodoTitle.trim()">新建待办</button>
+        </form>
+        <p v-if="visibleTodos.length === 0" class="muted">暂无待办。可以在这里直接新建，也可以通过聊天生成候选待办。</p>
         <div v-for="item in visibleTodos" :key="item.id" class="task-row" :class="{ disabled: item.status !== 'open', danger: isOverdue(item), pending: isToday(item.dueAt) }">
           <strong>
             {{ item.title }}

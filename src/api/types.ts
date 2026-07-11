@@ -251,8 +251,107 @@ export interface ChatResponse {
   candidateDecisions?: CandidateDecisionItem[]
   candidateOpenQuestions?: CandidateOpenQuestionItem[]
   candidatePlans?: CandidatePlanItem[]
+  executionSuggestions?: ExecutionSuggestionItem[]
   projectContext?: ProjectChatContext
   review: Record<string, unknown>
+}
+
+export interface ExecutionSuggestionItem {
+  id: string
+  type: 'mcp' | 'cli' | 'workflow'
+  title: string
+  description: string
+  riskLevel: string
+  status: 'pending' | 'active' | 'disabled'
+  action: 'open_workbench' | 'create_workflow'
+  payload: Record<string, any>
+  createdWorkflowId?: number
+  error?: string
+}
+
+export interface AutomationTemplate {
+  id: string
+  version: number
+  category: string
+  name: string
+  problem: string
+  sources: string[]
+  writes: boolean
+  estimatedDuration: string
+  defaultSchedule: string
+  output: string
+  availability?: 'coming_soon'
+}
+
+export interface AutomationDraft {
+  id: number
+  templateId: string
+  title: string
+  userGoal?: string
+  projectId?: number | null
+  workspaceId?: number | null
+  schedule: string
+  timezone: string
+  allowedSources: string[]
+  riskSummary: { level: string; writes: boolean; message: string }
+  status: string
+  automationId?: number | null
+  expiresAt: string
+}
+
+export interface AutomationSummary {
+  id: number
+  name: string
+  status: 'enabled' | 'paused' | 'failed' | string
+  triggerType?: string
+  scheduleExpr?: string | null
+  timezone?: string | null
+  nextRunAt?: string | null
+  lastRunAt?: string | null
+  consecutiveFailures?: number
+}
+
+export interface ExecutionResultSummary {
+  id: number
+  sourceType: string
+  sourceId: string
+  projectId?: number | null
+  templateId?: string | null
+  status: 'completed' | 'partial' | 'failed' | 'awaiting_confirmation'
+  title: string
+  conclusion: string
+  completedItems: string[]
+  risks: string[]
+  recommendedActions: Array<{ type: string; label: string }>
+  dataScope: string[]
+  durationMs?: number | null
+  traceRef?: string | null
+  createdAt: string
+}
+
+export interface ConfirmationInboxItem {
+  pendingOperationId: number
+  actionTitle: string
+  riskLevel: string
+  reason: string
+  impactResources: string[]
+  reversible: boolean
+  requiresSecondConfirmation: boolean
+  source: string
+  createdAt: string
+}
+
+export interface ConnectionDiagnostic {
+  id: string
+  type: string
+  name: string
+  status: 'healthy' | 'reauthorize_required' | 'restricted' | 'unavailable'
+  displayReason: string
+  nextAction: string
+  actionTarget?: string
+  diagnosable?: boolean
+  capabilities: string[]
+  lastCheckedAt?: string | null
 }
 
 export interface AgentTraceItem {
@@ -362,6 +461,21 @@ export interface AiMetricsResponse {
   tools: Record<string, unknown>
   limits: Record<string, unknown>
   requests?: Record<string, unknown>
+}
+
+export interface ExperienceAnalytics {
+  periodDays: number
+  funnel: {
+    onboardingStarted: number
+    firstRunStarted: number
+    firstRunCompleted: number
+    draftCreated: number
+    draftEnabled: number
+  }
+  templates: Array<{ templateId: string; enabled: number }>
+  executionByStatus: Array<{ status: string; count: number }>
+  confirmations: { viewed: number; confirmed: number; rejected: number }
+  failureCategories: Array<{ category: string; count: number }>
 }
 
 export interface AgentTodoItem {

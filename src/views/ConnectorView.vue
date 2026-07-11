@@ -8,6 +8,8 @@ import {
 } from '@/api/app'
 import type { ConnectorInfo, ConnectorItem, ConnectorResult } from '@/api/types'
 
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+
 const connectors = ref<ConnectorInfo[]>([])
 const selectedName = ref('local_docs')
 const result = ref<ConnectorResult | null>(null)
@@ -135,8 +137,8 @@ function requestError(exception: unknown, fallback: string) {
 </script>
 
 <template>
-  <section class="page">
-    <div class="toolbar">
+  <section class="page connector-page" :class="{ embedded }">
+    <div v-if="!embedded" class="toolbar">
       <div>
         <h1>连接器</h1>
         <p class="muted">读取真实项目上下文，写操作先生成待确认项。</p>

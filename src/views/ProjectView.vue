@@ -5,6 +5,7 @@ import {
   cancelAgentPlan,
   confirmAgentPlan,
   createAgentPlan,
+  createWorkflowFromPlan,
   createAgentTodo,
   createProjectDecision,
   createProject,
@@ -460,6 +461,16 @@ async function cancelPlan(plan: AgentPlan) {
     await cancelAgentPlan(plan.id)
     showNotice('计划已取消')
     await loadPlans()
+  } finally {
+    saving.value = false
+  }
+}
+
+async function savePlanAsWorkflow(plan: AgentPlan) {
+  saving.value = true
+  try {
+    await createWorkflowFromPlan(plan.id)
+    showNotice('计划已保存为工作流，可前往“工具”编辑和运行')
   } finally {
     saving.value = false
   }
@@ -1515,6 +1526,7 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
                   </li>
                 </ol>
                 <span class="row">
+                  <button class="secondary" type="button" :disabled="saving" @click="savePlanAsWorkflow(plan)">保存为工作流</button>
                   <button v-if="plan.status === 'awaiting_confirmation' || plan.status === 'draft'" type="button" :disabled="saving" @click="confirmPlan(plan)">确认执行</button>
                   <button v-if="plan.status === 'running'" class="secondary" type="button" :disabled="saving" @click="pausePlan(plan)">暂停</button>
                   <button v-if="plan.status === 'paused'" type="button" :disabled="saving" @click="resumePlan(plan)">继续</button>

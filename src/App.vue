@@ -95,7 +95,10 @@ onBeforeUnmount(() => {
       <RouterLink to="/memory" active-class="is-active">记忆</RouterLink>
       <RouterLink to="/tasks" active-class="is-active">任务</RouterLink>
       <RouterLink to="/projects" active-class="is-active" :class="{ 'is-active': route.path.startsWith('/projects') }">项目</RouterLink>
-      <RouterLink to="/connectors" active-class="is-active">连接器</RouterLink>
+      <RouterLink to="/automations" active-class="is-active">自动化</RouterLink>
+      <RouterLink to="/execution-center" active-class="is-active">执行中心</RouterLink>
+      <RouterLink to="/connections" active-class="is-active">连接</RouterLink>
+      <RouterLink to="/advanced-settings" active-class="is-active">高级设置</RouterLink>
       <RouterLink to="/operations" active-class="is-active">操作</RouterLink>
       <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/evaluation" active-class="is-active">评测</RouterLink>
       <RouterLink v-if="currentUser?.role === 'ADMIN'" to="/prompts" active-class="is-active">Prompt</RouterLink>

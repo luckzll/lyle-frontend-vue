@@ -27,6 +27,7 @@ import type {
   EvaluationSetDetail,
   EvaluationSetItem,
   EvaluationTrendResponse,
+  ExperienceAnalytics,
   Goal,
   ImageUploadResponse,
   KnowledgeFileUploadResponse,
@@ -50,6 +51,7 @@ import type {
   StructuredMemoryMergeSuggestion,
   User
 } from './types'
+import type { AutomationDraft, AutomationTemplate, ConfirmationInboxItem, ConnectionDiagnostic, ExecutionResultSummary, AutomationSummary } from './types'
 
 export type StreamMeta = {
   sources?: ChatSource[]
@@ -61,6 +63,7 @@ export type StreamMeta = {
   candidateDecisions?: ChatResponse['candidateDecisions']
   candidateOpenQuestions?: ChatResponse['candidateOpenQuestions']
   candidatePlans?: ChatResponse['candidatePlans']
+  executionSuggestions?: ChatResponse['executionSuggestions']
   projectContext?: ChatResponse['projectContext']
   review?: ChatResponse['review']
 }
@@ -413,6 +416,10 @@ export function getAiMetrics() {
   return http.get<AiMetricsResponse>('/admin/ai/metrics')
 }
 
+export function getExperienceAnalytics(days = 7) {
+  return http.get<ExperienceAnalytics>('/admin/experience/analytics', { params: { days } })
+}
+
 export function getAiTools() {
   return http.get<AiToolsResponse>('/admin/ai/tools')
 }
@@ -636,4 +643,225 @@ export function handleSseBlock(block: string, handlers: SseHandlers) {
   } else if (event === 'done') {
     handlers.onDone?.()
   }
+}
+
+export type ApiList<T = Record<string, unknown>> = { items: T[] }
+
+export function listMcpServers() {
+  return http.get<ApiList>('/workbench/mcp/servers')
+}
+
+export function createMcpServer(payload: Record<string, unknown>) {
+  return http.post<Record<string, unknown>>('/workbench/mcp/servers', payload)
+}
+
+export function updateMcpServerStatus(serverId: number, status: 'enabled' | 'disabled') {
+  return http.patch<Record<string, unknown>>(`/workbench/mcp/servers/${serverId}/status`, { status })
+}
+
+export function checkMcpServer(serverId: number) {
+  return http.post<Record<string, unknown>>(`/workbench/mcp/servers/${serverId}/health-check`, {})
+}
+
+export function syncMcpTools(serverId: number, tools: Array<Record<string, unknown>> = []) {
+  return http.post<ApiList>(`/workbench/mcp/servers/${serverId}/tools/sync`, { tools })
+}
+
+export function listMcpTools() {
+  return http.get<ApiList>('/workbench/mcp/tools')
+}
+
+export function invokeMcpTool(toolId: number, payload: Record<string, unknown>) {
+  return http.post<Record<string, unknown>>(`/workbench/mcp/tools/${toolId}/invoke`, payload)
+}
+
+export function updateMcpToolPolicy(toolId: number, payload: Record<string, unknown>) {
+  return http.patch<Record<string, unknown>>(`/workbench/mcp/tools/${toolId}/policy`, payload)
+}
+
+export function listWorkspaces() {
+  return http.get<ApiList>('/workbench/workspaces')
+}
+
+export function createWorkspace(payload: Record<string, unknown>) {
+  return http.post<Record<string, unknown>>('/workbench/workspaces', payload)
+}
+
+export function listWorkspacePolicies(workspaceId: number) {
+  return http.get<ApiList>(`/workbench/workspaces/${workspaceId}/policies`)
+}
+
+export function createWorkspacePolicy(workspaceId: number, payload: Record<string, unknown>) {
+  return http.post<Record<string, unknown>>(`/workbench/workspaces/${workspaceId}/policies`, payload)
+}
+
+export function deleteWorkspacePolicy(workspaceId: number, policyId: number) {
+  return http.delete<Record<string, unknown>>(`/workbench/workspaces/${workspaceId}/policies/${policyId}`)
+}
+
+export function previewCommand(workspaceId: number, command: string) {
+  return http.post<Record<string, unknown>>(`/workbench/workspaces/${workspaceId}/commands/preview`, { command })
+}
+
+export function runCommand(workspaceId: number, command: string, confirmed = false, secondConfirmed = false) {
+  return http.post<Record<string, unknown>>(`/workbench/workspaces/${workspaceId}/commands/run`, {
+    command,
+    confirmed,
+    secondConfirmed
+  })
+}
+
+export function listCommandRuns(workspaceId: number, limit = 50) {
+  return http.get<ApiList>(`/workbench/workspaces/${workspaceId}/commands`, { params: { limit } })
+}
+
+export function listWorkflows() {
+  return http.get<ApiList>('/workbench/workflows')
+}
+
+export function createWorkflow(payload: Record<string, unknown>) {
+  return http.post<Record<string, unknown>>('/workbench/workflows', payload)
+}
+
+export function createWorkflowFromPlan(planId: number) {
+  return http.post<Record<string, unknown>>(`/workbench/workflows/from-plan/${planId}`, {})
+}
+
+export function getWorkflow(workflowId: number) {
+  return http.get<Record<string, unknown>>(`/workbench/workflows/${workflowId}`)
+}
+
+export function updateWorkflow(workflowId: number, payload: Record<string, unknown>) {
+  return http.patch<Record<string, unknown>>(`/workbench/workflows/${workflowId}`, payload)
+}
+
+export function runWorkflow(workflowId: number, payload: Record<string, unknown>) {
+  return http.post<Record<string, unknown>>(`/workbench/workflows/${workflowId}/runs`, payload)
+}
+
+export function listWorkflowRuns(limit = 50) {
+  return http.get<ApiList>('/workbench/workflow-runs', { params: { limit } })
+}
+
+export function getWorkflowRun(runId: number) {
+  return http.get<Record<string, unknown>>(`/workbench/workflow-runs/${runId}`)
+}
+
+export function resumeWorkflowRun(runId: number, secondConfirmed = false) {
+  return http.post<Record<string, unknown>>(`/workbench/workflow-runs/${runId}/resume`, {
+    confirmed: true,
+    secondConfirmed
+  })
+}
+
+export function retryWorkflowRun(runId: number) {
+  return http.post<Record<string, unknown>>(`/workbench/workflow-runs/${runId}/retry`, {})
+}
+
+export function cancelWorkflowRun(runId: number) {
+  return http.post<Record<string, unknown>>(`/workbench/workflow-runs/${runId}/cancel`, {})
+}
+
+export function listWorkflowRunsByWorkflow(workflowId: number, limit = 50) {
+  return http.get<ApiList>(`/workbench/workflows/${workflowId}/runs`, { params: { limit } })
+}
+
+export function listAutomations() {
+  return http.get<ApiList<AutomationSummary>>('/workbench/automations')
+}
+
+export function createAutomation(payload: Record<string, unknown>) {
+  return http.post<Record<string, unknown>>('/workbench/automations', payload)
+}
+
+export function updateAutomation(automationId: number, payload: Record<string, unknown>) {
+  return http.patch<Record<string, unknown>>(`/workbench/automations/${automationId}`, payload)
+}
+
+export function deleteAutomation(automationId: number) {
+  return http.delete<Record<string, unknown>>(`/workbench/automations/${automationId}`)
+}
+
+export function runAutomation(automationId: number, input?: Record<string, unknown>) {
+  return http.post<Record<string, unknown>>(`/workbench/automations/${automationId}/runs`, { input: input ?? {} })
+}
+
+export function checkAutomationTrigger(automationId: number) {
+  return http.post<Record<string, unknown>>(`/workbench/automations/${automationId}/check-trigger`, {})
+}
+
+export function listAutomationRuns(automationId: number, limit = 50) {
+  return http.get<ApiList>(`/workbench/automations/${automationId}/runs`, { params: { limit } })
+}
+
+export function enableAutomation(automationId: number) {
+  return http.post<Record<string, unknown>>(`/workbench/automations/${automationId}/enable`)
+}
+
+export function pauseAutomation(automationId: number) {
+  return http.post<Record<string, unknown>>(`/workbench/automations/${automationId}/pause`)
+}
+
+export function listAudit(limit = 100) {
+  return http.get<ApiList>('/workbench/audit', { params: { limit } })
+}
+
+export function listExperienceTemplates() {
+  return http.get<{ items: AutomationTemplate[] }>('/experience/templates')
+}
+
+export function getOnboarding() {
+  return http.get<Record<string, any>>('/experience/onboarding')
+}
+
+export function updateOnboarding(payload: Record<string, unknown>) {
+  return http.patch<Record<string, any>>('/experience/onboarding', payload)
+}
+
+export function runFirstInspection(payload: Record<string, unknown>) {
+  return http.post<Record<string, any>>('/experience/onboarding/first-run', payload)
+}
+
+export function createDraftFromTemplate(payload: Record<string, unknown>) {
+  return http.post<AutomationDraft>('/experience/drafts/from-template', payload)
+}
+
+export function createDraftFromIntent(payload: Record<string, unknown>) {
+  return http.post<{ kind: string; draft?: AutomationDraft; unsupportedReason?: string; recommendedTemplateIds?: string[] }>('/experience/drafts/from-intent', payload)
+}
+
+export function enableDraft(draftId: number) {
+  return http.post<{ draft: AutomationDraft }>(`/experience/drafts/${draftId}/enable`, { idempotencyKey: `draft-${draftId}-enable` })
+}
+
+export function discardDraft(draftId: number) {
+  return http.post<AutomationDraft>(`/experience/drafts/${draftId}/discard`)
+}
+
+export function listExecutionResults(params: { status?: string; projectId?: number; limit?: number } = {}) {
+  return http.get<{ items: ExecutionResultSummary[] }>('/experience/execution/results', { params })
+}
+
+export function listNeedsAttention() {
+  return http.get<{ items: ExecutionResultSummary[] }>('/experience/execution/needs-attention')
+}
+
+export function listConfirmations() {
+  return http.get<{ items: ConfirmationInboxItem[] }>('/experience/confirmations')
+}
+
+export function confirmOperation(id: number) {
+  return http.post(`/experience/confirmations/${id}/confirm`)
+}
+
+export function rejectOperation(id: number) {
+  return http.post(`/experience/confirmations/${id}/reject`)
+}
+
+export function listRecommendedConnections() {
+  return http.get<{ items: ConnectionDiagnostic[] }>('/experience/connections/recommended')
+}
+
+export function diagnoseConnection(id: string) {
+  return http.post<ConnectionDiagnostic>(`/experience/connections/${encodeURIComponent(id)}/diagnose`)
 }

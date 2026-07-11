@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   getAdminOverview,
   getAiMetrics,
+  getExperienceAnalytics,
   getAiToolAudit,
   getAiTools,
   listAiConfigs,
@@ -15,7 +16,8 @@ import type {
   AiMetricsResponse,
   AiToolAuditItem,
   AiToolItem,
-  AuditLog
+  AuditLog,
+  ExperienceAnalytics
 } from '@/api/types'
 
 const overview = ref<AdminOverview | null>(null)
@@ -24,11 +26,12 @@ const aiConfigs = ref<AiConfigItem[]>([])
 const aiMetrics = ref<AiMetricsResponse | null>(null)
 const aiTools = ref<AiToolItem[]>([])
 const toolAudit = ref<AiToolAuditItem[]>([])
+const experienceAnalytics = ref<ExperienceAnalytics | null>(null)
 const loading = ref(false)
 const savingKey = ref('')
 const error = ref('')
 const notice = ref('')
-const activeTab = ref<'overview' | 'config' | 'runtime' | 'tools' | 'audit'>('overview')
+const activeTab = ref<'overview' | 'product' | 'config' | 'runtime' | 'tools' | 'audit'>('overview')
 
 const enabledToolCount = computed(() => aiTools.value.filter((tool) => tool.enabled).length)
 const failedToolAuditCount = computed(() => toolAudit.value.filter((item) => !item.ok).length)
@@ -38,14 +41,15 @@ async function refresh() {
   loading.value = true
   error.value = ''
   try {
-    const [overviewResponse, logsResponse, configResponse, metricsResponse, toolsResponse, toolAuditResponse] =
+    const [overviewResponse, logsResponse, configResponse, metricsResponse, toolsResponse, toolAuditResponse, experienceResponse] =
       await Promise.all([
         getAdminOverview(),
         listAuditLogs(),
         listAiConfigs(),
         getAiMetrics(),
         getAiTools(),
-        getAiToolAudit()
+        getAiToolAudit(),
+        getExperienceAnalytics()
       ])
     overview.value = overviewResponse.data
     auditLogs.value = logsResponse.data.records
@@ -53,6 +57,7 @@ async function refresh() {
     aiMetrics.value = metricsResponse.data
     aiTools.value = toolsResponse.data.tools
     toolAudit.value = toolAuditResponse.data.items
+    experienceAnalytics.value = experienceResponse.data
   } catch {
     error.value = '管理数据加载失败，请确认后端和 Python AI 服务可用。'
   } finally {
@@ -132,6 +137,7 @@ onMounted(refresh)
 
     <div class="segmented admin-tabs">
       <button type="button" :class="{ active: activeTab === 'overview' }" @click="activeTab = 'overview'">总览</button>
+      <button type="button" :class="{ active: activeTab === 'product' }" @click="activeTab = 'product'">体验指标</button>
       <button type="button" :class="{ active: activeTab === 'config' }" @click="activeTab = 'config'">AI 配置</button>
       <button type="button" :class="{ active: activeTab === 'runtime' }" @click="activeTab = 'runtime'">运行状态</button>
       <button type="button" :class="{ active: activeTab === 'tools' }" @click="activeTab = 'tools'">工具</button>
@@ -195,6 +201,31 @@ onMounted(refresh)
             <small class="memory-meta">{{ item.createdAt }}</small>
           </div>
         </article>
+      </div>
+    </section>
+
+    <section v-if="activeTab === 'product'" class="stack">
+      <div class="section-title">
+        <div>
+          <h2>产品体验指标</h2>
+          <p class="muted">最近 {{ experienceAnalytics?.periodDays ?? 7 }} 天的匿名化聚合数据，不包含用户内容或凭据。</p>
+        </div>
+      </div>
+      <div class="grid">
+        <article v-for="item in [
+          ['引导开始', experienceAnalytics?.funnel.onboardingStarted],
+          ['首次运行', experienceAnalytics?.funnel.firstRunStarted],
+          ['首次完成', experienceAnalytics?.funnel.firstRunCompleted],
+          ['草稿创建', experienceAnalytics?.funnel.draftCreated],
+          ['自动化启用', experienceAnalytics?.funnel.draftEnabled]
+        ]" :key="item[0]" class="item">
+          <h2>{{ item[0] }}</h2><p class="metric">{{ item[1] ?? '-' }}</p>
+        </article>
+      </div>
+      <div class="grid">
+        <article class="item"><h2>模板启用</h2><p v-if="!experienceAnalytics?.templates.length" class="muted">暂无数据。</p><div v-for="item in experienceAnalytics?.templates" :key="item.templateId" class="memory-row"><strong>{{ item.templateId }}</strong><span>{{ item.enabled }} 次</span></div></article>
+        <article class="item"><h2>执行结果</h2><p v-if="!experienceAnalytics?.executionByStatus.length" class="muted">暂无数据。</p><div v-for="item in experienceAnalytics?.executionByStatus" :key="item.status" class="memory-row"><strong>{{ item.status }}</strong><span>{{ item.count }} 次</span></div></article>
+        <article class="item"><h2>确认处理</h2><div class="status-grid"><div><strong>查看</strong><span>{{ experienceAnalytics?.confirmations.viewed ?? 0 }}</span></div><div><strong>确认</strong><span>{{ experienceAnalytics?.confirmations.confirmed ?? 0 }}</span></div><div><strong>拒绝</strong><span>{{ experienceAnalytics?.confirmations.rejected ?? 0 }}</span></div></div></article>
       </div>
     </section>
 
