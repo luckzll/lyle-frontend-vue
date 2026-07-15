@@ -12,13 +12,14 @@ test('covers V3 project plan controls and connector states', async ({ page }) =>
   await page.getByTestId('username-input').fill(username)
   await page.getByTestId('password-input').fill('123456')
   await page.getByTestId('auth-submit').click()
-  await expect(page).toHaveURL('/')
+  await expect(page).toHaveURL('/dashboard')
 
   await page.getByRole('link', { name: '项目', exact: true }).click()
+  await page.getByRole('button', { name: '新建', exact: true }).click()
   await page.getByPlaceholder('项目名称').fill(projectName)
   await page.getByPlaceholder('一句话定位').fill('验证 V3 项目空间')
   await page.getByPlaceholder('当前阶段').fill('E2E 验收')
-  await page.getByRole('button', { name: '创建', exact: true }).click()
+  await page.getByRole('button', { name: '创建项目', exact: true }).click()
   await expect(page.getByRole('heading', { name: projectName })).toBeVisible()
 
   const projectId = Number(page.url().split('/').pop())
@@ -59,10 +60,11 @@ test('covers V3 project plan controls and connector states', async ({ page }) =>
   await planCard.getByRole('button', { name: '继续' }).click()
   await expect(planCard).toContainText('已完成')
 
-  await page.getByRole('link', { name: '工具', exact: true }).click()
+  await page.getByRole('button', { name: '展开系统' }).click()
+  await page.getByRole('link', { name: '高级设置', exact: true }).click()
   await page.getByTestId('workbench-tab-connectors').click()
   await expect(page).toHaveURL('/advanced-settings?tab=connectors')
-  await expect(page.getByRole('heading', { name: '工具' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '高级设置' })).toBeVisible()
   await expect(page.getByRole('button', { name: /本地文档/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /GitHub/ })).toBeVisible()
 

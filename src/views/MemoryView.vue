@@ -20,6 +20,11 @@ import type {
   StructuredMemoryHistoryItem,
   StructuredMemoryMergeSuggestion
 } from '@/api/types'
+import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
+
+type PendingForget =
+  | { kind: 'profile'; schemaPath: string; label: string }
+  | { kind: 'fragment'; id: number; label: string }
 
 const conversations = ref<Conversation[]>([])
 const conversationId = ref('')
@@ -36,6 +41,9 @@ const selectedProfileId = ref<number | null>(null)
 const structuredHistory = ref<StructuredMemoryHistoryItem[]>([])
 const mergeSuggestions = ref<StructuredMemoryMergeSuggestion[]>([])
 const profileEvidence = ref<MemoryItem[]>([])
+const advancedMode = ref(false)
+const pendingPurgeKey = ref('')
+const pendingForget = ref<PendingForget | null>(null)
 const memory = ref<MemorySnapshot>({
   summary: '',
   short_term: [],
@@ -101,10 +109,6 @@ const lowConfidenceItems = computed(() => {
 
 const activeStructuredCount = computed(() => {
   return structuredAll.value.filter((item) => !item.status || item.status === 'active').length
-})
-
-const vectorCount = computed(() => {
-  return (memory.value.retrieved || []).length + memory.value.semantic.length + memory.value.vector.length
 })
 
 const summarySourceLabel = computed(() => {
@@ -248,9 +252,9 @@ async function keepMergeSuggestion(suggestion: StructuredMemoryMergeSuggestion, 
 }
 
 async function purgeStructured(key: string) {
-  if (!window.confirm(`永久删除记忆「${key}」？`)) return
   await updateMemoryAction(() => purgeStructuredMemory(key), '记忆已永久删除。', '记忆永久删除失败。')
   selectedStructuredKey.value = ''
+  pendingPurgeKey.value = ''
 }
 
 async function updateMemoryAction(action: () => Promise<unknown>, success: string, failure: string) {
@@ -310,6 +314,17 @@ async function updateProfileStatus(schemaPath: string, status: string) {
 
 async function updateFragmentStatus(fragmentId: number, status: string) {
   await updateMemoryAction(() => changeFragmentStatus(fragmentId, status), '片段状态已更新。', '片段状态更新失败。')
+}
+
+async function confirmForget() {
+  const target = pendingForget.value
+  if (!target || loading.value) return
+  if (target.kind === 'profile') {
+    await updateProfileStatus(target.schemaPath, 'forgotten')
+  } else {
+    await updateFragmentStatus(target.id, 'forgotten')
+  }
+  pendingForget.value = null
 }
 
 async function refreshStructuredHistory(key: string) {
@@ -372,14 +387,56 @@ function formattedMemoryTime(value?: number) {
 
 function profileTitle(item?: MemoryItem) {
   if (!item) return '未知画像'
-  return `${item.label || item.schemaPath || '画像'}`
+  if (item.label) return item.label
+  const finalPath = item.schemaPath?.split('.').pop() || ''
+  return structuredKeyLabels[finalPath] || '个人信息'
+}
+
+function userMemoryTitle(item: MemoryItem) {
+  if (item.label || item.schemaPath) return profileTitle(item)
+  if (item.key) return structuredKeyLabel(item.key)
+  return '记忆'
 }
 
 function structuredKeyLabel(key?: string) {
   const displayKey = structuredDisplayKey(key)
   if (!displayKey) return '未知字段'
   const label = structuredKeyLabels[displayKey]
-  return label ? `${label} (${displayKey})` : displayKey
+  return label || '自定义记忆'
+}
+
+function reliabilityLabel(item?: MemoryItem) {
+  const confidence = item?.confidence
+  if (confidence === undefined) return '可靠性待确认'
+  if (confidence < 0.75) return '需要核对'
+  if (confidence >= 0.85) return '可靠'
+  return '基本可靠'
+}
+
+function speakerLabel(role?: string) {
+  if (role === 'user') return '你'
+  if (role === 'assistant') return 'Lyle'
+  return '对话'
+}
+
+function plainMemoryText(value?: string) {
+  if (!value) return ''
+  return value
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```\w*\n?/g, '').replace(/```/g, ''))
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '• ')
+    .replace(/^\s*\d+\.\s+/gm, '• ')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .trim()
+}
+
+function toggleAdvancedMode() {
+  advancedMode.value = !advancedMode.value
+  if (!advancedMode.value && (activeTab.value === 'evidence' || activeTab.value === 'fragments')) {
+    activeTab.value = 'profiles'
+  }
 }
 
 function governanceItemTitle(item: MemoryItem) {
@@ -473,14 +530,6 @@ function sourceInfo(source?: string) {
   return { text, label: '', href: '' }
 }
 
-function confidenceHint(item?: MemoryItem) {
-  const confidence = item?.confidence
-  if (confidence === undefined) return ''
-  if (confidence < 0.75) return '低置信度：回答时仅作参考，建议核对来源后再采用。'
-  if (confidence >= 0.85) return '高置信度：明确表达、多次确认或长期稳定使用。'
-  return ''
-}
-
 function conversationTitle(id?: string | null) {
   if (!id || id === 'default') return '默认记忆'
   return conversations.value.find((item) => String(item.id) === String(id))?.title || `会话 ${id}`
@@ -492,16 +541,24 @@ function conversationTitle(id?: string | null) {
     <div class="toolbar">
       <div>
         <h1>记忆</h1>
-        <p class="muted">{{ selectedConversationTitle }} · {{ activeStructuredCount }} 条结构化记忆</p>
+        <p class="muted">{{ selectedConversationTitle }} · Lyle 已整理 {{ profileAll.length + activeStructuredCount }} 条可用信息</p>
       </div>
       <div class="row toolbar-controls">
-        <select v-model="conversationId" data-testid="memory-conversation-select" @change="handleConversationChange">
+        <select
+          v-model="conversationId"
+          aria-label="选择要查看的会话记忆"
+          data-testid="memory-conversation-select"
+          @change="handleConversationChange"
+        >
           <option value="">默认记忆</option>
           <option v-for="item in conversations" :key="item.id" :value="String(item.id)">
             {{ item.title }}
           </option>
         </select>
         <button :disabled="loading" type="button" @click="refresh">刷新</button>
+        <button class="secondary" type="button" :aria-pressed="advancedMode" @click="toggleAdvancedMode">
+          {{ advancedMode ? '退出高级模式' : '高级模式' }}
+        </button>
       </div>
     </div>
 
@@ -509,10 +566,10 @@ function conversationTitle(id?: string | null) {
     <p v-if="notice" class="alert success">{{ notice }}</p>
 
     <div class="segmented memory-tabs">
-      <button type="button" :class="{ active: activeTab === 'profiles' }" @click="activeTab = 'profiles'">用户画像</button>
-      <button type="button" :class="{ active: activeTab === 'fragments' }" @click="activeTab = 'fragments'">记忆片段</button>
-      <button type="button" :class="{ active: activeTab === 'evidence' }" @click="activeTab = 'evidence'">证据来源</button>
-      <button data-testid="memory-governance-tab" type="button" :class="{ active: activeTab === 'governance' }" @click="activeTab = 'governance'">治理中心</button>
+      <button type="button" :class="{ active: activeTab === 'profiles' }" @click="activeTab = 'profiles'">我的记忆</button>
+      <button data-testid="memory-governance-tab" type="button" :class="{ active: activeTab === 'governance' }" @click="activeTab = 'governance'">管理记忆</button>
+      <button v-if="advancedMode" type="button" :class="{ active: activeTab === 'evidence' }" @click="activeTab = 'evidence'">证据来源</button>
+      <button v-if="advancedMode" type="button" :class="{ active: activeTab === 'fragments' }" @click="activeTab = 'fragments'">技术详情</button>
     </div>
 
     <div v-if="loading" class="empty-state compact">
@@ -548,10 +605,9 @@ function conversationTitle(id?: string | null) {
           <div class="source-box">
             <strong>{{ profileTitle(selectedProfile) }}</strong>
             <span>{{ selectedProfile.value }}</span>
-            <small class="memory-meta">
-              {{ selectedProfile.schemaPath }} · 置信度 {{ selectedProfile.confidence ?? 1 }} · {{ statusLabel(selectedProfile.status) }}
-            </small>
+            <small class="memory-meta">{{ reliabilityLabel(selectedProfile) }} · {{ statusLabel(selectedProfile.status) }}</small>
             <small v-if="selectedProfile.updatedAt" class="memory-meta">更新时间：{{ formattedMemoryTime(selectedProfile.updatedAt) }}</small>
+            <details v-if="advancedMode" class="memory-technical"><summary>技术字段</summary><code>{{ selectedProfile.schemaPath }}</code><span>置信度 {{ selectedProfile.confidence ?? 1 }}</span></details>
           </div>
           <div class="row">
             <button
@@ -573,7 +629,7 @@ function conversationTitle(id?: string | null) {
               v-if="selectedProfile.schemaPath"
               class="danger"
               type="button"
-              @click="updateProfileStatus(selectedProfile.schemaPath, 'forgotten')"
+              @click="pendingForget = { kind: 'profile', schemaPath: selectedProfile.schemaPath, label: profileTitle(selectedProfile) }"
             >
               遗忘
             </button>
@@ -584,34 +640,22 @@ function conversationTitle(id?: string | null) {
       <article class="item">
         <h2>长期摘要</h2>
         <small v-if="summarySourceLabel" class="memory-meta">{{ summarySourceLabel }}</small>
-        <p class="memory-text">{{ memory.summary || '暂无长期摘要。多轮对话后会自动压缩沉淀。' }}</p>
+        <p class="memory-text">{{ plainMemoryText(memory.summary) || '暂无长期摘要。多轮对话后会自动整理。' }}</p>
       </article>
 
       <article class="item">
         <h2>记忆状态</h2>
         <div class="status-grid">
           <div>
-            <strong>结构化</strong>
-            <span>{{ structuredAll.length }}</span>
+            <strong>已记住</strong>
+            <span>{{ profileAll.length + activeStructuredCount }}</span>
           </div>
           <div>
-            <strong>画像</strong>
-            <span>{{ profileAll.length }}</span>
-          </div>
-          <div>
-            <strong>片段</strong>
-            <span>{{ fragmentAll.length }}</span>
-          </div>
-          <div>
-            <strong>短期轮次</strong>
+            <strong>当前对话</strong>
             <span>{{ memory.short_term.length }}</span>
           </div>
           <div>
-            <strong>向量召回</strong>
-            <span>{{ vectorCount }}</span>
-          </div>
-          <div>
-            <strong>待处理</strong>
+            <strong>需要核对</strong>
             <span>{{ conflictItems.length }}</span>
           </div>
         </div>
@@ -629,25 +673,25 @@ function conversationTitle(id?: string | null) {
           class="memory-row stacked"
           data-testid="short-term-memory-row"
         >
-          <strong>{{ item.role }}</strong>
-          <span>{{ item.content }}</span>
+          <strong>{{ speakerLabel(item.role) }}</strong>
+          <span>{{ plainMemoryText(item.content) }}</span>
         </div>
       </article>
 
       <article class="item">
         <h2>待处理记忆</h2>
-        <p v-if="conflictItems.length === 0" class="muted">暂无低置信度、禁用或过期记忆。</p>
+        <p v-if="conflictItems.length === 0" class="muted">暂无需要核对、已禁用或过期的记忆。</p>
         <div v-for="item in conflictItems" :key="`conflict-${item.key}`" class="memory-row stacked">
-          <strong>{{ structuredKeyLabel(item.key) }} · {{ statusLabel(item.status) }}</strong>
+          <strong>{{ item.label || structuredKeyLabel(item.key) }} · {{ statusLabel(item.status) }}</strong>
           <span>{{ item.value }}</span>
-          <small class="memory-meta">置信度 {{ item.confidence ?? 1 }} · {{ item.source || '无来源' }}</small>
+          <small class="memory-meta">{{ reliabilityLabel(item) }} · 建议确认来源后再使用</small>
         </div>
       </article>
     </section>
 
     <section v-if="activeTab === 'governance'" class="memory-layout">
-      <article class="item stack">
-        <h2>手动维护</h2>
+      <article v-if="advancedMode" class="item stack">
+        <h2>手动维护 · 高级</h2>
         <input v-model="memoryKey" data-testid="memory-key-input" placeholder="记忆键，例如 preference" />
         <input v-model="memoryValue" data-testid="memory-value-input" placeholder="记忆值，例如 喜欢西瓜" />
         <input v-model.number="memoryConfidence" min="0" max="1" step="0.01" type="number" placeholder="置信度 0-1" />
@@ -685,14 +729,14 @@ function conversationTitle(id?: string | null) {
 
       <article class="item stack" data-testid="low-confidence-memory-section">
         <div class="section-title">
-          <h2>低置信度</h2>
+          <h2>需要核对</h2>
           <span class="badge">{{ lowConfidenceItems.length }} 条</span>
         </div>
-        <p v-if="lowConfidenceItems.length === 0" class="muted">暂无低置信度记忆。</p>
+        <p v-if="lowConfidenceItems.length === 0" class="muted">暂无需要核对的记忆。</p>
         <div v-for="item in lowConfidenceItems" :key="`low-${item.key || item.schemaPath}-${item.value}`" class="memory-row stacked">
-          <strong>{{ item.label || item.schemaPath || structuredKeyLabel(item.key) }}</strong>
+          <strong>{{ userMemoryTitle(item) }}</strong>
           <span>{{ item.summary || item.value }}</span>
-          <small class="memory-meta">置信度 {{ item.confidence ?? 1 }} · 回答时需谨慎表达</small>
+          <small class="memory-meta">{{ reliabilityLabel(item) }} · 回答时会谨慎使用</small>
         </div>
       </article>
 
@@ -718,7 +762,7 @@ function conversationTitle(id?: string | null) {
           <span>{{ item.value }}</span>
           <small>
             {{ statusLabel(item.status) }}
-            <template v-if="item.confidence !== undefined"> · 置信度 {{ item.confidence }}</template>
+            <template v-if="item.confidence !== undefined"> · {{ reliabilityLabel(item) }}</template>
           </small>
         </button>
       </article>
@@ -731,13 +775,16 @@ function conversationTitle(id?: string | null) {
         </div>
         <template v-else>
           <div class="source-box">
-            <strong>{{ structuredKeyLabel(selectedStructured.key) }} = {{ selectedStructured.value }}</strong>
+            <strong>{{ structuredKeyLabel(selectedStructured.key) }}：{{ selectedStructured.value }}</strong>
             <span class="badge" :class="statusClass(selectedStructured.status)">{{ statusLabel(selectedStructured.status) }}</span>
-            <span v-if="selectedStructured.confidence !== undefined">置信度：{{ selectedStructured.confidence }}</span>
+            <span>{{ reliabilityLabel(selectedStructured) }}</span>
             <span v-if="selectedStructured.updated_at">更新时间：{{ formattedUpdatedAt(selectedStructured.updated_at) }}</span>
-            <span v-if="confidenceHint(selectedStructured)" class="memory-meta">{{ confidenceHint(selectedStructured) }}</span>
+            <span v-if="reliabilityLabel(selectedStructured) === '需要核对'" class="memory-meta">回答时仅作参考，建议核对来源后再采用。</span>
           </div>
-          <div>
+          <details v-if="advancedMode" class="memory-technical">
+            <summary>来源与技术字段</summary>
+            <code>{{ selectedStructured.key }}</code>
+            <span v-if="selectedStructured.confidence !== undefined">置信度：{{ selectedStructured.confidence }}</span>
             <strong>来源文本</strong>
             <p class="memory-text">{{ sourceInfo(selectedStructured.source).text }}</p>
             <a
@@ -747,7 +794,7 @@ function conversationTitle(id?: string | null) {
             >
               {{ sourceInfo(selectedStructured.source).label }}
             </a>
-          </div>
+          </details>
           <div class="row">
             <button class="secondary" type="button" @click="editStructured(selectedStructured)">编辑</button>
             <button
@@ -769,7 +816,7 @@ function conversationTitle(id?: string | null) {
               v-if="selectedStructured.key"
               class="danger"
               type="button"
-              @click="purgeStructured(selectedStructured.key)"
+              @click="pendingPurgeKey = selectedStructured.key"
             >
               永久删除
             </button>
@@ -778,7 +825,7 @@ function conversationTitle(id?: string | null) {
       </article>
     </section>
 
-    <section v-if="activeTab === 'evidence'" class="grid memory-grid">
+    <section v-if="advancedMode && activeTab === 'evidence'" class="grid memory-grid">
       <article class="item">
         <h2>画像证据</h2>
         <p v-if="!selectedProfile" class="muted">先在用户画像中选择一条画像。</p>
@@ -816,14 +863,14 @@ function conversationTitle(id?: string | null) {
               <button v-if="item.key" class="inline" type="button" @click="keepMergeSuggestion(suggestion, item)">保留这条</button>
               <button v-if="item.key" class="inline" type="button" @click="adoptStructuredSuggestion(item)">采用</button>
               <button v-if="item.key" class="inline danger" type="button" @click="changeStatus(item.key, 'disabled')">禁用</button>
-              <button v-if="item.key" class="inline danger" type="button" @click="purgeStructured(item.key)">永久删除</button>
+              <button v-if="item.key" class="inline danger" type="button" @click="pendingPurgeKey = item.key">永久删除</button>
             </span>
           </div>
         </div>
       </article>
     </section>
 
-    <section v-if="activeTab === 'fragments'" class="grid memory-grid">
+    <section v-if="advancedMode && activeTab === 'fragments'" class="grid memory-grid">
       <article class="item">
         <h2>记忆片段</h2>
         <p v-if="fragmentAll.length === 0" class="muted">暂无记忆片段。</p>
@@ -855,7 +902,7 @@ function conversationTitle(id?: string | null) {
               v-if="item.id"
               class="inline danger"
               type="button"
-              @click="updateFragmentStatus(item.id, 'forgotten')"
+              @click="pendingForget = { kind: 'fragment', id: item.id, label: plainMemoryText(item.normalizedText || item.sourceText).slice(0, 28) || '这条记忆' }"
             >
               遗忘
             </button>
@@ -890,5 +937,32 @@ function conversationTitle(id?: string | null) {
         </div>
       </article>
     </section>
+
+    <ConfirmActionDialog
+      :open="Boolean(pendingPurgeKey)"
+      title="永久删除记忆"
+      :description="`将永久删除“${structuredKeyLabel(pendingPurgeKey)}”。删除后无法恢复，Lyle 也不会再主动使用这条信息。`"
+      confirm-label="永久删除"
+      danger
+      :busy="loading"
+      @update:open="(open) => { if (!open) pendingPurgeKey = '' }"
+      @confirm="pendingPurgeKey && purgeStructured(pendingPurgeKey)"
+    />
+    <ConfirmActionDialog
+      :open="Boolean(pendingForget)"
+      title="遗忘这条记忆？"
+      :description="`遗忘“${pendingForget?.label || '这条记忆'}”后，Lyle 将不再主动使用它；你之后仍可在治理记录中查看状态。`"
+      confirm-label="确认遗忘"
+      danger
+      :busy="loading"
+      @update:open="(open) => { if (!open) pendingForget = null }"
+      @confirm="confirmForget"
+    />
   </section>
 </template>
+
+<style scoped>
+.memory-technical { display: grid; gap: var(--space-2); border-top: 1px solid var(--border); padding-top: var(--space-3); color: var(--muted-foreground); font-size: 13px; }
+.memory-technical summary { cursor: pointer; color: var(--foreground); font-weight: 700; }.memory-technical code { overflow-wrap: anywhere; }.memory-technical p { margin: 0; }
+@media (max-width: 680px) { .memory-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }.memory-tabs button { min-width: 0; } }
+</style>

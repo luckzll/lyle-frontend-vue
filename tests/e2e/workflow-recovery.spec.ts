@@ -10,7 +10,7 @@ test('recovers, retries, cancels, and second-confirms V4 workflow runs', async (
   await page.getByTestId('username-input').fill(username)
   await page.getByTestId('password-input').fill('123456')
   await page.getByTestId('auth-submit').click()
-  await expect(page).toHaveURL('/')
+  await expect(page).toHaveURL('/dashboard')
 
   const setup = await page.evaluate(async (suffix) => {
     const workspace = await workbenchRequest('/api/workbench/workspaces', {
@@ -44,7 +44,8 @@ test('recovers, retries, cancels, and second-confirms V4 workflow runs', async (
     }
   }, suffix)
 
-  await page.getByRole('link', { name: '工具', exact: true }).click()
+  await page.getByRole('button', { name: '展开系统' }).click()
+  await page.getByRole('link', { name: '高级设置', exact: true }).click()
   await page.getByTestId('workbench-tab-runs').click()
   await page.setViewportSize({ width: 1170, height: 1000 })
   const runLayout = await page.evaluate(() => ({

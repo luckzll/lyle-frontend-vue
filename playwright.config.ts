@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:5173'
+const playwrightPort = Number(process.env.PLAYWRIGHT_PORT || new URL(baseURL).port || 5173)
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -20,9 +21,14 @@ export default defineConfig({
     }
   ],
   webServer: {
-    command: 'npm run dev',
+    command: `npx vite --host 0.0.0.0 --port ${playwrightPort}`,
     url: baseURL,
     reuseExistingServer: true,
-    timeout: 60_000
+    timeout: 60_000,
+    env: {
+      ...process.env,
+      VITE_AGENT_TASK_ENABLED: 'true',
+      VITE_AGENT_TASK_ENABLED_USERS: '*'
+    }
   }
 })

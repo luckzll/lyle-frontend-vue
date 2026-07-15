@@ -1,59 +1,371 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { getCurrentUser, hasAuth } from '@/auth'
-import ChatView from '@/views/ChatView.vue'
-import ConversationView from '@/views/ConversationView.vue'
-import DashboardView from '@/views/DashboardView.vue'
-import KnowledgeBaseView from '@/views/KnowledgeBaseView.vue'
-import LoginView from '@/views/LoginView.vue'
-import MemoryView from '@/views/MemoryView.vue'
-import SettingsView from '@/views/SettingsView.vue'
-import AdminView from '@/views/AdminView.vue'
-import TasksView from '@/views/TasksView.vue'
-import EvaluationView from '@/views/EvaluationView.vue'
-import PromptView from '@/views/PromptView.vue'
-import OperationsView from '@/views/OperationsView.vue'
-import ProjectView from '@/views/ProjectView.vue'
-import WorkbenchView from '@/views/WorkbenchView.vue'
-import AutomationHomeView from '@/views/AutomationHomeView.vue'
-import ExecutionCenterView from '@/views/ExecutionCenterView.vue'
-import ConnectionView from '@/views/ConnectionView.vue'
+import { isAgentTaskFrontendEnabled } from '@/features/agentTask'
+import type { NavigationGroupId } from '@/app/navigation'
+
+declare module 'vue-router' {
+  interface RouteMeta {
+    title: string
+    navGroup?: NavigationGroupId
+    icon?: string
+    requiresAuth: boolean
+    requiresAdmin: boolean
+    layout: 'auth' | 'default'
+  }
+}
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/login', name: 'login', component: LoginView },
-    { path: '/', name: 'chat', component: ChatView },
-    { path: '/dashboard', name: 'dashboard', component: DashboardView },
-    { path: '/knowledge-bases', name: 'knowledge-bases', component: KnowledgeBaseView },
-    { path: '/conversations', name: 'conversations', component: ConversationView },
-    { path: '/connectors', redirect: { path: '/advanced-settings', query: { tab: 'connectors' } } },
-    { path: '/advanced-settings', name: 'advanced-settings', component: WorkbenchView },
-    { path: '/automations', name: 'automations', component: AutomationHomeView },
-    { path: '/execution-center', name: 'execution-center', component: ExecutionCenterView },
-    { path: '/connections', name: 'connections', component: ConnectionView },
-    { path: '/memory', name: 'memory', component: MemoryView },
-    { path: '/tasks', name: 'tasks', component: TasksView },
-    { path: '/projects', name: 'projects', component: ProjectView },
-    { path: '/projects/:projectId', name: 'project-detail', component: ProjectView },
-    { path: '/operations', name: 'operations', component: OperationsView },
-    { path: '/evaluation', name: 'evaluation', component: EvaluationView, meta: { requiresAdmin: true } },
-    { path: '/prompts', name: 'prompts', component: PromptView, meta: { requiresAdmin: true } },
-    { path: '/settings', name: 'settings', component: SettingsView },
-    { path: '/admin', name: 'admin', component: AdminView, meta: { requiresAdmin: true } }
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/LoginView.vue'),
+      meta: {
+        title: '登录',
+        icon: 'log-in',
+        requiresAuth: false,
+        requiresAdmin: false,
+        layout: 'auth'
+      }
+    },
+    {
+      path: '/',
+      name: 'chat',
+      component: () => import('@/views/ChatView.vue'),
+      meta: {
+        title: '聊天',
+        navGroup: 'start',
+        icon: 'message-square',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/dashboard',
+      name: 'dashboard',
+      component: () => import('@/views/DashboardView.vue'),
+      meta: {
+        title: '工作台',
+        navGroup: 'start',
+        icon: 'layout-dashboard',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/knowledge-bases',
+      name: 'knowledge-bases',
+      component: () => import('@/views/KnowledgeBaseView.vue'),
+      meta: {
+        title: '知识库',
+        navGroup: 'knowledge',
+        icon: 'library-big',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/knowledge',
+      name: 'knowledge-legacy',
+      redirect: (to) => ({ path: '/knowledge-bases', query: to.query, hash: to.hash }),
+      meta: {
+        title: '知识库',
+        navGroup: 'knowledge',
+        icon: 'library-big',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/conversations',
+      name: 'conversations',
+      component: () => import('@/views/ConversationView.vue'),
+      meta: {
+        title: '会话',
+        navGroup: 'knowledge',
+        icon: 'messages-square',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/connectors',
+      name: 'connectors',
+      redirect: (to) => ({
+        path: '/advanced-settings',
+        query: { ...to.query, tab: 'connectors' }
+      }),
+      meta: {
+        title: '连接器',
+        navGroup: 'system',
+        icon: 'plug',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/advanced-settings',
+      name: 'advanced-settings',
+      component: () => import('@/views/WorkbenchView.vue'),
+      meta: {
+        title: '高级设置',
+        navGroup: 'system',
+        icon: 'sliders-horizontal',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/automations',
+      name: 'automations',
+      component: () => import('@/views/AutomationHomeView.vue'),
+      meta: {
+        title: '自动化',
+        navGroup: 'progress',
+        icon: 'workflow',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/agent-tasks',
+      name: 'agent-tasks',
+      component: () => import('@/views/AgentTasksView.vue'),
+      meta: {
+        title: 'Agent Task',
+        navGroup: 'progress',
+        icon: 'bot',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/agent-tasks/new',
+      name: 'agent-task-create',
+      component: () => import('@/views/AgentTaskCreateView.vue'),
+      meta: {
+        title: '新建 Agent Task',
+        navGroup: 'progress',
+        icon: 'bot',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/agent-tasks/:id/plan',
+      name: 'agent-plan-approval',
+      component: () => import('@/views/AgentPlanApprovalView.vue'),
+      meta: {
+        title: '审批执行计划',
+        navGroup: 'progress',
+        icon: 'list-checks',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/agent-tasks/:id',
+      name: 'agent-task-detail',
+      component: () => import('@/views/AgentTaskDetailView.vue'),
+      meta: {
+        title: 'Agent Task 运行台',
+        navGroup: 'progress',
+        icon: 'bot',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/execution-center',
+      name: 'execution-center',
+      component: () => import('@/views/ExecutionCenterView.vue'),
+      meta: {
+        title: '执行中心',
+        navGroup: 'progress',
+        icon: 'activity',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/connections',
+      name: 'connections',
+      component: () => import('@/views/ConnectionView.vue'),
+      meta: {
+        title: '连接',
+        navGroup: 'system',
+        icon: 'plug-zap',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/memory',
+      name: 'memory',
+      component: () => import('@/views/MemoryView.vue'),
+      meta: {
+        title: '记忆',
+        navGroup: 'knowledge',
+        icon: 'brain',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/tasks',
+      name: 'tasks',
+      component: () => import('@/views/TasksView.vue'),
+      meta: {
+        title: '任务',
+        navGroup: 'progress',
+        icon: 'list-todo',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/projects',
+      name: 'projects',
+      component: () => import('@/views/ProjectView.vue'),
+      meta: {
+        title: '项目',
+        navGroup: 'progress',
+        icon: 'folder-kanban',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/projects/:projectId',
+      name: 'project-detail',
+      component: () => import('@/views/ProjectView.vue'),
+      meta: {
+        title: '项目详情',
+        navGroup: 'progress',
+        icon: 'folder-kanban',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/operations',
+      name: 'operations',
+      redirect: (to) => ({
+        path: '/execution-center',
+        query: { ...to.query, view: 'history' }
+      }),
+      meta: {
+        title: '操作',
+        navGroup: 'system',
+        icon: 'history',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/evaluation',
+      name: 'evaluation',
+      component: () => import('@/views/EvaluationView.vue'),
+      meta: {
+        title: '评测',
+        navGroup: 'admin',
+        icon: 'clipboard-check',
+        requiresAuth: true,
+        requiresAdmin: true,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/prompts',
+      name: 'prompts',
+      component: () => import('@/views/PromptView.vue'),
+      meta: {
+        title: 'Prompt',
+        navGroup: 'admin',
+        icon: 'file-text',
+        requiresAuth: true,
+        requiresAdmin: true,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('@/views/SettingsView.vue'),
+      meta: {
+        title: '设置',
+        navGroup: 'system',
+        icon: 'settings',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('@/views/AdminView.vue'),
+      meta: {
+        title: '管理',
+        navGroup: 'admin',
+        icon: 'shield-check',
+        requiresAuth: true,
+        requiresAdmin: true,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: () => import('@/views/NotFoundView.vue'),
+      meta: {
+        title: '页面未找到',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    }
   ]
 })
 
 router.beforeEach((to) => {
-  if (to.name !== 'login' && !hasAuth()) {
+  if (to.path.startsWith('/agent-tasks') && !isAgentTaskFrontendEnabled(getCurrentUser()?.id)) {
+    return { path: '/execution-center', query: { feature: 'agent-task-unavailable' } }
+  }
+  if (to.meta.requiresAuth && !hasAuth()) {
     return { name: 'login' }
   }
   if (to.name === 'login' && hasAuth()) {
-    return { name: 'chat' }
+    return { name: 'dashboard' }
   }
   if (to.meta.requiresAdmin && getCurrentUser()?.role !== 'ADMIN') {
-    return { name: 'chat' }
+    return { name: 'dashboard' }
   }
   return true
+})
+
+router.afterEach((to) => {
+  document.title = to.meta.title ? `${to.meta.title} · Lyle AI` : 'Lyle AI'
 })
 
 export default router

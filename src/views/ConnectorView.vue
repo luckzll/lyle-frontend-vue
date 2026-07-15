@@ -167,7 +167,7 @@ function requestError(exception: unknown, fallback: string) {
         </button>
       </aside>
 
-      <main class="stack">
+      <section class="stack" aria-label="连接器详情">
         <article v-if="selectedConnector" class="item">
           <div class="section-title">
             <div>
@@ -246,7 +246,7 @@ function requestError(exception: unknown, fallback: string) {
           </div>
           <p v-else class="muted">暂无结果。</p>
         </article>
-      </main>
+      </section>
     </div>
   </section>
 </template>

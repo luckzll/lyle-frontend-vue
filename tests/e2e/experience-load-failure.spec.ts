@@ -10,6 +10,10 @@ test('Product experience pages distinguish API failures from real empty states',
     localStorage.setItem('lyle-user', JSON.stringify({ id: 1, username: 'experience_failure_test', role: 'USER' }))
   }, { token })
 
+  await page.route('**/api/agent-tools/reminders**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) })
+  })
+
   await page.route('**/api/experience/**', async (route) => {
     await route.fulfill({
       status: 500,

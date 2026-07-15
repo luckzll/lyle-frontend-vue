@@ -1,0 +1,71 @@
+:root {
+  /* Primitive colors */
+  --lyle-color-white: #ffffff;
+  --lyle-color-slate-25: #fcfdff;
+  --lyle-color-slate-50: #f8fafc;
+  --lyle-color-slate-100: #f1f5f9;
+  --lyle-color-slate-200: #e2e8f0;
+  --lyle-color-slate-300: #cbd5e1;
+  --lyle-color-slate-400: #94a3b8;
+  --lyle-color-slate-500: #64748b;
+  --lyle-color-slate-600: #475569;
+  --lyle-color-slate-700: #334155;
+  --lyle-color-slate-800: #1e293b;
+  --lyle-color-slate-900: #0f172a;
+  --lyle-color-slate-950: #020617;
+  --lyle-color-indigo-50: #eef2ff;
+  --lyle-color-indigo-100: #e0e7ff;
+  --lyle-color-indigo-200: #c7d2fe;
+  --lyle-color-indigo-300: #a5b4fc;
+  --lyle-color-indigo-500: #6366f1;
+  --lyle-color-indigo-600: #4f46e5;
+  --lyle-color-indigo-700: #4338ca;
+  --lyle-color-indigo-800: #3730a3;
+  --lyle-color-emerald-50: #ecfdf5;
+  --lyle-color-emerald-200: #a7f3d0;
+  --lyle-color-emerald-600: #059669;
+  --lyle-color-emerald-700: #047857;
+  --lyle-color-amber-50: #fffbeb;
+  --lyle-color-amber-200: #fde68a;
+  --lyle-color-amber-600: #d97706;
+  --lyle-color-amber-700: #b45309;
+  --lyle-color-amber-800: #92400e;
+  --lyle-color-rose-50: #fff1f2;
+  --lyle-color-rose-200: #fecdd3;
+  --lyle-color-rose-600: #e11d48;
+  --lyle-color-rose-700: #be123c;
+  --lyle-color-sky-50: #f0f9ff;
+  --lyle-color-sky-200: #bae6fd;
+  --lyle-color-sky-600: #0284c7;
+
+  /* Spacing */
+  --lyle-space-1: 0.25rem;
+  --lyle-space-2: 0.5rem;
+  --lyle-space-3: 0.75rem;
+  --lyle-space-4: 1rem;
+  --lyle-space-5: 1.25rem;
+  --lyle-space-6: 1.5rem;
+  --lyle-space-7: 1.75rem;
+  --lyle-space-8: 2rem;
+  --lyle-space-10: 2.5rem;
+  --lyle-space-12: 3rem;
+
+  /* Shape, elevation, and motion */
+  --lyle-radius-sm: 0.375rem;
+  --lyle-radius-md: 0.5rem;
+  --lyle-radius-lg: 0.75rem;
+  --lyle-radius-xl: 1rem;
+  --lyle-radius-full: 9999px;
+  --lyle-shadow-sm: 0 1px 2px rgb(15 23 42 / 0.05);
+  --lyle-shadow-popover: 0 12px 30px rgb(15 23 42 / 0.12);
+  --lyle-shadow-dialog: 0 24px 64px rgb(15 23 42 / 0.2);
+  --lyle-duration-fast: 140ms;
+  --lyle-duration-normal: 200ms;
+  --lyle-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Application layout */
+  --lyle-sidebar-width: 15.5rem;
+  --lyle-sidebar-width-collapsed: 4.5rem;
+  --lyle-header-height: 4rem;
+  --lyle-content-max-width: 90rem;
+}

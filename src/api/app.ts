@@ -51,7 +51,18 @@ import type {
   StructuredMemoryMergeSuggestion,
   User
 } from './types'
-import type { AutomationDraft, AutomationTemplate, ConfirmationInboxItem, ConnectionDiagnostic, ExecutionResultSummary, AutomationSummary } from './types'
+import type {
+  AutomationDraft,
+  AutomationSummary,
+  AutomationTemplate,
+  AutomationUpdatePayload,
+  ConfirmationInboxItem,
+  ConnectionDiagnostic,
+  EffectiveProgressEventPayload,
+  ExecutionResultListParams,
+  ExecutionResultPage,
+  ExecutionResultSummary
+} from './types'
 
 export type StreamMeta = {
   sources?: ChatSource[]
@@ -97,6 +108,10 @@ export function createConversation(title: string) {
 
 export function listConversations() {
   return http.get<Conversation[]>('/conversations')
+}
+
+export function updateConversationTitle(conversationId: string, title: string) {
+  return http.patch<Conversation>(`/conversations/${conversationId}`, { title })
 }
 
 export function deleteConversation(conversationId: string) {
@@ -774,8 +789,8 @@ export function createAutomation(payload: Record<string, unknown>) {
   return http.post<Record<string, unknown>>('/workbench/automations', payload)
 }
 
-export function updateAutomation(automationId: number, payload: Record<string, unknown>) {
-  return http.patch<Record<string, unknown>>(`/workbench/automations/${automationId}`, payload)
+export function updateAutomation(automationId: number, payload: AutomationUpdatePayload) {
+  return http.patch<AutomationSummary>(`/workbench/automations/${automationId}`, payload)
 }
 
 export function deleteAutomation(automationId: number) {
@@ -810,6 +825,25 @@ export function listExperienceTemplates() {
   return http.get<{ items: AutomationTemplate[] }>('/experience/templates')
 }
 
+export type ProductEventPayload = {
+  eventType: string
+  page: string
+  actionType?: string
+  projectId?: number
+  templateId?: string
+  status?: string
+  durationMs?: number
+  errorCategory?: string
+}
+
+export function trackProductEvent(payload: ProductEventPayload) {
+  return http.post<{ accepted: boolean }>('/experience/events', payload)
+}
+
+export function trackEffectiveProgressAction(payload: EffectiveProgressEventPayload) {
+  return trackProductEvent({ eventType: 'effective_progress_action', ...payload })
+}
+
 export function getOnboarding() {
   return http.get<Record<string, any>>('/experience/onboarding')
 }
@@ -838,8 +872,12 @@ export function discardDraft(draftId: number) {
   return http.post<AutomationDraft>(`/experience/drafts/${draftId}/discard`)
 }
 
-export function listExecutionResults(params: { status?: string; projectId?: number; limit?: number } = {}) {
-  return http.get<{ items: ExecutionResultSummary[] }>('/experience/execution/results', { params })
+export function listExecutionResults(params: ExecutionResultListParams = {}) {
+  return http.get<ExecutionResultPage>('/experience/execution/results', { params })
+}
+
+export function getExecutionResult(id: number) {
+  return http.get<ExecutionResultSummary>(`/experience/execution/results/${id}`)
 }
 
 export function listNeedsAttention() {
@@ -848,6 +886,10 @@ export function listNeedsAttention() {
 
 export function listConfirmations() {
   return http.get<{ items: ConfirmationInboxItem[] }>('/experience/confirmations')
+}
+
+export function getConfirmation(id: number) {
+  return http.get<ConfirmationInboxItem>(`/experience/confirmations/${id}`)
 }
 
 export function confirmOperation(id: number) {

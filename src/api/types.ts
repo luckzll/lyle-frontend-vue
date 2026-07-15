@@ -301,6 +301,8 @@ export interface AutomationDraft {
 
 export interface AutomationSummary {
   id: number
+  workflowId?: number
+  projectId?: number | null
   name: string
   status: 'enabled' | 'paused' | 'failed' | string
   triggerType?: string
@@ -309,6 +311,30 @@ export interface AutomationSummary {
   nextRunAt?: string | null
   lastRunAt?: string | null
   consecutiveFailures?: number
+  input?: Record<string, unknown>
+  maxRetries?: number
+  retryDelaySeconds?: number
+  notifyOnFailure?: boolean
+  projectName?: string | null
+  lastRunStatus?: string | null
+  lastResultTitle?: string | null
+  lastResultId?: number | null
+  needsAttention?: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface AutomationUpdatePayload {
+  workflowId?: number
+  name: string
+  triggerType: string
+  scheduleExpr?: string | null
+  timezone: string
+  status: string
+  input: Record<string, unknown>
+  maxRetries: number
+  retryDelaySeconds: number
+  notifyOnFailure: boolean
 }
 
 export interface ExecutionResultSummary {
@@ -316,6 +342,8 @@ export interface ExecutionResultSummary {
   sourceType: string
   sourceId: string
   projectId?: number | null
+  automationId?: number | null
+  automationName?: string | null
   templateId?: string | null
   status: 'completed' | 'partial' | 'failed' | 'awaiting_confirmation'
   title: string
@@ -329,16 +357,56 @@ export interface ExecutionResultSummary {
   createdAt: string
 }
 
+export interface ExecutionResultListParams {
+  status?: string
+  projectId?: number
+  automationId?: number
+  cursor?: string
+  limit?: number
+}
+
+export interface ExecutionResultPage {
+  items: ExecutionResultSummary[]
+  nextCursor: string | null
+  hasMore: boolean
+}
+
+type EffectiveProgressCommon = {
+  status?:
+    | 'accepted'
+    | 'awaiting_confirmation'
+    | 'completed'
+    | 'confirmed'
+    | 'enabled'
+    | 'failed'
+    | 'partial'
+    | 'pending'
+    | 'succeeded'
+  durationMs?: number
+}
+
+export type EffectiveProgressEventPayload = EffectiveProgressCommon & (
+  | { page: 'tasks'; actionType: 'task_complete' | 'task_reschedule'; projectId?: number }
+  | { page: 'execution-center'; actionType: 'confirmation' | 'result_action'; projectId?: number }
+  | { page: 'automations'; actionType: 'automation_enable' | 'automation_run'; projectId?: number }
+  | { page: 'chat'; actionType: 'project_chat'; projectId: number }
+)
+
 export interface ConfirmationInboxItem {
   pendingOperationId: number
   actionTitle: string
+  toolName?: string
+  operationType?: string
   riskLevel: string
+  status?: string
   reason: string
   impactResources: string[]
   reversible: boolean
   requiresSecondConfirmation: boolean
+  beforeAfter?: unknown
   source: string
   createdAt: string
+  updatedAt?: string
 }
 
 export interface ConnectionDiagnostic {
@@ -476,6 +544,13 @@ export interface ExperienceAnalytics {
   executionByStatus: Array<{ status: string; count: number }>
   confirmations: { viewed: number; confirmed: number; rejected: number }
   failureCategories: Array<{ category: string; count: number }>
+  northStar: {
+    windowDays: 7
+    twoPlusEffectiveProgressUsers: number
+    eventActiveUsers: number
+    shareOfEventActiveUsers: number
+    effectiveProgressActions: number
+  }
 }
 
 export interface AgentTodoItem {

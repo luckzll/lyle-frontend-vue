@@ -9,7 +9,7 @@ test('user can create a todo directly from the task page', async ({ page }) => {
   await page.getByTestId('username-input').fill(username)
   await page.getByTestId('password-input').fill('123456')
   await page.getByTestId('auth-submit').click()
-  await expect(page).toHaveURL('/')
+  await expect(page).toHaveURL('/dashboard')
 
   await page.getByRole('link', { name: '任务', exact: true }).click()
   await page.getByTestId('manual-todo-title').fill(title)

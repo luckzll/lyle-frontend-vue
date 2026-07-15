@@ -1,9 +1,10 @@
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), tailwindcss()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
@@ -11,7 +12,12 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:8080'
+      '/api': process.env.LYLE_BACKEND_PROXY || 'http://localhost:8080'
+    }
+  },
+  preview: {
+    proxy: {
+      '/api': process.env.LYLE_BACKEND_PROXY || 'http://localhost:8080'
     }
   }
 })

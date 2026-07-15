@@ -20,7 +20,7 @@ async function submit() {
     const request = mode.value === 'login' ? login : register
     const response = await request(username.value.trim(), password.value)
     setAuth(response.data.user, response.data.token)
-    await router.push('/')
+    await router.push('/dashboard')
   } catch (error: any) {
     errorMessage.value = error?.response?.data?.message || error?.response?.data?.detail || '登录失败，请检查账号密码。'
   } finally {

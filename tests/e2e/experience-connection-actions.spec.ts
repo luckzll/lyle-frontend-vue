@@ -10,6 +10,10 @@ test('recommended connection actions do not diagnose placeholders and card failu
     localStorage.setItem('lyle-user', JSON.stringify({ id: 1, username: 'experience_connection_test', role: 'USER' }))
   }, { token })
 
+  await page.route('**/api/agent-tools/reminders**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"items":[]}' }))
+  await page.route('**/api/experience/confirmations**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"items":[]}' }))
+  await page.route('**/api/experience/execution/needs-attention**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"items":[]}' }))
+
   await page.route('**/api/experience/connections/recommended', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [
       { id: 'local-project', type: 'local_project', name: '本地项目', status: 'unavailable', displayReason: '尚未授权本地工作区。', nextAction: '前往添加工作区', actionTarget: '/advanced-settings?tab=cli', diagnosable: false, capabilities: ['读取 Git 状态'] },

@@ -22,6 +22,8 @@ import {
   linkTaskToGoal,
   listAgentPlans,
   listAgentTodos,
+  listAutomations,
+  listExecutionResults,
   listGoals,
   listProjects,
   pauseAgentPlan,
@@ -32,7 +34,11 @@ import {
   updateProject,
   updateProjectOpenQuestion
 } from '@/api/app'
-import type { AgentPlan, AgentTodoItem, DailyBriefing, Goal, Project, ProjectDecision, ProjectOpenQuestion, ProjectOverview } from '@/api/types'
+import type { AgentPlan, AgentTodoItem, AutomationSummary, DailyBriefing, ExecutionResultSummary, Goal, Project, ProjectDecision, ProjectOpenQuestion, ProjectOverview } from '@/api/types'
+import { useWorkspaceStore } from '@/stores/workspace'
+import StatusBadge from '@/components/domain/StatusBadge.vue'
+import DetailDrawer from '@/components/layout/DetailDrawer.vue'
+import { formatAutomationSchedule } from '@/domain/automation-schedule'
 
 type ProjectSuggestion = {
   id: string
@@ -56,26 +62,32 @@ type ProjectTimelineItem = {
 
 const route = useRoute()
 const router = useRouter()
+const workspace = useWorkspaceStore()
 const projects = ref<Project[]>([])
 const overview = ref<ProjectOverview | null>(null)
 const goals = ref<Goal[]>([])
 const plans = ref<AgentPlan[]>([])
 const todos = ref<AgentTodoItem[]>([])
 const projectBriefing = ref<DailyBriefing | null>(null)
+const projectResults = ref<ExecutionResultSummary[]>([])
+const projectAutomations = ref<AutomationSummary[]>([])
+const projectActivityError = ref('')
 const loading = ref(false)
 const saving = ref(false)
+const showCreateProject = ref(false)
+const showMoreOverview = ref(false)
 const briefingLoading = ref(false)
 const error = ref('')
 const notice = ref('')
 const activeTab = ref<'overview' | 'goals' | 'plans' | 'links'>('overview')
 const briefingMode = ref<'daily' | 'evening' | 'weekly'>('daily')
 const overviewSections = ref<Record<OverviewSectionKey, boolean>>({
-  health: true,
+  health: false,
   actions: true,
-  briefing: true,
+  briefing: false,
   risk: true,
-  timeline: true,
-  suggestions: true,
+  timeline: false,
+  suggestions: false,
   settings: false
 })
 const projectForm = ref({
@@ -186,6 +198,8 @@ async function loadOverview() {
     goals.value = []
     plans.value = []
     todos.value = []
+    projectResults.value = []
+    projectAutomations.value = []
     return
   }
   const response = await getProjectOverview(selectedProjectId.value)
@@ -195,10 +209,23 @@ async function loadOverview() {
     currentStage: response.data.project.currentStage ?? '',
     priority: response.data.project.priority ?? 0
   }
-  await loadGoals()
-  await loadPlans()
-  await loadTodos()
-  await loadProjectBriefing()
+  await Promise.all([loadGoals(), loadPlans(), loadTodos(), loadProjectBriefing(), loadProjectActivity()])
+}
+
+async function loadProjectActivity() {
+  if (!selectedProjectId.value) return
+  projectActivityError.value = ''
+  const [resultResponse, automationResponse] = await Promise.allSettled([
+    listExecutionResults({ projectId: selectedProjectId.value, limit: 5 }),
+    listAutomations()
+  ])
+  projectResults.value = resultResponse.status === 'fulfilled' ? resultResponse.value.data.items.slice(0, 5) : []
+  projectAutomations.value = automationResponse.status === 'fulfilled'
+    ? automationResponse.value.data.items.filter((item) => Number(item.input?.projectId) === selectedProjectId.value).slice(0, 5)
+    : []
+  if (resultResponse.status === 'rejected' || automationResponse.status === 'rejected') {
+    projectActivityError.value = '部分近期结果或自动化暂时无法加载。'
+  }
 }
 
 async function loadGoals() {
@@ -262,6 +289,7 @@ async function submitProject() {
   try {
     const response = await createProject(projectForm.value)
     projectForm.value = { name: '', description: '', currentStage: '', priority: 0 }
+    showCreateProject.value = false
     showNotice('项目已创建')
     await refresh()
     await router.push(`/projects/${response.data.id}`)
@@ -911,32 +939,34 @@ function buildProjectHealthItems() {
   return [
     {
       label: '目标清晰度',
-      score: visibleActiveGoals.value.length > 0 ? 100 : 35,
+      score: visibleActiveGoals.value.length > 0 ? 100 : 0,
       detail: visibleActiveGoals.value.length > 0 ? `${visibleActiveGoals.value.length} 个进行中目标` : '还没有进行中目标'
     },
     {
       label: '任务覆盖度',
-      score: actionCount > 0 ? 100 : 30,
+      score: overdueProjectTodos.value.length > 0
+        ? Math.max(0, 60 - overdueProjectTodos.value.length * 10)
+        : actionCount > 0 ? 100 : 0,
       detail: actionCount > 0 ? `${actionCount} 个关联或匹配任务` : '缺少承接目标的任务'
     },
     {
       label: '资料完整度',
-      score: ((linkCounts.knowledge_file ?? 0) + (linkCounts.memory_fragment ?? 0)) > 0 ? 90 : 35,
+      score: ((linkCounts.knowledge_file ?? 0) + (linkCounts.memory_fragment ?? 0)) > 0 ? 100 : 0,
       detail: ((linkCounts.knowledge_file ?? 0) + (linkCounts.memory_fragment ?? 0)) > 0 ? '已有资料或记忆来源' : '还没有资料来源'
     },
     {
       label: '决策沉淀度',
-      score: decisionCount > 0 ? 90 : 40,
+      score: decisionCount > 0 ? 100 : 0,
       detail: decisionCount > 0 ? `${decisionCount} 条关键决策` : '关键决策尚未沉淀'
     },
     {
       label: '计划推进度',
-      score: planCount > 0 ? 85 : 35,
+      score: planCount > 0 ? 100 : 0,
       detail: planCount > 0 ? `${planCount} 个长任务计划` : '还没有推进计划'
     },
     {
       label: '风险状态',
-      score: openQuestionCount > 0 ? 55 : 90,
+      score: Math.max(0, 100 - openQuestionCount * 20 - overdueProjectTodos.value.length * 15),
       detail: openQuestionCount > 0 ? `${openQuestionCount} 个开放问题` : '暂无开放问题'
     }
   ]
@@ -1046,6 +1076,16 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
 
   return suggestions.slice(0, 8)
 }
+
+async function openProjectChat() {
+  if (!selectedProject.value) return
+  workspace.stageChatDraft(
+    `帮我基于「${selectedProject.value.name}」当前目标、任务和风险，明确最值得推进的下一步。`,
+    { id: selectedProject.value.id, name: selectedProject.value.name },
+    'project'
+  )
+  await router.push('/')
+}
 </script>
 
 <template>
@@ -1065,7 +1105,10 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
       <aside class="item project-sidebar">
         <div class="section-title">
           <h2>项目列表</h2>
-          <span class="badge">{{ projects.length }}</span>
+          <span class="row">
+            <span class="badge">{{ projects.length }}</span>
+            <button class="inline" type="button" @click="showCreateProject = true">新建</button>
+          </span>
         </div>
         <div v-if="projects.length === 0" class="empty-state compact">
           <strong>暂无项目</strong>
@@ -1080,53 +1123,26 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
           <strong>{{ project.name }}</strong>
           <span>{{ project.currentStage || '未设置阶段' }}</span>
         </RouterLink>
-
-        <form class="stack" @submit.prevent="submitProject">
-          <h2>新建项目</h2>
-          <input v-model="projectForm.name" placeholder="项目名称" />
-          <textarea v-model="projectForm.description" rows="3" placeholder="一句话定位" />
-          <input v-model="projectForm.currentStage" placeholder="当前阶段" />
-          <input v-model.number="projectForm.priority" type="number" placeholder="优先级" />
-          <button :disabled="saving || !projectForm.name.trim()" type="submit">创建</button>
-        </form>
       </aside>
 
-      <main v-if="selectedProject" class="stack">
+      <section v-if="selectedProject" class="stack" aria-label="项目详情">
         <article class="item">
           <div class="section-title">
             <div>
               <h2>{{ selectedProject.name }}</h2>
               <p class="muted">{{ selectedProject.description || '还没有项目定位。' }}</p>
             </div>
-            <span class="badge" :class="{ success: selectedProject.status === 'active' }">
-              {{ selectedProject.status === 'active' ? '进行中' : '已归档' }}
+            <span class="row">
+              <button type="button" @click="openProjectChat">在聊天中推进</button>
+              <span class="badge" :class="{ success: selectedProject.status === 'active' }">
+                {{ selectedProject.status === 'active' ? '进行中' : '已归档' }}
+              </span>
             </span>
           </div>
-          <div class="status-grid">
-            <div>
-              <span class="metric">{{ selectedProject.currentStage || '未设置' }}</span>
-              <span class="muted">当前阶段</span>
-            </div>
-            <div>
-              <span class="metric">{{ selectedProject.priority }}</span>
-              <span class="muted">优先级</span>
-            </div>
-            <div>
-              <span class="metric">{{ overview?.links.length ?? 0 }}</span>
-              <span class="muted">近期关联</span>
-            </div>
-            <div>
-              <span class="metric">{{ visibleActiveGoals.length }}</span>
-              <span class="muted">进行中目标</span>
-            </div>
-            <div>
-              <span class="metric">{{ averageProgress }}%</span>
-              <span class="muted">目标平均进度</span>
-            </div>
-            <div>
-              <span class="metric">{{ projectTodos.length }}</span>
-              <span class="muted">本周行动</span>
-            </div>
+          <div class="project-summary-strip" aria-label="项目摘要">
+            <span><strong>{{ selectedProject.currentStage || '未设置' }}</strong>当前阶段</span>
+            <span :class="{ danger: overdueProjectTodos.length > 0 }"><strong>{{ overdueProjectTodos.length }}</strong>个逾期</span>
+            <span><strong>{{ projectResults.length }}</strong>个近期结果</span>
           </div>
         </article>
 
@@ -1138,7 +1154,7 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
         </div>
 
         <div v-if="activeTab === 'overview'" class="grid project-overview-grid">
-          <article class="item wide collapsible-section">
+          <article v-if="showMoreOverview" class="item wide collapsible-section">
             <div class="section-title collapsible-head">
               <div>
                 <h2>项目健康度</h2>
@@ -1201,12 +1217,46 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
               </div>
               <div v-else class="empty-state compact">
                 <strong>还没有项目行动</strong>
-                <span>可以从右侧建议一键创建下一步待办。</span>
+                <span>可以在任务页创建下一步，或直接让 Lyle 在聊天中拆解行动。</span>
               </div>
             </div>
           </article>
 
-          <article class="item wide collapsible-section">
+          <article class="item wide project-activity-section">
+            <div class="section-title">
+              <div>
+                <h2>近期结果与自动化</h2>
+                <p class="muted">围绕当前项目发生的执行结果和持续工作。</p>
+              </div>
+              <RouterLink class="button-link" :to="{ path: '/execution-center', query: { view: 'results', projectId: selectedProjectId } }">查看全部结果</RouterLink>
+            </div>
+            <p v-if="projectActivityError" class="alert pending" role="status">{{ projectActivityError }}</p>
+            <div class="project-activity-grid">
+              <section>
+                <div class="section-title"><strong>近期结果</strong><span class="badge">{{ projectResults.length }}</span></div>
+                <RouterLink
+                  v-for="result in projectResults.slice(0, 3)"
+                  :key="result.id"
+                  class="project-linked-item"
+                  :to="{ path: '/execution-center', query: { view: 'results', resultId: result.id } }"
+                >
+                  <span><strong>{{ result.title }}</strong><small>{{ result.conclusion }}</small></span>
+                  <StatusBadge :status="result.status" />
+                </RouterLink>
+                <p v-if="!projectResults.length" class="muted">暂无项目执行结果。</p>
+              </section>
+              <section>
+                <div class="section-title"><strong>关联自动化</strong><span class="badge">{{ projectAutomations.length }}</span></div>
+                <RouterLink v-for="automation in projectAutomations.slice(0, 3)" :key="automation.id" class="project-linked-item" to="/automations">
+                  <span><strong>{{ automation.name }}</strong><small>{{ automation.triggerType === 'schedule' ? formatAutomationSchedule(automation.scheduleExpr, automation.timezone) : '事件触发' }}</small></span>
+                  <StatusBadge :status="automation.status" />
+                </RouterLink>
+                <p v-if="!projectAutomations.length" class="muted">暂无明确关联到此项目的自动化。</p>
+              </section>
+            </div>
+          </article>
+
+          <article v-if="showMoreOverview" class="item wide collapsible-section">
             <div class="section-title collapsible-head">
               <div>
                 <h2>项目简报</h2>
@@ -1337,7 +1387,11 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
             </div>
           </article>
 
-          <article class="item wide collapsible-section">
+          <button class="overview-more-toggle wide" type="button" @click="showMoreOverview = !showMoreOverview">
+            {{ showMoreOverview ? '收起项目详情' : '展开健康度、简报、动态与设置' }}
+          </button>
+
+          <article v-if="showMoreOverview" class="item wide collapsible-section">
             <div class="section-title collapsible-head">
               <div>
                 <h2>最近动态</h2>
@@ -1364,7 +1418,7 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
             </div>
           </article>
 
-          <article class="item wide collapsible-section">
+          <article v-if="showMoreOverview" class="item wide collapsible-section">
             <div class="section-title collapsible-head">
               <div>
                 <h2>下一步建议</h2>
@@ -1397,7 +1451,7 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
             <p v-else-if="overviewSections.suggestions" class="muted">项目基础信息比较完整，可以继续推进目标拆解。</p>
           </article>
 
-          <article class="item wide collapsible-section subtle-section">
+          <article v-if="showMoreOverview" class="item wide collapsible-section subtle-section">
             <div class="section-title collapsible-head">
               <div>
                 <h2>项目设置</h2>
@@ -1585,12 +1639,47 @@ function buildProjectSuggestions(): ProjectSuggestion[] {
             </span>
           </div>
         </article>
-      </main>
+      </section>
 
-      <main v-else class="empty-state">
+      <section v-else class="empty-state" aria-label="项目详情">
         <strong>选择或创建一个项目</strong>
         <span>项目页会汇总目标、任务、文件、记忆、决策和开放问题。</span>
-      </main>
+      </section>
     </div>
+
+    <DetailDrawer
+      :open="showCreateProject"
+      title="新建项目"
+      description="项目会聚合聊天、文件、任务、决策和持续上下文。"
+      @update:open="showCreateProject = $event"
+    >
+      <form id="create-project-form" class="stack" @submit.prevent="submitProject">
+        <label>项目名称<input v-model="projectForm.name" placeholder="项目名称" /></label>
+        <label>一句话定位<textarea v-model="projectForm.description" rows="3" placeholder="一句话定位" /></label>
+        <label>当前阶段<input v-model="projectForm.currentStage" placeholder="当前阶段" /></label>
+        <label>优先级<input v-model.number="projectForm.priority" type="number" placeholder="优先级" /></label>
+      </form>
+      <template #footer>
+        <button class="secondary" type="button" @click="showCreateProject = false">取消</button>
+        <button form="create-project-form" :disabled="saving || !projectForm.name.trim()" type="submit">创建项目</button>
+      </template>
+    </DetailDrawer>
   </section>
 </template>
+
+<style scoped>
+.project-summary-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin-top: var(--space-4); }
+.project-summary-strip > span { display: flex; min-width: 0; align-items: baseline; gap: 6px; border-radius: var(--radius-md); background: var(--surface-muted); padding: 9px 12px; color: var(--muted-foreground); font-size: 12px; }
+.project-summary-strip strong { overflow: hidden; color: var(--foreground); font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }.project-summary-strip .danger strong { color: var(--danger-strong); }
+.overview-more-toggle { min-height: 44px; border: 1px dashed var(--border); background: var(--surface); color: var(--muted-foreground); }
+:deep(.detail-drawer label) { display: grid; gap: 6px; color: var(--muted-foreground); font-size: 13px; font-weight: 700; }
+.project-activity-section { display: grid; gap: var(--space-4); }
+.project-activity-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); }
+.project-activity-grid > section { display: grid; align-content: start; gap: var(--space-3); min-width: 0; }
+.project-linked-item { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); padding: var(--space-3); }
+.project-linked-item:hover { border-color: var(--primary-border); background: var(--primary-soft); }
+.project-linked-item > span:first-child { display: grid; min-width: 0; gap: 3px; }
+.project-linked-item strong, .project-linked-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-linked-item small { color: var(--muted-foreground); }
+@media (max-width: 760px) { .project-activity-grid { grid-template-columns: 1fr; }.project-summary-strip { grid-template-columns: 1fr; } }
+</style>

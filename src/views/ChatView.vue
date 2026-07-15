@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ArrowDown, PanelRightOpen, RotateCcw } from '@lucide/vue'
 import {
   createConversation,
   createAgentTodo,
@@ -20,10 +21,26 @@ import {
   saveStructuredMemory,
   rejectPendingOperation,
   streamMessage,
+  trackEffectiveProgressAction,
+  trackProductEvent,
   changeStructuredMemoryStatus,
+  updateConversationTitle,
   uploadChatImage
 } from '@/api/app'
 import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, Conversation, KnowledgeBase, MemoryItem, MemorySnapshot, PendingOperationItem, ProjectChatContext, ToolResult, ExecutionSuggestionItem } from '@/api/types'
+import ContextPanel from '@/components/layout/ContextPanel.vue'
+import ExecutionTimeline from '@/components/domain/ExecutionTimeline.vue'
+import SuggestionCard from '@/components/domain/SuggestionCard.vue'
+import { useWorkspaceStore, type WorkspaceProjectContext } from '@/stores/workspace'
+import { isConversationNearBottom } from '@/domain/chat-scroll'
+import {
+  sanitizeAgentTrace,
+  sanitizeChatSources,
+  sanitizeExecutionSuggestions,
+  sanitizeProjectContext,
+  sanitizeReview,
+  sanitizeToolResults
+} from '@/domain/chat-safety'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -50,15 +67,27 @@ interface Message {
 const input = ref('')
 const route = useRoute()
 const router = useRouter()
+const workspace = useWorkspaceStore()
+const handoffProject = ref<WorkspaceProjectContext | null>(null)
+const showContextPanel = ref(false)
+const chatListRef = ref<HTMLElement | null>(null)
+const composerRef = ref<HTMLTextAreaElement | null>(null)
+const hasMessagesBelow = ref(false)
+const isNearBottom = ref(true)
 const selectedImage = ref<{ name: string; previewUrl: string; url: string } | null>(null)
 const uploadingImage = ref(false)
 const uploadError = ref('')
 const loading = ref(false)
 const streamController = ref<AbortController | null>(null)
 const initializing = ref(true)
-const showDebug = ref(false)
+const debugControlsEnabled = computed(() => route.query.debug === '1')
+const showDebug = ref(debugControlsEnabled.value)
 const error = ref('')
-const conversationId = ref<string>()
+const conversationId = ref('')
+const editingTitle = ref(false)
+const editingConversationId = ref('')
+const titleDraft = ref('')
+const titleSaving = ref(false)
 const conversations = ref<Conversation[]>([])
 const knowledgeBases = ref<KnowledgeBase[]>([])
 const selectedKnowledgeBaseId = ref('')
@@ -71,11 +100,17 @@ const traceCopyState = ref<Record<number, 'copied' | 'failed'>>({})
 const briefTodos = ref<AgentTodoItem[]>([])
 const briefReminders = ref<AgentReminderItem[]>([])
 const briefMemory = ref<MemorySnapshot | null>(null)
-const briefOperations = ref<PendingOperationItem[]>([])
+const briefOperations = ref<Array<Pick<PendingOperationItem, 'id' | 'status'>>>([])
 const briefError = ref('')
 const messages = ref<Message[]>([
   { role: 'assistant', content: '你好，我是 Lyle。你可以先上传文档到知识库，再带着知识库提问。' }
 ])
+const starterPrompts = [
+  { title: '整理项目', description: '归纳目标、进展、风险和下一步', draft: '帮我整理当前项目，归纳目标、进展、风险和下一步。' },
+  { title: '生成计划', description: '把目标拆成今天可开始的行动', draft: '帮我把当前目标拆成一份今天可以开始执行的计划。' },
+  { title: '查询资料', description: '整理关键信息并标明来源', draft: '帮我查询相关资料，整理关键信息并标明来源。' },
+  { title: '运行巡检', description: '优先指出风险、阻塞和建议动作', draft: '帮我运行一次项目巡检，优先指出风险、阻塞和建议动作。' }
+]
 const activeConversationTitle = computed(() => {
   if (!conversationId.value) return '新会话'
   return conversations.value.find((item) => String(item.id) === conversationId.value)?.title || '当前会话'
@@ -88,7 +123,38 @@ const activeProjectId = computed(() => {
   const value = route.params.projectId
   const raw = Array.isArray(value) ? value[0] : value
   const parsed = Number(raw)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+  if (Number.isFinite(parsed) && parsed > 0) return parsed
+  return handoffProject.value?.id
+})
+const hasUserMessages = computed(() => messages.value.some((message) => message.role === 'user'))
+const latestAssistantMessage = computed(() => [...messages.value].reverse().find((message) => message.role === 'assistant'))
+const latestUserMessage = computed(() => [...messages.value].reverse().find((message) => message.role === 'user'))
+const contextSources = computed(() => latestAssistantMessage.value?.sources || [])
+const contextProject = computed(() => latestAssistantMessage.value?.projectContext?.resolver)
+const contextMemoryCount = computed(() => latestAssistantMessage.value ? usedMemoryItems(latestAssistantMessage.value).length : 0)
+const contextTimeline = computed(() => {
+  const message = latestAssistantMessage.value
+  const steps: Array<{ id: string; title: string; detail?: string; status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' }> = []
+  if (loading.value) {
+    steps.push({ id: 'stream', title: '生成回答', detail: '正在读取上下文并组织结果', status: 'running' })
+  }
+  for (const [index, trace] of (message?.agentTrace || []).entries()) {
+    steps.push({
+      id: `trace-${index}`,
+      title: String(trace.agent || '执行步骤'),
+      detail: traceSummary(trace) || agentStatus(trace),
+      status: trace.approved === false ? 'failed' : trace.action === 'write' ? 'waiting' : 'completed'
+    })
+  }
+  for (const [index, tool] of (message?.toolResults || []).entries()) {
+    steps.push({
+      id: `tool-${index}`,
+      title: tool.tool || '工具执行',
+      detail: tool.content || undefined,
+      status: tool.requiresConfirmation ? 'waiting' : tool.ok ? 'completed' : 'failed'
+    })
+  }
+  return steps
 })
 const openBriefTodos = computed(() => briefTodos.value.filter((item) => item.status === 'open'))
 const todayBriefTodos = computed(() => openBriefTodos.value.filter((item) => isToday(item.dueAt)))
@@ -147,6 +213,11 @@ const memoryKeyLabels: Record<string, string> = {
 }
 
 onMounted(async () => {
+  const handoff = workspace.consumeChatDraft()
+  if (handoff) {
+    input.value = handoff.draft
+    handoffProject.value = handoff.project
+  }
   try {
     await Promise.all([refreshKnowledgeBases(), refreshConversations(), refreshBrief()])
     const initialConversationId = route.query.conversationId
@@ -158,7 +229,21 @@ onMounted(async () => {
     error.value = '页面初始化失败，请确认后端服务已经启动。'
   } finally {
     initializing.value = false
+    await nextTick()
+    if (handoff) composerRef.value?.focus()
+    if (conversationId.value || hasUserMessages.value) scrollToBottom(false)
+    else if (chatListRef.value) chatListRef.value.scrollTop = 0
   }
+})
+
+watch(() => messages.value.length, async () => {
+  await nextTick()
+  if (isNearBottom.value) scrollToBottom(false)
+  else hasMessagesBelow.value = true
+})
+
+watch(debugControlsEnabled, (enabled) => {
+  showDebug.value = enabled
 })
 
 onActivated(async () => {
@@ -168,6 +253,13 @@ onActivated(async () => {
 async function refreshKnowledgeBases() {
   const response = await listKnowledgeBases()
   knowledgeBases.value = response.data
+}
+
+async function exitDebugMode() {
+  const query = { ...route.query }
+  delete query.debug
+  showDebug.value = false
+  await router.replace({ query })
 }
 
 async function refreshConversations() {
@@ -187,7 +279,7 @@ async function refreshBrief() {
     briefTodos.value = todoResponse.data.items
     briefReminders.value = reminderResponse.data.items
     briefMemory.value = memoryResponse.data
-    briefOperations.value = operationResponse.data.items
+    briefOperations.value = operationResponse.data.items.map((item) => ({ id: item.id, status: item.status }))
     syncPendingMemoriesToLatestAssistant(memoryResponse.data)
   } catch {
     briefError.value = '简报暂时无法加载'
@@ -207,6 +299,9 @@ async function ensureConversationId(firstMessage: string) {
 async function loadConversation(id: string) {
   if (loading.value) return
 
+  handoffProject.value = null
+  editingTitle.value = false
+  editingConversationId.value = ''
   conversationId.value = String(id)
   error.value = ''
   loading.value = true
@@ -223,13 +318,84 @@ async function loadConversation(id: string) {
   }
 }
 
+function changeConversation() {
+  const id = conversationId.value
+  if (id) void loadConversation(id)
+  else newConversation()
+}
+
 function newConversation() {
   if (loading.value) return
 
-  conversationId.value = undefined
+  handoffProject.value = null
+  editingTitle.value = false
+  editingConversationId.value = ''
+  conversationId.value = ''
   messages.value = [
     { role: 'assistant', content: '新的会话已经准备好。输入第一句话后，我会自动创建会话并保存历史。' }
   ]
+  nextTick(() => composerRef.value?.focus())
+}
+
+function startTitleEdit() {
+  if (!conversationId.value) return
+  editingConversationId.value = conversationId.value
+  titleDraft.value = activeConversationTitle.value
+  editingTitle.value = true
+}
+
+async function saveTitle() {
+  const targetId = editingConversationId.value
+  if (!targetId || targetId !== conversationId.value || !titleDraft.value.trim() || titleSaving.value) return
+  titleSaving.value = true
+  try {
+    await updateConversationTitle(targetId, titleDraft.value.trim())
+    await refreshConversations()
+    if (editingConversationId.value === targetId && conversationId.value === targetId) {
+      editingTitle.value = false
+      editingConversationId.value = ''
+    }
+  } catch (exception) {
+    error.value = getRequestErrorMessage(exception, '会话标题保存失败，请稍后重试。')
+  } finally {
+    titleSaving.value = false
+  }
+}
+
+function applyStarterPrompt(draft: string) {
+  input.value = draft
+  nextTick(() => composerRef.value?.focus())
+}
+
+function toggleContextPanel() {
+  showContextPanel.value = !showContextPanel.value
+  if (showContextPanel.value) {
+    void trackProductEvent({ eventType: 'context_panel_opened', page: 'chat', projectId: activeProjectId.value }).catch(() => undefined)
+  }
+}
+
+function sendLastMessageAgain() {
+  if (loading.value || !latestUserMessage.value?.content) return
+  input.value = latestUserMessage.value.content
+  nextTick(() => submit())
+}
+
+function onChatScroll() {
+  const element = chatListRef.value
+  if (!element) return
+  isNearBottom.value = isConversationNearBottom(element)
+  if (isNearBottom.value) hasMessagesBelow.value = false
+}
+
+function scrollToBottom(smooth = true) {
+  const element = chatListRef.value
+  if (!element) return
+  element.scrollTo({
+    top: element.scrollHeight,
+    behavior: smooth && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'auto'
+  })
+  isNearBottom.value = true
+  hasMessagesBelow.value = false
 }
 
 function cancelStreaming() {
@@ -243,6 +409,8 @@ async function submit() {
     ? `${text || '请识别这张图片'}\n图片：${selectedImage.value.url}`
     : text
   if (!message || loading.value) return
+  const requestProjectId = activeProjectId.value
+  const startsProjectConversation = Boolean(requestProjectId) && !hasUserMessages.value
 
   input.value = ''
   const imageForDisplay = selectedImage.value
@@ -273,26 +441,30 @@ async function submit() {
 
     await streamMessage({
       conversationId: activeConversationId,
-      projectId: activeProjectId.value,
+      projectId: requestProjectId,
       message,
       knowledgeBaseIds: selectedKnowledgeBaseId.value ? [selectedKnowledgeBaseId.value] : []
     }, {
       onDelta: (chunk) => {
         messages.value[assistantIndex].content += chunk
+        nextTick(() => {
+          if (isNearBottom.value) scrollToBottom(false)
+          else hasMessagesBelow.value = true
+        })
       },
       onMeta: (meta) => {
-        messages.value[assistantIndex].sources = meta.sources || []
-        messages.value[assistantIndex].agentTrace = meta.agentTrace || []
-        messages.value[assistantIndex].toolResults = meta.toolResults || []
+        messages.value[assistantIndex].sources = sanitizeChatSources(meta.sources)
+        messages.value[assistantIndex].agentTrace = sanitizeAgentTrace(meta.agentTrace)
+        messages.value[assistantIndex].toolResults = sanitizeToolResults(meta.toolResults)
         messages.value[assistantIndex].candidateMemories = meta.candidateMemories || []
         messages.value[assistantIndex].candidateTasks = meta.candidateTasks || []
         messages.value[assistantIndex].candidateGoals = meta.candidateGoals || []
         messages.value[assistantIndex].candidateDecisions = meta.candidateDecisions || []
         messages.value[assistantIndex].candidateOpenQuestions = meta.candidateOpenQuestions || []
         messages.value[assistantIndex].candidatePlans = meta.candidatePlans || []
-        messages.value[assistantIndex].executionSuggestions = meta.executionSuggestions || []
-        messages.value[assistantIndex].projectContext = meta.projectContext
-        messages.value[assistantIndex].review = meta.review || {}
+        messages.value[assistantIndex].executionSuggestions = sanitizeExecutionSuggestions(meta.executionSuggestions)
+        messages.value[assistantIndex].projectContext = sanitizeProjectContext(meta.projectContext)
+        messages.value[assistantIndex].review = sanitizeReview(meta.review)
       },
       onError: (errorMessage) => {
         streamError = errorMessage
@@ -304,6 +476,21 @@ async function submit() {
     }, {
       signal: streamController.value.signal
     })
+    if (!streamError && startsProjectConversation && requestProjectId) {
+      void trackEffectiveProgressAction({
+        page: 'chat',
+        actionType: 'project_chat',
+        projectId: requestProjectId
+      }).catch(() => undefined)
+    }
+    if (!streamError && window.matchMedia('(max-width: 959px)').matches) {
+      void trackProductEvent({
+        eventType: 'mobile_primary_action_used',
+        page: 'chat',
+        actionType: 'start_chat',
+        projectId: requestProjectId
+      }).catch(() => undefined)
+    }
     await refreshConversations()
     await refreshBrief()
   } catch (exception) {
@@ -788,7 +975,7 @@ function operationPayloadText(item: PendingOperationItem) {
   if (item.operationType === 'calendar.create') {
     return [`标题：${payload.title || '-'}`, `开始时间：${formatOperationTime(payload.startsAt)}`].join(' · ')
   }
-  return JSON.stringify(payload)
+  return Object.keys(payload).length ? JSON.stringify(payload) : '详细参数已隐藏'
 }
 
 function formatOperationTime(value: unknown) {
@@ -1089,13 +1276,25 @@ async function acceptExecutionSuggestion(message: Message, item: ExecutionSugges
     if (item.action === 'create_workflow') {
       item.status = 'active'
       message.executionSuggestions = [...(message.executionSuggestions || [])]
+      const workflow = isRecord(item.payload.workflow) ? item.payload.workflow : {}
+      const originalIntent = typeof workflow.description === 'string' && workflow.description.trim()
+        ? workflow.description
+        : `${item.title}。${item.description}`
+      const handoffId = workspace.stageAutomationIntent(originalIntent, activeProjectId.value)
       await router.push({
         path: '/automations',
-        query: { intent: `${item.title}。${item.description}` }
+        query: { handoffId }
       })
       return
     }
-    await router.push({ path: '/connections', query: { suggestion: item.type } })
+    const safeId = item.type === 'cli' ? positiveId(item.payload.workspaceId) : positiveId(item.payload.toolId)
+    await router.push({
+      path: '/advanced-settings',
+      query: {
+        tab: item.type === 'cli' ? 'cli' : 'mcp',
+        ...(safeId ? { [item.type === 'cli' ? 'workspaceId' : 'toolId']: String(safeId) } : {})
+      }
+    })
   } catch (exception) {
     item.error = getRequestErrorMessage(exception, '执行建议处理失败，请稍后重试。')
     error.value = item.error
@@ -1109,6 +1308,20 @@ function dismissExecutionSuggestion(message: Message, item: ExecutionSuggestionI
   message.executionSuggestions = [...(message.executionSuggestions || [])]
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function positiveId(value: unknown): number | null {
+  const id = Number(value)
+  return Number.isInteger(id) && id > 0 ? id : null
+}
+
+function executionSuggestionActionLabel(item: ExecutionSuggestionItem) {
+  if (item.action === 'create_workflow') return '生成安全预览'
+  return item.type === 'cli' ? '检查命令' : '检查工具'
+}
+
 async function confirmOperation(message: Message, item: PendingOperationItem) {
   const key = operationKey(item)
   operationActionLoading.value[key] = true
@@ -1116,7 +1329,6 @@ async function confirmOperation(message: Message, item: PendingOperationItem) {
   try {
     const response = await confirmPendingOperation(item.id)
     item.status = response.data.operation.status
-    item.result = response.data.result
     message.toolResults = [...(message.toolResults || [])]
     await refreshBrief()
   } catch (exception) {
@@ -1328,25 +1540,33 @@ function escapeHtml(text: string) {
     <div class="toolbar">
       <div>
         <h1>AI 聊天</h1>
-        <p class="muted">{{ activeConversationTitle }} · {{ activeKnowledgeBaseName }}</p>
+        <form v-if="editingTitle" class="title-editor" @submit.prevent="saveTitle">
+          <input v-model="titleDraft" maxlength="120" aria-label="会话标题" />
+          <button type="submit" :disabled="titleSaving || !titleDraft.trim()">{{ titleSaving ? '保存中…' : '保存' }}</button>
+          <button
+            class="secondary"
+            type="button"
+            :disabled="titleSaving"
+            @click="editingTitle = false; editingConversationId = ''"
+          >取消</button>
+        </form>
+        <p v-else class="muted conversation-title-line">
+          {{ activeConversationTitle }} · {{ activeKnowledgeBaseName }}
+          <button v-if="conversationId" class="inline secondary" type="button" @click="startTitleEdit">编辑标题</button>
+        </p>
       </div>
       <div class="row toolbar-controls">
-        <label class="debug-toggle">
-          <input v-model="showDebug" type="checkbox" />
-          调试
-        </label>
-        <select v-model="conversationId" data-testid="conversation-select" @change="conversationId && loadConversation(conversationId)">
-          <option value="">新会话</option>
-          <option v-for="item in conversations" :key="item.id" :value="String(item.id)">
-            {{ item.title }}
-          </option>
-        </select>
-        <select v-model="selectedKnowledgeBaseId" data-testid="chat-knowledge-select">
-          <option value="">不使用知识库</option>
-          <option v-for="item in knowledgeBases" :key="item.id" :value="String(item.id)">
-            {{ item.name }}
-          </option>
-        </select>
+        <div v-if="debugControlsEnabled" class="debug-controls">
+          <label class="debug-toggle">
+            <input v-model="showDebug" type="checkbox" />
+            调试信息
+          </label>
+          <button class="secondary debug-exit" type="button" @click="exitDebugMode">退出调试</button>
+        </div>
+        <button class="secondary context-toggle" type="button" aria-label="上下文" :aria-pressed="showContextPanel" @click="toggleContextPanel">
+          <PanelRightOpen :size="16" aria-hidden="true" />
+          当前上下文
+        </button>
         <button class="secondary" type="button" @click="newConversation">新建</button>
       </div>
     </div>
@@ -1354,88 +1574,29 @@ function escapeHtml(text: string) {
     <p v-if="error" class="alert danger">{{ error }}</p>
     <p v-if="briefError" class="alert danger">{{ briefError }}</p>
 
-    <section class="home-brief" aria-label="今日简报">
-      <div class="brief-metrics">
-        <a class="brief-metric" href="/tasks">
-          <strong>{{ todayBriefTodos.length }}</strong>
-          <span>今日到期</span>
-        </a>
-        <a class="brief-metric danger" href="/tasks">
-          <strong>{{ overdueBriefTodos.length }}</strong>
-          <span>已逾期</span>
-        </a>
-        <a class="brief-metric" href="/tasks">
-          <strong>{{ openBriefTodos.length }}</strong>
-          <span>进行中</span>
-        </a>
-        <a class="brief-metric pending" href="/memory">
-          <strong>{{ pendingBriefMemories.length }}</strong>
-          <span>待确认记忆</span>
-        </a>
-        <a class="brief-metric" href="/tasks">
-          <strong>{{ unreadBriefReminders.length }}</strong>
-          <span>未读提醒</span>
-        </a>
-        <a class="brief-metric pending" href="/operations">
-          <strong>{{ pendingBriefOperations.length }}</strong>
-          <span>待确认操作</span>
-        </a>
-      </div>
-      <div class="brief-focus">
-        <div class="section-title">
-          <h2>今日跟进</h2>
-          <button class="inline secondary" type="button" @click="refreshBrief">刷新</button>
-        </div>
-        <p v-if="briefFocusItems.length === 0" class="muted">暂无需要立即跟进的任务。</p>
-        <a
-          v-for="item in briefFocusItems"
-          :key="`${item.title}-${item.meta}`"
-          class="brief-focus-item"
-          :class="item.tone"
-          href="/tasks"
-        >
-          <strong>{{ item.title }}</strong>
-          <span>{{ item.meta }}</span>
-        </a>
-      </div>
-      <div class="brief-focus">
-        <div class="section-title">
-          <h2>重点项目</h2>
-          <a class="inline secondary" href="/memory">查看记忆</a>
-        </div>
-        <p v-if="focusedProjects.length === 0" class="muted">暂无重点项目。你可以在聊天里说“我这周重点是...”。</p>
-        <a
-          v-for="project in focusedProjects"
-          :key="project"
-          class="brief-focus-item"
-          href="/tasks"
-        >
-          <strong>{{ project }}</strong>
-          <span>来自当前项目记忆或进行中任务</span>
-        </a>
-      </div>
-      <div class="brief-focus">
-        <div class="section-title">
-          <h2>周复盘</h2>
-          <a class="inline secondary" href="/tasks">查看任务</a>
-        </div>
-        <a
-          v-for="item in weeklyReviewItems"
-          :key="item"
-          class="brief-focus-item"
-          href="/tasks"
-        >
-          <strong>{{ item }}</strong>
-          <span>基于本周任务、记忆和操作状态</span>
-        </a>
-      </div>
-    </section>
-
-    <div class="panel chat-list">
+    <div class="chat-workspace" :class="{ 'context-closed': !showContextPanel }">
+    <div ref="chatListRef" class="panel chat-list" role="log" aria-label="对话消息" aria-live="polite" @scroll="onChatScroll">
       <div v-if="initializing" class="empty-state">
         <strong>正在加载会话和知识库</strong>
         <span>请稍候。</span>
       </div>
+      <section v-else-if="!hasUserMessages" class="chat-starter" aria-labelledby="chat-starter-title">
+        <div>
+          <p class="eyebrow">从一项具体工作开始</p>
+          <h2 id="chat-starter-title">今天想推进什么？</h2>
+          <p class="muted">选择一个常用入口，或直接在下方描述你想得到的结果。</p>
+        </div>
+        <div class="starter-grid">
+          <SuggestionCard
+            v-for="starter in starterPrompts"
+            :key="starter.title"
+            :title="starter.title"
+            :description="starter.description"
+            compact
+            @select="applyStarterPrompt(starter.draft)"
+          />
+        </div>
+      </section>
       <div v-for="(message, index) in messages" :key="index" class="message" :class="message.role">
         <template v-if="message.role === 'user'">
           <div v-if="userDisplayText(message)" class="message-bubble message-content">
@@ -1594,6 +1755,7 @@ function escapeHtml(text: string) {
             v-for="candidate in pendingCandidateTasks(message)"
             :key="taskKey(candidate)"
             class="candidate-memory-card"
+            data-testid="chat-candidate-task"
           >
             <div class="candidate-memory-fields">
               <label>
@@ -1790,7 +1952,7 @@ function escapeHtml(text: string) {
                 :disabled="executionSuggestionActionLoading[executionSuggestionKey(suggestion)]"
                 @click="acceptExecutionSuggestion(message, suggestion)"
               >
-                {{ suggestion.action === 'create_workflow' ? '生成安全预览' : '检查连接' }}
+                {{ executionSuggestionActionLabel(suggestion) }}
               </button>
               <button
                 class="secondary"
@@ -1913,6 +2075,73 @@ function escapeHtml(text: string) {
       </div>
     </div>
 
+    <ContextPanel title="当前上下文" :open="showContextPanel" @close="showContextPanel = false">
+      <section class="context-section context-controls">
+        <small>切换上下文</small>
+        <label>
+          <span>会话</span>
+          <select
+            v-model="conversationId"
+            data-testid="conversation-select"
+            aria-label="选择会话"
+            :disabled="loading || titleSaving"
+            @change="changeConversation"
+          >
+            <option value="">新会话</option>
+            <option v-for="item in conversations" :key="item.id" :value="String(item.id)">
+              {{ item.title }}
+            </option>
+          </select>
+        </label>
+        <label>
+          <span>知识库</span>
+          <select
+            v-model="selectedKnowledgeBaseId"
+            data-testid="chat-knowledge-select"
+            aria-label="选择知识库"
+            :disabled="loading"
+          >
+            <option value="">不使用知识库</option>
+            <option v-for="item in knowledgeBases" :key="item.id" :value="String(item.id)">
+              {{ item.name }}
+            </option>
+          </select>
+        </label>
+      </section>
+      <section class="context-section">
+        <small>项目</small>
+        <strong>{{ contextProject?.projectName || handoffProject?.name || (activeProjectId ? `项目 #${activeProjectId}` : '未关联项目') }}</strong>
+        <RouterLink v-if="activeProjectId" class="inline-link" :to="`/projects/${activeProjectId}`">打开项目</RouterLink>
+        <p v-else class="muted">从工作台或项目页发起对话，可自动携带项目上下文。</p>
+      </section>
+      <section class="context-section">
+        <small>知识与记忆</small>
+        <strong>{{ activeKnowledgeBaseName }}</strong>
+        <span>{{ contextMemoryCount }} 条记忆用于最近回答</span>
+      </section>
+      <section v-if="contextSources.length" class="context-section">
+        <small>资料来源 · {{ contextSources.length }}</small>
+        <details v-for="(source, sourceIndex) in contextSources.slice(0, 5)" :key="sourceCardKey(source, sourceIndex)" class="context-source">
+          <summary>{{ sourceFileName(source) }}</summary>
+          <p>{{ sourceSnippet(source, 120) }}</p>
+        </details>
+      </section>
+      <section v-if="contextTimeline.length" class="context-section">
+        <small>执行详情</small>
+        <ExecutionTimeline :steps="contextTimeline" />
+      </section>
+      <section v-if="pendingBriefMemories.length || pendingBriefOperations.length" class="context-section attention">
+        <small>等待处理</small>
+        <RouterLink v-if="pendingBriefMemories.length" to="/memory">{{ pendingBriefMemories.length }} 条记忆待确认</RouterLink>
+        <RouterLink v-if="pendingBriefOperations.length" to="/execution-center?view=confirmations">{{ pendingBriefOperations.length }} 个操作待确认</RouterLink>
+      </section>
+    </ContextPanel>
+
+    <button v-if="hasMessagesBelow" class="scroll-bottom" type="button" @click="scrollToBottom()">
+      <ArrowDown :size="15" aria-hidden="true" /> 新消息
+    </button>
+    </div>
+
     <form class="panel chat-input" @submit.prevent="submit">
       <div class="chat-compose-main">
         <div v-if="selectedImage" class="image-attachment-preview">
@@ -1920,7 +2149,7 @@ function escapeHtml(text: string) {
           <span>{{ selectedImage.name }}</span>
           <button class="inline" type="button" @click="clearSelectedImage">移除</button>
         </div>
-        <textarea v-model="input" data-testid="chat-input" rows="2" placeholder="输入你的问题" />
+        <textarea ref="composerRef" v-model="input" data-testid="chat-input" rows="2" placeholder="今天想推进什么？" />
       </div>
       <div class="chat-compose-actions">
         <label class="button-link attach-button">
@@ -1935,9 +2164,136 @@ function escapeHtml(text: string) {
         >
           发送
         </button>
-        <button v-else class="secondary" type="button" @click="cancelStreaming">停止</button>
+        <button v-if="!loading && latestUserMessage" class="secondary regenerate-button" type="button" @click="sendLastMessageAgain">
+          <RotateCcw :size="15" aria-hidden="true" />
+          再次发送
+        </button>
+        <button v-if="loading" class="secondary" type="button" @click="cancelStreaming">停止</button>
         <p v-if="uploadError" class="upload-error">{{ uploadError }}</p>
       </div>
     </form>
   </section>
 </template>
+
+<style scoped>
+.chat-workspace {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  gap: var(--space-4);
+}
+
+.chat-workspace.context-closed { grid-template-columns: minmax(0, 1fr); }
+
+.chat-list {
+  min-height: min(620px, calc(100dvh - 250px));
+  max-height: calc(100dvh - 250px);
+  border-color: var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  scroll-behavior: smooth;
+}
+
+.chat-starter {
+  display: grid;
+  gap: var(--space-5);
+  width: min(760px, 100%);
+  align-self: center;
+  margin: auto;
+  padding: clamp(16px, 4vw, 42px) 0;
+}
+
+.chat-starter h2 { margin: 0; font-size: clamp(22px, 3vw, 30px); }
+.chat-starter p { margin: 6px 0 0; }
+.starter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+
+.context-section { display: grid; gap: var(--space-2); }
+.context-controls label { display: grid; gap: 6px; color: var(--muted-foreground); font-size: 12px; font-weight: 700; }
+.context-controls select { width: 100%; min-width: 0; min-height: 44px; }
+.context-section + .context-section { border-top: 1px solid var(--border); padding-top: var(--space-4); }
+.context-section > small { color: var(--muted-foreground); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.context-section > span, .context-section > p { margin: 0; color: var(--muted-foreground); font-size: 13px; line-height: 1.5; }
+.context-section.attention { border: 1px solid var(--warning-border); border-radius: var(--radius-md); background: var(--warning-soft); padding: var(--space-3); }
+.context-section.attention a { color: var(--warning-strong); font-size: 13px; font-weight: 700; }
+.context-source { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+.context-source summary { cursor: pointer; font-size: 13px; font-weight: 700; }
+.context-source p { margin: var(--space-2) 0 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+
+.scroll-bottom {
+  position: absolute;
+  z-index: 4;
+  right: calc(min(320px, 28vw) + var(--space-7));
+  bottom: var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--primary-border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--primary);
+  padding: 8px 12px;
+  box-shadow: var(--shadow-popover);
+}
+.context-closed .scroll-bottom { right: var(--space-4); }
+
+.chat-input {
+  position: sticky;
+  z-index: 5;
+  bottom: calc(var(--space-2) + env(safe-area-inset-bottom));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: var(--shadow-popover);
+  backdrop-filter: blur(12px);
+}
+.chat-input textarea { min-height: 60px; resize: vertical; border: 0; background: transparent; box-shadow: none; }
+.chat-input textarea:focus { outline: 0; }
+.context-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.debug-controls { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-muted); padding: 3px; }
+.debug-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground); padding: 0 6px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.debug-toggle input { width: 16px; height: 16px; margin: 0; }
+.debug-exit { min-height: 30px; padding: 4px 8px; font-size: 12px; }
+.regenerate-button { display: inline-flex; align-items: center; gap: 6px; }
+.conversation-title-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.title-editor { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; gap: var(--space-2); margin-top: var(--space-2); }
+
+@media (max-width: 1024px) {
+  .toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+  .toolbar-controls {
+    display: flex;
+    width: auto;
+    align-items: center;
+    flex-direction: row;
+  }
+  .chat-workspace { grid-template-columns: minmax(0, 1fr); }
+  .scroll-bottom { right: var(--space-4); }
+}
+
+@media (max-width: 640px) {
+  .starter-grid { grid-template-columns: 1fr; }
+  .chat-list { min-height: calc(100dvh - 300px); max-height: calc(100dvh - 300px); padding: var(--space-3); }
+  .toolbar-controls {
+    display: flex;
+    width: auto;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .toolbar-controls > button {
+    width: auto;
+    justify-content: center;
+  }
+  .chat-compose-actions { display: flex; flex-wrap: wrap; align-items: center; }
+  .chat-compose-actions > * { flex: 1; }
+  .chat-compose-actions .upload-error { flex-basis: 100%; }
+  .title-editor { grid-template-columns: 1fr auto auto; }
+}
+
+@media (prefers-reduced-motion: reduce) { .chat-list { scroll-behavior: auto; } }
+</style>

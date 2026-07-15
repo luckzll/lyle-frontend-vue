@@ -2,12 +2,14 @@
 import { computed, onMounted, ref } from 'vue'
 import { createConversation, deleteConversation, listConversations } from '@/api/app'
 import type { Conversation } from '@/api/types'
+import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
 
 const title = ref('默认会话')
 const conversations = ref<Conversation[]>([])
 const loading = ref(false)
 const notice = ref('')
 const removingId = ref('')
+const pendingDelete = ref<Conversation | null>(null)
 
 const sortedConversations = computed(() => [...conversations.value].sort((a, b) => dateTime(b.updatedAt || b.createdAt) - dateTime(a.updatedAt || a.createdAt)))
 
@@ -30,11 +32,11 @@ async function create() {
 }
 
 async function remove(id: string) {
-  if (!window.confirm('删除后只会移除该会话和聊天消息，不会删除由它创建的待办、目标、计划、项目关联和记忆。确认删除这个会话？')) return
   removingId.value = id
   try {
     await deleteConversation(id)
     notice.value = '会话已删除'
+    pendingDelete.value = null
     await refresh()
   } finally {
     removingId.value = ''
@@ -104,7 +106,7 @@ function shortId(value: string) {
           <span class="conversation-id">ID {{ shortId(item.id) }}</span>
           <div class="row conversation-actions">
             <RouterLink class="button-link" :to="{ name: 'chat', query: { conversationId: item.id } }">打开</RouterLink>
-            <button class="secondary danger" type="button" :disabled="removingId === item.id" @click="remove(item.id)">
+            <button class="secondary danger" type="button" :disabled="removingId === item.id" @click="pendingDelete = item">
               {{ removingId === item.id ? '删除中' : '删除' }}
             </button>
           </div>
@@ -116,5 +118,16 @@ function shortId(value: string) {
       <strong>还没有会话</strong>
       <span>创建一个会话，或者直接去聊天页开始第一轮对话。</span>
     </div>
+
+    <ConfirmActionDialog
+      :open="Boolean(pendingDelete)"
+      title="删除会话"
+      :description="`删除“${pendingDelete?.title || ''}”后，会话和聊天消息将被移除；由它创建的任务、项目关联和已确认记忆会保留。`"
+      confirm-label="确认删除"
+      danger
+      :busy="Boolean(removingId)"
+      @update:open="(open) => { if (!open) pendingDelete = null }"
+      @confirm="pendingDelete && remove(pendingDelete.id)"
+    />
   </section>
 </template>

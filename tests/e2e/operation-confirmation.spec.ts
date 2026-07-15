@@ -10,7 +10,8 @@ test('confirms operation idempotently and prevents rejected operation confirmati
   await page.getByTestId('username-input').fill(username)
   await page.getByTestId('password-input').fill('123456')
   await page.getByTestId('auth-submit').click()
-  await expect(page).toHaveURL('/')
+  await expect(page).toHaveURL('/dashboard')
+  await page.getByRole('link', { name: '聊天', exact: true }).click()
 
   await page.getByTestId('chat-input').fill(`帮我创建待办：明天下午三点提交操作验收 ${suffix}`)
   await page.getByTestId('chat-submit').click()
@@ -18,8 +19,8 @@ test('confirms operation idempotently and prevents rejected operation confirmati
   await expect(confirmButton).toBeVisible()
   await confirmButton.click()
 
-  await page.getByRole('link', { name: '操作', exact: true }).click()
-  await page.reload()
+  await page.getByRole('link', { name: '执行中心', exact: true }).click()
+  await page.getByRole('button', { name: /历史记录/ }).click()
   await page.getByRole('button', { name: '已执行' }).click()
   const confirmed = page.locator('.operation-row').filter({ hasText: `提交操作验收 ${suffix}` })
   await expect(confirmed).toContainText('已执行')
@@ -31,7 +32,8 @@ test('confirms operation idempotently and prevents rejected operation confirmati
   await page.getByTestId('chat-submit').click()
   await page.getByTestId('chat-operation-reject').first().click()
 
-  await page.getByRole('link', { name: '操作', exact: true }).click()
+  await page.getByRole('link', { name: '执行中心', exact: true }).click()
+  await page.getByRole('button', { name: /历史记录/ }).click()
   await page.getByRole('button', { name: '已拒绝' }).click()
   const rejected = page.locator('.operation-row').filter({ hasText: `拒绝操作验收 ${suffix}` })
   await expect(rejected).toContainText('已拒绝')

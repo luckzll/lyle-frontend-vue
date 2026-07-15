@@ -9,7 +9,7 @@ test('Product experience lets a first-time user run an inspection and enable a r
   await page.getByTestId('username-input').fill(username)
   await page.getByTestId('password-input').fill('123456')
   await page.getByTestId('auth-submit').click()
-  await expect(page).toHaveURL('/')
+  await expect(page).toHaveURL('/dashboard')
 
   await page.getByRole('link', { name: '自动化', exact: true }).click()
   await expect(page.getByRole('heading', { name: '先完成一次项目巡检' })).toBeVisible()

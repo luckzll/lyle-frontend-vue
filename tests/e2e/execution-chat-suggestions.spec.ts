@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 test('shows execution suggestions and requires an explicit user action', async ({ page }) => {
   const suffix = Date.now()
-  const workflowName = `Chat Draft ${suffix}`
+  const originalIntent = '用 MCP 检查代码，并保存为每天执行的工作流'
 
   await page.route('**/api/chat/stream', async (route) => {
     const suggestions = [
@@ -36,8 +36,8 @@ test('shows execution suggestions and requires an explicit user action', async (
         action: 'create_workflow',
         payload: {
           workflow: {
-            name: workflowName,
-            description: '聊天建议创建的 E2E 草稿',
+            name: `Chat Draft ${suffix}`,
+            description: originalIntent,
             steps: [{ title: '汇总结果', stepType: 'summarize', outputKey: 'summary' }]
           }
         }
@@ -63,32 +63,19 @@ test('shows execution suggestions and requires an explicit user action', async (
   await page.getByTestId('username-input').fill(`execution_chat_${suffix}`)
   await page.getByTestId('password-input').fill('123456')
   await page.getByTestId('auth-submit').click()
-  await expect(page).toHaveURL('/')
+  await expect(page).toHaveURL('/dashboard')
+  await page.getByRole('link', { name: '聊天', exact: true }).click()
 
-  await page.getByTestId('chat-input').fill('用 MCP 检查代码，并保存为每天执行的工作流')
+  await page.getByTestId('chat-input').fill(originalIntent)
   await page.getByTestId('chat-submit').click()
 
   await expect(page.getByText('执行建议')).toBeVisible()
   await expect(page.getByText('3 条')).toBeVisible()
   await expect(page.getByText('检查当前代码状态')).toBeVisible()
   await expect(page.getByText('使用 MCP 工具')).toBeVisible()
-  const workflowCard = page.locator('.candidate-memory-card').filter({ hasText: '保存为工作流' })
-  await workflowCard.getByRole('button', { name: '创建工作流草稿' }).click()
-  await expect(page.getByText('2 条')).toBeVisible()
-
-  const workflowExists = await page.evaluate(async (name) => {
-    const response = await fetch('/api/workbench/workflows', {
-      headers: { Authorization: `Bearer ${window.localStorage.getItem('lyle-token')}` }
-    })
-    if (!response.ok) throw new Error(await response.text())
-    const body = await response.json()
-    return body.items.some((item: { name: string }) => item.name === name)
-  }, workflowName)
-  expect(workflowExists).toBe(true)
-
   const cliCard = page.locator('.candidate-memory-card').filter({ hasText: '检查当前代码状态' })
-  await cliCard.getByRole('button', { name: '在工作台检查' }).click()
-  await expect(page).toHaveURL(/\/advanced-settings\?suggestion=cli$/)
+  await cliCard.getByRole('button', { name: '检查命令' }).click()
+  await expect(page).toHaveURL(/\/advanced-settings\?tab=cli$/)
   await expect(page.getByTestId('workbench-tab-cli')).toHaveClass(/active/)
   await expect(page.getByRole('heading', { name: 'CLI 命令' })).toBeVisible()
 
@@ -99,4 +86,18 @@ test('shows execution suggestions and requires an explicit user action', async (
   const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
   expect(mobileOverflow).toBeLessThanOrEqual(1)
   await expect(page.getByTestId('workbench-tab-cli')).toBeVisible()
+
+  await page.getByRole('button', { name: '打开主导航' }).click()
+  await page.getByRole('dialog', { name: 'Lyle AI' }).getByRole('link', { name: '聊天', exact: true }).click()
+  await page.getByTestId('chat-input').fill(originalIntent)
+  await page.getByTestId('chat-submit').click()
+  const workflowCard = page.locator('.candidate-memory-card').filter({ hasText: '保存为工作流' })
+  await workflowCard.getByRole('button', { name: '生成安全预览' }).click()
+
+  await expect(page).toHaveURL('/automations')
+  expect(page.url()).not.toContain(encodeURIComponent(originalIntent))
+  const preview = page.getByRole('dialog').filter({ hasText: '此预览不会执行任何操作' })
+  await expect(preview.getByRole('button', { name: '确认启用' })).toBeVisible()
+  await expect(preview).toContainText('此预览不会执行任何操作')
+  await preview.getByRole('button', { name: '取消' }).click()
 })

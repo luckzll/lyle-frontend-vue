@@ -138,6 +138,7 @@ const expandedWorkflowRunId = ref<number | null>(null)
 const workflowRunDetails = ref<Record<number, Item>>({})
 
 const activeWorkspaceId = computed(() => selectedWorkspaceId.value ?? Number(workspaces.value[0]?.id || 0))
+const suggestedToolId = computed(() => positiveQueryId(route.query.toolId))
 const activeSection = computed<WorkbenchSection>(() => {
   const raw = String(route.query.tab || route.query.suggestion || 'mcp')
   return sectionAliases[raw] || 'mcp'
@@ -145,6 +146,12 @@ const activeSection = computed<WorkbenchSection>(() => {
 
 async function selectSection(section: WorkbenchSection) {
   await router.replace({ path: '/advanced-settings', query: { tab: section } })
+}
+
+function positiveQueryId(value: unknown): number | null {
+  const raw = Array.isArray(value) ? value[0] : value
+  const parsed = Number(raw)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
 async function refreshAll() {
@@ -744,20 +751,31 @@ function parseStrictJsonObject(text: string, label: string) {
   }
 }
 
-onMounted(refreshAll)
+onMounted(async () => {
+  await refreshAll()
+  const workspaceId = positiveQueryId(route.query.workspaceId)
+  if (workspaceId && workspaces.value.some((item) => Number(item.id) === workspaceId)) {
+    selectedWorkspaceId.value = workspaceId
+    await loadWorkspaceDetails()
+  }
+})
 </script>
 
 <template>
   <div class="page workbench-page">
     <div class="toolbar">
       <div>
-        <h1>工具</h1>
-        <p class="muted">数据连接、工具权限、工作流与可控执行。</p>
+        <p class="eyebrow">高级模式</p>
+        <h1>高级设置</h1>
+        <p class="muted">数据连接、工具权限、工作流与可控执行。修改策略可能影响自动化范围与写操作权限。</p>
       </div>
       <button class="secondary" type="button" :disabled="loading" @click="refreshAll">刷新</button>
     </div>
 
     <div v-if="message" class="notice">{{ message }}</div>
+    <div class="alert pending" role="note">
+      这里面向熟悉执行策略的高级用户。保存前请核对数据范围、权限和确认规则；日常运行与结果处理请优先使用自动化和执行中心。
+    </div>
 
     <nav class="workbench-tabs" aria-label="工具分区">
       <button
@@ -1033,7 +1051,12 @@ onMounted(refreshAll)
       </div>
       <div v-if="activeSection === 'mcp'" class="item">
         <h2>MCP Tools</h2>
-        <div v-for="tool in tools" :key="tool.id" class="tool-row">
+        <div
+          v-for="tool in tools"
+          :key="tool.id"
+          class="tool-row"
+          :class="{ suggested: Number(tool.id) === suggestedToolId }"
+        >
           <span>
             {{ tool.toolName }}
             <span class="badge" :class="{ danger: tool.riskLevel === 'dangerous' }">{{ tool.riskLevel }}</span>

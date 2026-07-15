@@ -13,6 +13,7 @@ import {
   uploadKnowledgeFile
 } from '@/api/app'
 import type { KnowledgeBase, KnowledgeFile, RagChunkResponse, RagDebugResponse } from '@/api/types'
+import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
 
 const name = ref('默认知识库')
 const loading = ref(false)
@@ -27,6 +28,11 @@ const ragQuestion = ref('这份文档讲了什么？')
 const ragDebug = ref<RagDebugResponse | null>(null)
 const ragChunks = ref<RagChunkResponse['items']>([])
 const rebuildingFileIds = ref<Set<string>>(new Set())
+const pendingKnowledgeBaseDelete = ref<KnowledgeBase | null>(null)
+const pendingFileDelete = ref<KnowledgeFile | null>(null)
+const pendingRebuildAll = ref(false)
+const showRetrievalTest = ref(false)
+const showTechnicalDetails = ref(false)
 const selectedKnowledgeBase = computed(() =>
   knowledgeBases.value.find((item) => item.id === selectedKnowledgeBaseId.value)
 )
@@ -76,15 +82,12 @@ async function refreshFiles() {
   try {
     const response = await listKnowledgeFiles(selectedKnowledgeBaseId.value)
     files.value = response.data
-    await refreshChunks()
   } catch {
     error.value = '文件列表加载失败。'
   }
 }
 
 async function removeKnowledgeBase(id: string) {
-  const target = knowledgeBases.value.find((item) => item.id === id)
-  if (!window.confirm(`删除知识库「${target?.name || id}」？`)) return
   loading.value = true
   error.value = ''
   notice.value = ''
@@ -97,6 +100,7 @@ async function removeKnowledgeBase(id: string) {
       ragDebug.value = null
     }
     notice.value = '知识库已删除。'
+    pendingKnowledgeBaseDelete.value = null
     await refreshKnowledgeBases()
   } catch {
     error.value = '知识库删除失败。'
@@ -107,14 +111,13 @@ async function removeKnowledgeBase(id: string) {
 
 async function removeFile(fileId: string) {
   if (!selectedKnowledgeBaseId.value) return
-  const target = files.value.find((item) => item.id === fileId)
-  if (!window.confirm(`删除文件「${target?.fileName || fileId}」？`)) return
   loading.value = true
   error.value = ''
   notice.value = ''
   try {
     await deleteKnowledgeFile(selectedKnowledgeBaseId.value, fileId)
     notice.value = '文件已删除。'
+    pendingFileDelete.value = null
     await refreshFiles()
   } catch {
     error.value = '文件删除失败。'
@@ -169,7 +172,6 @@ async function rebuildFile(fileId: string) {
 
 async function rebuildAllFiles() {
   if (!selectedKnowledgeBaseId.value || files.value.length === 0) return
-  if (!window.confirm(`重建「${selectedKnowledgeBase.value?.name || selectedKnowledgeBaseId.value}」下全部文件索引？`)) return
   loading.value = true
   error.value = ''
   notice.value = ''
@@ -179,6 +181,7 @@ async function rebuildAllFiles() {
     notice.value = '知识库索引已重建。'
     const count = response.data.reduce((total, item) => total + (item.candidateMemories?.length || 0), 0)
     setMemoryNotice(count)
+    pendingRebuildAll.value = false
     await refreshFiles()
   } catch {
     error.value = '知识库索引重建失败。'
@@ -195,7 +198,7 @@ async function runRagDebug() {
     const response = await debugRag(ragQuestion.value.trim(), [selectedKnowledgeBaseId.value])
     ragDebug.value = response.data
   } catch {
-    error.value = 'RAG 调试失败。'
+    error.value = '检索测试失败，请稍后重试。'
   } finally {
     loading.value = false
   }
@@ -207,9 +210,23 @@ async function refreshChunks() {
   ragChunks.value = response.data.items
 }
 
+async function toggleTechnicalDetails() {
+  showTechnicalDetails.value = !showTechnicalDetails.value
+  if (showTechnicalDetails.value && ragChunks.value.length === 0) {
+    try {
+      await refreshChunks()
+    } catch {
+      error.value = '技术检索详情暂时无法加载。'
+    }
+  }
+}
+
 async function selectKnowledgeBase(id: string) {
   selectedKnowledgeBaseId.value = id
   ragDebug.value = null
+  ragChunks.value = []
+  showRetrievalTest.value = false
+  showTechnicalDetails.value = false
   await refreshFiles()
 }
 
@@ -234,6 +251,13 @@ function setMemoryNotice(count: number) {
     : ''
 }
 
+function formatFileSize(value?: number | null) {
+  if (!value) return '大小未知'
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
 onMounted(refreshKnowledgeBases)
 </script>
 
@@ -242,7 +266,7 @@ onMounted(refreshKnowledgeBases)
     <div class="toolbar">
       <div>
         <h1>知识库</h1>
-        <p class="muted">上传资料、检查入库状态，并调试 RAG 命中结果。</p>
+        <p class="muted">集中管理 Lyle 可以引用的文件和资料。</p>
       </div>
       <button class="secondary" type="button" :disabled="pageLoading" @click="refreshKnowledgeBases">刷新</button>
     </div>
@@ -278,28 +302,28 @@ onMounted(refreshKnowledgeBases)
           @click="selectKnowledgeBase(item.id)"
         >
           <span>{{ item.name }}</span>
-          <small>{{ item.id }}</small>
+          <small>{{ item.id === selectedKnowledgeBaseId ? '当前使用' : '点击打开' }}</small>
         </button>
       </aside>
 
-      <main class="kb-main">
+      <section v-if="selectedKnowledgeBaseId" class="kb-main" aria-label="知识库详情">
         <section class="panel item stack">
           <div class="section-title">
             <div>
               <h2>{{ selectedKnowledgeBase?.name || '选择知识库' }}</h2>
-              <p class="muted">ID: {{ selectedKnowledgeBaseId || '-' }}</p>
+              <p class="muted">上传文件后，Lyle 会在回答时按需引用。</p>
             </div>
             <button
               v-if="selectedKnowledgeBaseId"
               class="secondary danger"
               type="button"
               :disabled="loading"
-              @click="removeKnowledgeBase(selectedKnowledgeBaseId)"
+              @click="pendingKnowledgeBaseDelete = selectedKnowledgeBase || null"
             >
               删除知识库
             </button>
           </div>
-          <div v-if="selectedKnowledgeBaseId" class="upload-zone">
+          <div class="upload-zone">
             <input
               type="file"
               accept=".txt,.md,.csv,.json,.log,.pdf,.docx"
@@ -307,10 +331,6 @@ onMounted(refreshKnowledgeBases)
               :disabled="loading"
               @change="upload"
             />
-          </div>
-          <div v-else class="empty-state compact">
-            <strong>还没有选中知识库</strong>
-            <span>从左侧选择一个知识库，或先创建新的知识库。</span>
           </div>
         </section>
 
@@ -325,28 +345,23 @@ onMounted(refreshKnowledgeBases)
               class="secondary"
               type="button"
               :disabled="loading"
-              @click="rebuildAllFiles"
+              @click="pendingRebuildAll = true"
             >
               重建全部索引
             </button>
           </div>
-          <div v-if="!selectedKnowledgeBaseId" class="empty-state compact">
-            <strong>暂无文件</strong>
-            <span>选择知识库后显示文件列表。</span>
-          </div>
-          <div v-else-if="files.length === 0" class="empty-state compact">
+          <div v-if="files.length === 0" class="empty-state compact">
             <strong>这个知识库还是空的</strong>
             <span>上传 txt、md、pdf 或 docx 文件后会自动入库。</span>
           </div>
           <article v-for="file in files" :key="file.id" class="file-row">
             <div>
               <strong>{{ file.fileName }}</strong>
-              <p class="muted">
-                {{ file.storageProvider || 'LEGACY' }} · {{ file.bucket || '-' }} · {{ file.objectKey || file.storagePath }}
-              </p>
-              <small class="memory-meta">
-                {{ file.contentType || 'unknown' }} · {{ file.fileSize ? `${file.fileSize} bytes` : 'unknown size' }} · {{ file.visibility || 'private' }}
-              </small>
+              <p class="muted">{{ formatFileSize(file.fileSize) }} · {{ statusText(file.parseStatus) }}</p>
+              <details class="technical-details">
+                <summary>文件详情</summary>
+                <small>{{ file.contentType || '类型未知' }} · {{ file.storageProvider || '默认存储' }}</small>
+              </details>
             </div>
             <span class="badge" :class="statusClass(file.parseStatus)">{{ statusText(file.parseStatus) }}</span>
             <button
@@ -357,83 +372,106 @@ onMounted(refreshKnowledgeBases)
             >
               {{ rebuildingFileIds.has(file.id) ? '重建中' : '重建索引' }}
             </button>
-            <button class="secondary danger" type="button" :disabled="loading" @click="removeFile(file.id)">删除</button>
+            <button class="secondary danger" type="button" :disabled="loading" @click="pendingFileDelete = file">删除</button>
           </article>
         </section>
 
-        <section class="panel item stack">
+        <section class="panel item stack retrieval-test">
           <div class="section-title">
-            <h2>RAG 调试</h2>
-            <button class="secondary" type="button" :disabled="!selectedKnowledgeBaseId" @click="refreshChunks">刷新分块</button>
-          </div>
-          <div class="row">
-            <input v-model="ragQuestion" data-testid="rag-question-input" placeholder="输入要调试的问题" />
-            <button data-testid="rag-debug-button" type="button" :disabled="!selectedKnowledgeBaseId || loading" @click="runRagDebug">
-              {{ loading ? '调试中' : '调试检索' }}
+            <div>
+              <h2>检索测试</h2>
+              <p class="muted">用一个问题验证 Lyle 能否从当前资料中找到答案。</p>
+            </div>
+            <button class="secondary" type="button" @click="showRetrievalTest = !showRetrievalTest">
+              {{ showRetrievalTest ? '收起' : '打开检索测试' }}
             </button>
           </div>
 
-          <div v-if="ragDebug" class="grid">
-            <article class="item">
-              <h3>改写 Query</h3>
-              <p v-for="query in ragDebug.queries" :key="query" class="muted">{{ query }}</p>
-            </article>
-            <article class="item">
-              <h3>充分性判断</h3>
-              <pre>{{ JSON.stringify(ragDebug.sufficiency, null, 2) }}</pre>
-            </article>
-            <article v-if="ragDebug.attribution" class="item">
-              <h3>Badcase 归因</h3>
-              <p class="muted">
-                {{ ragDebug.attribution.status }} · 命中 {{ ragDebug.attribution.contextCount }} 条 · 最高分 {{ ragDebug.attribution.topScore }}
-              </p>
-              <ul>
-                <li v-for="reason in ragDebug.attribution.reasons" :key="reason">{{ reason }}</li>
-              </ul>
-              <p v-for="suggestion in ragDebug.attribution.suggestions" :key="suggestion" class="muted">{{ suggestion }}</p>
-            </article>
-            <article v-if="ragDebug.citationQuality" class="item">
-              <h3>引用质量</h3>
-              <p class="metric">{{ ragDebug.citationQuality.score }}</p>
-              <p class="muted">{{ ragDebug.citationQuality.level }} · {{ ragDebug.citationQuality.reason }}</p>
-            </article>
-          </div>
-
-          <div v-if="ragDebug" class="stack">
-            <h3>命中文档片段</h3>
-            <div v-if="ragDebug.contexts.length === 0" class="empty-state compact">
-              <strong>没有命中文档</strong>
-              <span>可以换一个问题，或确认文件已完成入库。</span>
+          <template v-if="showRetrievalTest">
+            <div class="row retrieval-question">
+              <input v-model="ragQuestion" data-testid="rag-question-input" placeholder="例如：这份文档的主要结论是什么？" />
+              <button data-testid="rag-debug-button" type="button" :disabled="loading" @click="runRagDebug">
+                {{ loading ? '测试中' : '测试检索' }}
+              </button>
             </div>
-            <article v-for="context in ragDebug.contexts" :key="`${context.title}-${context.chunk}`" class="source-box">
-              <strong>{{ context.title }}</strong>
-              <span>
-                score={{ context.score || '-' }} · backend={{ context.backend || '-' }} · hitModes={{ context.hitModes || '-' }} · query={{ context.query || '-' }}
-              </span>
-              <small class="memory-meta">
-                {{ context.parentTitle || '文档内容' }} · #{{ context.chunkIndex || '-' }} · {{ context.startChar || '-' }}-{{ context.endChar || '-' }}
-              </small>
-              <p>{{ context.chunk }}</p>
-            </article>
-          </div>
 
-          <div class="stack">
-            <h3>当前分块预览</h3>
-            <article v-for="chunk in ragChunks" :key="`${chunk.doc_id}-${chunk.title}`" class="source-box">
-              <strong>{{ chunk.title }}</strong>
-              <span>{{ chunk.doc_id }} · {{ chunk.backend }}</span>
-              <small class="memory-meta">
-                {{ chunk.parentTitle || '文档内容' }} · #{{ chunk.chunkIndex || '-' }} · {{ chunk.startChar || '-' }}-{{ chunk.endChar || '-' }}
-              </small>
-              <p>{{ chunk.chunk }}</p>
-            </article>
-            <div v-if="ragChunks.length === 0" class="empty-state compact">
-              <strong>暂无可预览分块</strong>
-              <span>如果使用 Qdrant 持久化，重启后内存预览可能为空，但向量检索仍可工作。</span>
+            <div v-if="ragDebug" class="retrieval-results stack">
+              <div class="section-title">
+                <div>
+                  <h3>找到的资料</h3>
+                  <p class="muted">{{ ragDebug.contexts.length ? `找到 ${ragDebug.contexts.length} 个相关片段。` : '没有找到可直接回答的资料。' }}</p>
+                </div>
+                <span v-if="ragDebug.citationQuality" class="badge">引用可靠性 {{ ragDebug.citationQuality.level }}</span>
+              </div>
+              <div v-if="ragDebug.contexts.length === 0" class="empty-state compact">
+                <strong>没有找到相关内容</strong>
+                <span>可以换一种问法，或确认文件已经处理完成。</span>
+              </div>
+              <article v-for="context in ragDebug.contexts" :key="`${context.title}-${context.chunk}`" class="source-box">
+                <strong>{{ context.title }}</strong>
+                <small class="memory-meta">{{ context.parentTitle || '文档内容' }}</small>
+                <p>{{ context.chunk }}</p>
+              </article>
             </div>
-          </div>
+
+            <button class="technical-toggle" type="button" :aria-expanded="showTechnicalDetails" @click="toggleTechnicalDetails">
+              {{ showTechnicalDetails ? '收起技术详情' : '查看技术详情' }}
+            </button>
+            <section v-if="showTechnicalDetails" class="technical-panel stack" aria-label="检索技术详情">
+              <div v-if="ragDebug" class="grid">
+                <article class="item"><h3>检索词</h3><p v-for="query in ragDebug.queries" :key="query" class="muted">{{ query }}</p></article>
+                <article class="item"><h3>资料充分性</h3><pre>{{ JSON.stringify(ragDebug.sufficiency, null, 2) }}</pre></article>
+              </div>
+              <div class="stack">
+                <h3>索引片段预览</h3>
+                <article v-for="chunk in ragChunks" :key="`${chunk.doc_id}-${chunk.title}`" class="source-box">
+                  <strong>{{ chunk.title }}</strong>
+                  <small class="memory-meta">片段 #{{ chunk.chunkIndex || '-' }} · {{ chunk.backend || '默认检索服务' }}</small>
+                  <p>{{ chunk.chunk }}</p>
+                </article>
+                <p v-if="ragChunks.length === 0" class="muted">当前没有可预览的索引片段。</p>
+              </div>
+            </section>
+          </template>
         </section>
-      </main>
+      </section>
     </div>
+
+    <ConfirmActionDialog
+      :open="Boolean(pendingKnowledgeBaseDelete)"
+      title="删除知识库"
+      :description="`删除“${pendingKnowledgeBaseDelete?.name || ''}”后，其中的文件将不再用于回答。此操作无法撤销。`"
+      confirm-label="确认删除"
+      danger
+      :busy="loading"
+      @update:open="(open) => { if (!open) pendingKnowledgeBaseDelete = null }"
+      @confirm="pendingKnowledgeBaseDelete && removeKnowledgeBase(pendingKnowledgeBaseDelete.id)"
+    />
+    <ConfirmActionDialog
+      :open="Boolean(pendingFileDelete)"
+      title="删除文件"
+      :description="`删除“${pendingFileDelete?.fileName || ''}”后，Lyle 将不再引用它。`"
+      confirm-label="确认删除"
+      danger
+      :busy="loading"
+      @update:open="(open) => { if (!open) pendingFileDelete = null }"
+      @confirm="pendingFileDelete && removeFile(pendingFileDelete.id)"
+    />
+    <ConfirmActionDialog
+      :open="pendingRebuildAll"
+      title="重新处理全部文件"
+      :description="`将重新处理“${selectedKnowledgeBase?.name || ''}”中的 ${files.length} 个文件，期间检索结果可能短暂变化。`"
+      confirm-label="开始处理"
+      :busy="loading"
+      @update:open="pendingRebuildAll = $event"
+      @confirm="rebuildAllFiles"
+    />
   </section>
 </template>
+
+<style scoped>
+.technical-details { margin-top: 4px; color: var(--muted-foreground); font-size: 12px; }.technical-details summary { width: fit-content; cursor: pointer; }
+.retrieval-question input { min-width: 0; flex: 1; }.technical-toggle { width: fit-content; border: 0; background: transparent; color: var(--muted-foreground); padding: 4px 0; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
+.technical-panel { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-muted); padding: var(--space-4); }.technical-panel pre { max-height: 220px; overflow: auto; white-space: pre-wrap; }
+@media (max-width: 680px) { .retrieval-question { flex-direction: column; }.retrieval-question button { width: 100%; } }
+</style>
