@@ -11,7 +11,9 @@
     "test:unit": "vitest run tests/unit",
     "test:e2e": "playwright test",
     "test:e2e:v5-real": "bash scripts/run-v5-real-e2e.sh",
-    "test:e2e:v5-real:spec": "V5_REAL_E2E=1 PLAYWRIGHT_PORT=5174 PLAYWRIGHT_BASE_URL=http://127.0.0.1:5174 LYLE_BACKEND_PROXY=${V5_REAL_BACKEND_URL:-http://127.0.0.1:8081} playwright test tests/e2e/v5-controlled-agent-loop.real.spec.ts --project=chromium"
+    "test:e2e:v5-real:spec": "V5_REAL_E2E=1 PLAYWRIGHT_PORT=5174 PLAYWRIGHT_BASE_URL=http://127.0.0.1:5174 LYLE_BACKEND_PROXY=${V5_REAL_BACKEND_URL:-http://127.0.0.1:8081} playwright test tests/e2e/v5-controlled-agent-loop.real.spec.ts --project=chromium",
+    "test:e2e:v6-real": "bash scripts/run-v6-real-e2e.sh",
+    "test:e2e:v6-real:spec": "V6_REAL_E2E=1 PLAYWRIGHT_PORT=5175 PLAYWRIGHT_BASE_URL=http://127.0.0.1:5175 LYLE_BACKEND_PROXY=${V6_REAL_BACKEND_URL:-http://127.0.0.1:8082} playwright test tests/e2e/v6-trusted-delegation.real.spec.ts --project=chromium"
   },
   "dependencies": {
     "@lucide/vue": "^1.24.0",

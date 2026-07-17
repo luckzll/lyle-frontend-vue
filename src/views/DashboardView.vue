@@ -7,6 +7,7 @@ import {
   CircleAlert,
   Clock3,
   FolderKanban,
+  Inbox,
   ListTodo,
   MessageCircle,
   Play,
@@ -18,6 +19,14 @@ import {
 import { getCurrentUser } from '@/auth'
 import { getDashboardViewModel } from '@/api/adapters/dashboard'
 import { trackProductEvent } from '@/api/app'
+import {
+  getMissionDigest,
+  listMissionExceptions,
+  type MissionException,
+  type MissionStatus
+} from '@/api/missions'
+import { isMissionFrontendEnabled } from '@/features/mission'
+import { formatBeijingTime } from '@/domain/date-time'
 import type { DashboardSource, DashboardViewModel } from '@/api/adapters/dashboard'
 import {
   useWorkspaceStore,
@@ -32,6 +41,25 @@ const loading = ref(false)
 const fatalError = ref('')
 const chatDraft = ref('')
 const selectedProjectId = ref<number | null>(null)
+const missionDigest = ref<{
+  items: Array<{
+    missionId: string
+    title: string
+    status: MissionStatus
+    summary: string
+    completedRuns: number
+    attentionCount: number
+    evidenceRefs: string[]
+    periodUsage: Record<string, number>
+    nearBudget: boolean
+    nextRunAt?: string | null
+    expiresAt: string
+  }>
+  completedRuns: number
+  attentionCount: number
+} | null>(null)
+const missionExceptions = ref<MissionException[]>([])
+const missionEnabled = isMissionFrontendEnabled(getCurrentUser()?.id)
 
 const quickIntents: WorkspaceQuickIntentId[] = ['organize-project', 'make-plan', 'research', 'inspect']
 const userName = getCurrentUser()?.username?.trim() || ''
@@ -72,6 +100,10 @@ const lastUpdated = computed(() => {
 const overdueCount = computed(() => dashboard.value?.todayFocus.filter((item) => item.tone === 'danger').length || 0)
 const confirmationCount = computed(() => dashboard.value?.actionItems.filter((item) => item.kind === 'confirmation').length || 0)
 const failedResultCount = computed(() => dashboard.value?.actionItems.filter((item) => item.kind === 'execution' && item.tone === 'danger').length || 0)
+const upcomingMissions = computed(() => (missionDigest.value?.items || [])
+  .filter((item) => item.status === 'ACTIVE')
+  .sort((left, right) => new Date(left.nextRunAt || left.expiresAt).getTime() - new Date(right.nextRunAt || right.expiresAt).getTime())
+  .slice(0, 4))
 
 onMounted(() => {
   recordProductEvent('dashboard_viewed')
@@ -84,6 +116,16 @@ async function refresh() {
   try {
     const nextDashboard = await getDashboardViewModel()
     dashboard.value = nextDashboard
+    if (missionEnabled) {
+      const [digestResult, exceptionsResult] = await Promise.allSettled([
+        getMissionDigest(20),
+        listMissionExceptions({ status: 'OPEN', limit: 20 })
+      ])
+      missionDigest.value = digestResult.status === 'fulfilled' ? digestResult.value.data : null
+      missionExceptions.value = exceptionsResult.status === 'fulfilled'
+        ? exceptionsResult.value.data.items
+        : []
+    }
     if (
       selectedProjectId.value
       && !nextDashboard.activeProjects.some((project) => project.id === selectedProjectId.value)
@@ -188,6 +230,9 @@ function actionKindLabel(kind: string) {
       <RouterLink class="priority-chip danger" to="/execution-center?view=attention">
         <strong>{{ failedResultCount }}</strong><span>个失败结果</span>
       </RouterLink>
+      <RouterLink v-if="missionEnabled" class="priority-chip warning" to="/exceptions">
+        <strong>{{ missionExceptions.length }}</strong><span>个委托异常</span>
+      </RouterLink>
     </nav>
 
     <section class="command-card" aria-labelledby="dashboard-greeting">
@@ -276,7 +321,37 @@ function actionKindLabel(kind: string) {
         <button type="button" :disabled="loading" @click="refresh">重试</button>
       </section>
 
-      <section v-if="dashboard.confirmedEmpty" class="first-run-card">
+      <section v-if="missionEnabled && (missionDigest?.items.length || missionExceptions.length)" class="mission-brief" aria-labelledby="mission-brief-title">
+        <header class="panel-header">
+          <div><p class="panel-kicker">可信委托摘要</p><h2 id="mission-brief-title">持续任务与异常</h2></div>
+          <RouterLink to="/missions">查看持续任务 <ArrowRight :size="14" aria-hidden="true" /></RouterLink>
+        </header>
+        <div class="mission-brief-grid">
+          <section>
+            <h3><Inbox :size="17" />真正需要你决定</h3>
+            <div v-if="missionExceptions.length" class="item-list">
+              <RouterLink v-for="item in missionExceptions.slice(0, 3)" :key="item.id" class="list-item action-item tone-warning" :to="`/exceptions/${item.id}`">
+                <span class="tone-label">{{ item.type }}</span>
+                <span class="item-copy"><strong>{{ item.title }}</strong><small>{{ item.summary }}</small></span>
+                <ArrowRight :size="16" aria-hidden="true" />
+              </RouterLink>
+            </div>
+            <div v-else class="section-state success-state"><Sparkles :size="20" /><strong>没有委托异常</strong><span>正常运行结果已进入摘要。</span></div>
+          </section>
+          <section>
+            <h3><Clock3 :size="17" />即将运行与到期</h3>
+            <div v-if="upcomingMissions.length" class="item-list">
+              <RouterLink v-for="item in upcomingMissions" :key="item.missionId" class="mission-brief-item" :to="`/missions/${item.missionId}`">
+                <span><strong>{{ item.title }}</strong><small>{{ item.nearBudget ? '周期预算接近上限' : item.summary }}</small></span>
+                <time>{{ formatBeijingTime(item.nextRunAt, `到期 ${formatBeijingTime(item.expiresAt)}`) }}</time>
+              </RouterLink>
+            </div>
+            <div v-else class="section-state"><Clock3 :size="20" /><strong>没有即将运行的任务</strong><span>可从持续任务中心创建或恢复。</span></div>
+          </section>
+        </div>
+      </section>
+
+      <section v-if="dashboard.confirmedEmpty && !missionDigest?.items.length" class="first-run-card">
         <span class="first-run-icon"><Bot :size="25" aria-hidden="true" /></span>
         <div>
           <p class="page-kicker">从第一次推进开始</p>
@@ -539,7 +614,7 @@ function actionKindLabel(kind: string) {
 
 .priority-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
 }
 
@@ -708,13 +783,60 @@ function actionKindLabel(kind: string) {
 }
 
 .panel-card,
-.quick-actions {
+.quick-actions,
+.mission-brief {
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--surface);
   padding: clamp(16px, 2.5vw, 22px);
   box-shadow: 0 4px 18px color-mix(in srgb, var(--foreground) 3.5%, transparent);
+}
+.mission-brief-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.mission-brief-grid > section {
+  min-width: 0;
+}
+
+.mission-brief-grid h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.mission-brief-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+  padding: 11px 12px;
+  color: inherit;
+}
+
+.mission-brief-item > span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.mission-brief-item small,
+.mission-brief-item time {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.mission-brief-item time {
+  flex: 0 0 auto;
+  text-align: right;
 }
 
 .panel-header {
@@ -1155,7 +1277,7 @@ function actionKindLabel(kind: string) {
   }
 
   .priority-summary {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
 
@@ -1175,8 +1297,13 @@ function actionKindLabel(kind: string) {
 
   .command-card,
   .panel-card,
-  .quick-actions {
+  .quick-actions,
+  .mission-brief {
     border-radius: 14px;
+  }
+
+  .mission-brief-grid {
+    grid-template-columns: 1fr;
   }
 
   .composer-footer {

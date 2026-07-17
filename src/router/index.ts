@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { getCurrentUser, hasAuth } from '@/auth'
 import { isAgentTaskFrontendEnabled } from '@/features/agentTask'
+import { isMissionFrontendEnabled } from '@/features/mission'
 import type { NavigationGroupId } from '@/app/navigation'
 
 declare module 'vue-router' {
@@ -189,6 +190,97 @@ const router = createRouter({
       }
     },
     {
+      path: '/missions',
+      name: 'missions',
+      component: () => import('@/views/MissionsView.vue'),
+      meta: {
+        title: '持续任务',
+        navGroup: 'progress',
+        icon: 'calendar-sync',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/missions/new',
+      name: 'mission-create',
+      component: () => import('@/views/MissionCreateView.vue'),
+      meta: {
+        title: '新建持续任务',
+        navGroup: 'progress',
+        icon: 'calendar-plus',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/missions/:id/grant',
+      name: 'mission-grant',
+      component: () => import('@/views/MissionGrantView.vue'),
+      meta: {
+        title: '委托授权',
+        navGroup: 'progress',
+        icon: 'shield-check',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/missions/:id/shadow',
+      name: 'mission-shadow',
+      component: () => import('@/views/MissionShadowView.vue'),
+      meta: {
+        title: 'Shadow Mode',
+        navGroup: 'progress',
+        icon: 'eye',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/missions/:id',
+      name: 'mission-detail',
+      component: () => import('@/views/MissionDetailView.vue'),
+      meta: {
+        title: '持续任务详情',
+        navGroup: 'progress',
+        icon: 'calendar-sync',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/exceptions',
+      name: 'exceptions',
+      component: () => import('@/views/ExceptionsView.vue'),
+      meta: {
+        title: '异常收件箱',
+        navGroup: 'progress',
+        icon: 'inbox',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/exceptions/:id',
+      name: 'exception-detail',
+      component: () => import('@/views/ExceptionDetailView.vue'),
+      meta: {
+        title: '异常详情',
+        navGroup: 'progress',
+        icon: 'triangle-alert',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
       path: '/execution-center',
       name: 'execution-center',
       component: () => import('@/views/ExecutionCenterView.vue'),
@@ -351,6 +443,10 @@ const router = createRouter({
 router.beforeEach((to) => {
   if (to.path.startsWith('/agent-tasks') && !isAgentTaskFrontendEnabled(getCurrentUser()?.id)) {
     return { path: '/execution-center', query: { feature: 'agent-task-unavailable' } }
+  }
+  if ((to.path.startsWith('/missions') || to.path.startsWith('/exceptions'))
+      && !isMissionFrontendEnabled(getCurrentUser()?.id)) {
+    return { path: '/execution-center', query: { feature: 'mission-unavailable' } }
   }
   if (to.meta.requiresAuth && !hasAuth()) {
     return { name: 'login' }

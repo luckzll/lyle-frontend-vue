@@ -1,10 +1,12 @@
 import type { Component } from 'vue'
 import { isAgentTaskFrontendEnabled } from '@/features/agentTask'
+import { isMissionFrontendEnabled } from '@/features/mission'
 import type { RouteLocationNormalizedLoaded, RouteLocationRaw } from 'vue-router'
 import {
   Activity,
   Bot,
   Brain,
+  CalendarSync,
   ClipboardCheck,
   FileText,
   FolderKanban,
@@ -13,6 +15,7 @@ import {
   ListTodo,
   MessageSquare,
   MessagesSquare,
+  Inbox,
   PlugZap,
   ShieldCheck,
   SlidersHorizontal,
@@ -104,6 +107,22 @@ export const navigationGroups: NavigationGroup[] = [
         to: '/agent-tasks',
         icon: Bot,
         match: { routeNames: ['agent-tasks', 'agent-task-create', 'agent-plan-approval', 'agent-task-detail'] }
+      },
+      {
+        id: 'missions',
+        label: '持续任务',
+        description: '管理可信委托和周期运行',
+        to: '/missions',
+        icon: CalendarSync,
+        match: { routeNames: ['missions', 'mission-create', 'mission-detail', 'mission-grant', 'mission-shadow'] }
+      },
+      {
+        id: 'exceptions',
+        label: '异常收件箱',
+        description: '处理越界、冲突和失败',
+        to: '/exceptions',
+        icon: Inbox,
+        match: { routeNames: ['exceptions', 'exception-detail'] }
       },
       {
         id: 'execution-center',
@@ -210,6 +229,7 @@ export function getVisibleNavigationGroups(isAdmin: boolean, userId?: string | n
       items: group.items.filter((item) =>
         (!item.requiresAdmin || isAdmin)
         && (item.id !== 'agent-tasks' || isAgentTaskFrontendEnabled(userId))
+        && (!['missions', 'exceptions'].includes(item.id) || isMissionFrontendEnabled(userId))
       )
     }))
     .filter((group) => group.items.length > 0)

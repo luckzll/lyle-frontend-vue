@@ -28,7 +28,7 @@ describe('application navigation', () => {
       navigationGroups.map((group) => [group.label, group.items.map((item) => item.label)])
     )).toEqual({
       开始: ['工作台', '聊天'],
-      推进: ['项目', '任务', '自动化', 'Agent Task', '执行中心'],
+      推进: ['项目', '任务', '自动化', 'Agent Task', '持续任务', '异常收件箱', '执行中心'],
       资料: ['知识库', '记忆', '会话'],
       系统: ['连接', '高级设置'],
       管理员: ['评测', 'Prompt', '管理']

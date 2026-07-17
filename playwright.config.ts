@@ -28,7 +28,9 @@ export default defineConfig({
     env: {
       ...process.env,
       VITE_AGENT_TASK_ENABLED: 'true',
-      VITE_AGENT_TASK_ENABLED_USERS: '*'
+      VITE_AGENT_TASK_ENABLED_USERS: '*',
+      VITE_MISSION_ENABLED: 'true',
+      VITE_MISSION_ENABLED_USERS: '*'
     }
   }
 })
