@@ -77,4 +77,60 @@ describe('SSE parsing', () => {
     expect(handlers.onDelta).toHaveBeenCalledWith('')
     expect(handlers.onError).toHaveBeenCalledWith('流式请求失败')
   })
+
+  it('dispatches turn lifecycle and incremental image batch events', () => {
+    const handlers = {
+      onDelta: vi.fn(),
+      onTurnStatus: vi.fn(),
+      onImageBatchStarted: vi.fn(),
+      onImageItem: vi.fn(),
+      onImageBatchCompleted: vi.fn()
+    }
+
+    const remaining = consumeSseBuffer(
+      [
+        'event: turn.status',
+        'data: {"turnId":"turn-1","phase":"GENERATING","message":"正在生成 2 张图片…"}',
+        '',
+        'event: image.batch.started',
+        'data: {"turnId":"turn-1","batchId":"batch-1","count":2,"mode":"generate","concurrency":2,"referenceCount":0,"items":[{"index":0,"status":"RUNNING"},{"index":1,"status":"RUNNING"}]}',
+        '',
+        'event: image.item.completed',
+        'data: {"turnId":"turn-1","batchId":"batch-1","count":2,"completedCount":1,"index":1,"status":"COMPLETED","imageUrl":"https://example.com/two.png"}',
+        '',
+        'event: image.item.failed',
+        'data: {"turnId":"turn-1","batchId":"batch-1","count":2,"completedCount":1,"index":0,"status":"FAILED","error":"限流"}',
+        '',
+        'event: image.batch.completed',
+        'data: {"turnId":"turn-1","batchId":"batch-1","status":"PARTIALLY_COMPLETED","count":2,"completedCount":1,"failedCount":1}',
+        '',
+        ''
+      ].join('\n'),
+      handlers
+    )
+
+    expect(remaining).toBe('')
+    expect(handlers.onTurnStatus).toHaveBeenCalledWith({
+      turnId: 'turn-1',
+      phase: 'GENERATING',
+      message: '正在生成 2 张图片…'
+    })
+    expect(handlers.onImageBatchStarted).toHaveBeenCalledOnce()
+    expect(handlers.onImageItem).toHaveBeenCalledTimes(2)
+    expect(handlers.onImageItem).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      index: 1,
+      status: 'COMPLETED',
+      imageUrl: 'https://example.com/two.png'
+    }))
+    expect(handlers.onImageItem).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      index: 0,
+      status: 'FAILED',
+      error: '限流'
+    }))
+    expect(handlers.onImageBatchCompleted).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'PARTIALLY_COMPLETED',
+      completedCount: 1,
+      failedCount: 1
+    }))
+  })
 })

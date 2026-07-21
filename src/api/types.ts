@@ -439,8 +439,10 @@ export interface ToolResult {
 export interface ChatMessage {
   id: string
   conversationId: string
+  turnId?: string
   role: 'user' | 'assistant'
   content: string
+  metadata?: Record<string, unknown>
   createdAt: string
 }
 

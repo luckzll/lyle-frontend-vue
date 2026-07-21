@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, PanelRightOpen, RotateCcw } from '@lucide/vue'
 import {
@@ -24,8 +24,14 @@ import {
   trackEffectiveProgressAction,
   trackProductEvent,
   changeStructuredMemoryStatus,
+  cancelChatTurn,
   updateConversationTitle,
-  uploadChatImage
+  uploadChatImage,
+  type ImageBatchItem,
+  type ImageBatchStartedEvent,
+  type ImageBatchCompletedEvent,
+  type ImageItemEvent,
+  type TurnStatusEvent
 } from '@/api/app'
 import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, Conversation, KnowledgeBase, MemoryItem, MemorySnapshot, PendingOperationItem, ProjectChatContext, ToolResult, ExecutionSuggestionItem } from '@/api/types'
 import ContextPanel from '@/components/layout/ContextPanel.vue'
@@ -33,6 +39,9 @@ import ExecutionTimeline from '@/components/domain/ExecutionTimeline.vue'
 import SuggestionCard from '@/components/domain/SuggestionCard.vue'
 import { useWorkspaceStore, type WorkspaceProjectContext } from '@/stores/workspace'
 import { isConversationNearBottom } from '@/domain/chat-scroll'
+import { historyMessage, isActiveTurnPhase } from '@/domain/chat-history'
+import { NEW_CONVERSATION_STORAGE_VALUE, resolveConversationToRestore } from '@/domain/chat-session'
+import { cancelPendingImageItems } from '@/domain/image-batch'
 import {
   sanitizeAgentTrace,
   sanitizeChatSources,
@@ -45,10 +54,22 @@ import {
 interface Message {
   role: 'user' | 'assistant'
   content: string
-  image?: {
+  images?: Array<{
     name: string
     url: string
     previewUrl?: string
+  }>
+  turnId?: string
+  phase?: TurnStatusEvent['phase']
+  statusText?: string
+  imageBatch?: {
+    batchId: string
+    count: number
+    mode: 'generate' | 'edit'
+    status: 'RUNNING' | 'COMPLETED' | 'PARTIALLY_COMPLETED' | 'FAILED' | 'CANCELLED'
+    completedCount: number
+    failedCount: number
+    items: ImageBatchItem[]
   }
   sources?: ChatSource[]
   agentTrace?: AgentTraceItem[]
@@ -74,16 +95,19 @@ const chatListRef = ref<HTMLElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 const hasMessagesBelow = ref(false)
 const isNearBottom = ref(true)
-const selectedImage = ref<{ name: string; previewUrl: string; url: string } | null>(null)
+const selectedImages = ref<Array<{ name: string; previewUrl: string; url: string }>>([])
 const uploadingImage = ref(false)
 const uploadError = ref('')
 const loading = ref(false)
 const streamController = ref<AbortController | null>(null)
+const recoveringTurnId = ref('')
+let recoveryPollTimer: number | undefined
 const initializing = ref(true)
 const debugControlsEnabled = computed(() => route.query.debug === '1')
 const showDebug = ref(debugControlsEnabled.value)
 const error = ref('')
 const conversationId = ref('')
+const ACTIVE_CONVERSATION_STORAGE_KEY = 'lyle.chat.active-conversation'
 const editingTitle = ref(false)
 const editingConversationId = ref('')
 const titleDraft = ref('')
@@ -220,8 +244,16 @@ onMounted(async () => {
   }
   try {
     await Promise.all([refreshKnowledgeBases(), refreshConversations(), refreshBrief()])
-    const initialConversationId = route.query.conversationId
-    if (typeof initialConversationId === 'string' && initialConversationId.trim()) {
+    const requestedConversationId = typeof route.query.conversationId === 'string'
+      ? route.query.conversationId
+      : undefined
+    const initialConversationId = resolveConversationToRestore({
+      requestedId: requestedConversationId,
+      storedId: window.localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY),
+      conversationIds: conversations.value.map((item) => String(item.id)),
+      allowRecent: !handoff && !activeProjectId.value
+    })
+    if (initialConversationId) {
       await loadConversation(initialConversationId)
     }
     syncPendingMemoriesToLatestAssistant()
@@ -248,6 +280,10 @@ watch(debugControlsEnabled, (enabled) => {
 
 onActivated(async () => {
   await refreshBrief()
+})
+
+onBeforeUnmount(() => {
+  clearRecoveryPolling()
 })
 
 async function refreshKnowledgeBases() {
@@ -292,6 +328,7 @@ async function ensureConversationId(firstMessage: string) {
   const title = firstMessage.length > 18 ? `${firstMessage.slice(0, 18)}...` : firstMessage
   const response = await createConversation(title || '新会话')
   conversationId.value = String(response.data.id)
+  window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, conversationId.value)
   await refreshConversations()
   return conversationId.value
 }
@@ -299,7 +336,11 @@ async function ensureConversationId(firstMessage: string) {
 async function loadConversation(id: string) {
   if (loading.value) return
 
+  clearRecoveryPolling()
+  recoveringTurnId.value = ''
   handoffProject.value = null
+  selectedImages.value = []
+  uploadError.value = ''
   editingTitle.value = false
   editingConversationId.value = ''
   conversationId.value = String(id)
@@ -308,13 +349,58 @@ async function loadConversation(id: string) {
   try {
     const response = await listChatMessages(conversationId.value)
     messages.value = response.data.length
-      ? response.data.map((item) => ({ role: item.role, content: item.content }))
+      ? response.data.map(historyMessage)
       : [{ role: 'assistant', content: '这个会话还没有消息。' }]
+    window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, conversationId.value)
     await refreshBrief()
   } catch {
     error.value = '会话加载失败，请稍后重试。'
   } finally {
     loading.value = false
+    syncRecoveredTurnPolling()
+  }
+}
+
+function syncRecoveredTurnPolling() {
+  const active = [...messages.value].reverse().find((message) => (
+    message.role === 'assistant'
+    && Boolean(message.turnId)
+    && isActiveTurnPhase(message.phase)
+  ))
+  if (!active || streamController.value) {
+    recoveringTurnId.value = ''
+    clearRecoveryPolling()
+    if (!streamController.value) loading.value = false
+    return
+  }
+  recoveringTurnId.value = active.turnId || ''
+  loading.value = true
+  if (recoveryPollTimer === undefined) {
+    recoveryPollTimer = window.setTimeout(pollRecoveredConversation, 1000)
+  }
+}
+
+async function pollRecoveredConversation() {
+  recoveryPollTimer = undefined
+  const targetConversationId = conversationId.value
+  if (!targetConversationId || streamController.value) return
+  try {
+    const response = await listChatMessages(targetConversationId)
+    if (conversationId.value !== targetConversationId) return
+    messages.value = response.data.length
+      ? response.data.map(historyMessage)
+      : [{ role: 'assistant', content: '这个会话还没有消息。' }]
+  } catch {
+    error.value = '图片任务状态暂时无法更新，正在重试。'
+  } finally {
+    syncRecoveredTurnPolling()
+  }
+}
+
+function clearRecoveryPolling() {
+  if (recoveryPollTimer !== undefined) {
+    window.clearTimeout(recoveryPollTimer)
+    recoveryPollTimer = undefined
   }
 }
 
@@ -327,10 +413,15 @@ function changeConversation() {
 function newConversation() {
   if (loading.value) return
 
+  clearRecoveryPolling()
+  recoveringTurnId.value = ''
   handoffProject.value = null
+  selectedImages.value = []
+  uploadError.value = ''
   editingTitle.value = false
   editingConversationId.value = ''
   conversationId.value = ''
+  window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, NEW_CONVERSATION_STORAGE_VALUE)
   messages.value = [
     { role: 'assistant', content: '新的会话已经准备好。输入第一句话后，我会自动创建会话并保存历史。' }
   ]
@@ -398,23 +489,51 @@ function scrollToBottom(smooth = true) {
   hasMessagesBelow.value = false
 }
 
-function cancelStreaming() {
-  if (!streamController.value) return
-  streamController.value.abort()
+async function cancelStreaming() {
+  const controller = streamController.value
+  const target = [...messages.value].reverse().find((message) => (
+    message.role === 'assistant'
+    && Boolean(message.turnId)
+    && isActiveTurnPhase(message.phase)
+  ))
+  const turnId = target?.turnId || recoveringTurnId.value
+  if (!turnId || !conversationId.value) {
+    controller?.abort()
+    return
+  }
+
+  try {
+    const response = await cancelChatTurn(conversationId.value, turnId)
+    if (target) Object.assign(target, historyMessage(response.data))
+  } catch {
+    if (target) {
+      target.content ||= '已停止生成。'
+      target.phase = 'FAILED'
+      target.statusText = '已停止生成'
+      applyImageBatchCancelled(target)
+    }
+  } finally {
+    controller?.abort()
+    clearRecoveryPolling()
+    recoveringTurnId.value = ''
+    loading.value = false
+  }
 }
 
 async function submit() {
   const text = input.value.trim()
-  const message = selectedImage.value
-    ? `${text || '请识别这张图片'}\n图片：${selectedImage.value.url}`
+  const attachmentLines = selectedImages.value.map((image, index) => `图片${index + 1}：${image.url}`)
+  const message = selectedImages.value.length
+    ? `${text || '请识别这些图片'}\n${attachmentLines.join('\n')}`
     : text
   if (!message || loading.value) return
   const requestProjectId = activeProjectId.value
   const startsProjectConversation = Boolean(requestProjectId) && !hasUserMessages.value
+  const turnId = crypto.randomUUID()
 
   input.value = ''
-  const imageForDisplay = selectedImage.value
-  selectedImage.value = null
+  const imagesForDisplay = [...selectedImages.value]
+  selectedImages.value = []
   uploadError.value = ''
   loading.value = true
   error.value = ''
@@ -427,20 +546,21 @@ async function submit() {
     const activeConversationId = await ensureConversationId(message)
     messages.value.push({
       role: 'user',
-      content: imageForDisplay ? (text || '请识别这张图片') : message,
-      image: imageForDisplay
-        ? {
-            name: imageForDisplay.name,
-            url: imageForDisplay.url,
-            previewUrl: imageForDisplay.previewUrl
-          }
-        : undefined
+      content: imagesForDisplay.length ? (text || '请识别这些图片') : message,
+      images: imagesForDisplay.length ? imagesForDisplay : undefined
     })
-    messages.value.push({ role: 'assistant', content: '' })
+    messages.value.push({
+      role: 'assistant',
+      content: '',
+      turnId,
+      phase: 'THINKING',
+      statusText: '正在理解你的需求…'
+    })
     assistantIndex = messages.value.length - 1
 
     await streamMessage({
       conversationId: activeConversationId,
+      turnId,
       projectId: requestProjectId,
       message,
       knowledgeBaseIds: selectedKnowledgeBaseId.value ? [selectedKnowledgeBaseId.value] : []
@@ -466,9 +586,26 @@ async function submit() {
         messages.value[assistantIndex].projectContext = sanitizeProjectContext(meta.projectContext)
         messages.value[assistantIndex].review = sanitizeReview(meta.review)
       },
+      onTurnStatus: (status) => {
+        const target = messages.value[assistantIndex]
+        target.turnId = status.turnId || target.turnId
+        target.phase = status.phase
+        target.statusText = status.message
+      },
+      onImageBatchStarted: (batch) => {
+        applyImageBatchStarted(messages.value[assistantIndex], batch)
+      },
+      onImageItem: (item) => {
+        applyImageItem(messages.value[assistantIndex], item)
+      },
+      onImageBatchCompleted: (batch) => {
+        applyImageBatchCompleted(messages.value[assistantIndex], batch)
+      },
       onError: (errorMessage) => {
         streamError = errorMessage
         messages.value[assistantIndex].content ||= errorMessage
+        messages.value[assistantIndex].phase = 'FAILED'
+        messages.value[assistantIndex].statusText = errorMessage
       },
       onDone: () => {
         streamController.value = null
@@ -497,6 +634,9 @@ async function submit() {
     if (exception instanceof DOMException && exception.name === 'AbortError') {
       if (assistantIndex >= 0) {
         messages.value[assistantIndex].content ||= '已停止生成。'
+        messages.value[assistantIndex].phase = 'FAILED'
+        messages.value[assistantIndex].statusText = '已停止生成'
+        applyImageBatchCancelled(messages.value[assistantIndex])
         if (!messages.value[assistantIndex].content.includes('已停止生成。')) {
           messages.value[assistantIndex].content += '\n\n已停止生成。'
         }
@@ -506,12 +646,61 @@ async function submit() {
     const fallback = streamError || (exception instanceof Error ? exception.message : '') || '请求失败，请确认 Java 后端和 Python AI 服务已经启动。'
     if (assistantIndex >= 0) {
       messages.value[assistantIndex].content ||= fallback
+      messages.value[assistantIndex].phase = 'FAILED'
+      messages.value[assistantIndex].statusText = fallback
     }
     error.value = fallback
   } finally {
     loading.value = false
     streamController.value = null
   }
+}
+
+function applyImageBatchStarted(message: Message, batch: ImageBatchStartedEvent) {
+  message.turnId = batch.turnId || message.turnId
+  message.phase = 'GENERATING'
+  message.statusText = `正在生成 ${batch.count} 张图片…`
+  message.imageBatch = {
+    batchId: batch.batchId,
+    count: batch.count,
+    mode: batch.mode,
+    status: 'RUNNING',
+    completedCount: 0,
+    failedCount: 0,
+    items: batch.items.map((item) => ({ ...item }))
+  }
+}
+
+function applyImageItem(message: Message, item: ImageItemEvent) {
+  const batch = message.imageBatch
+  if (!batch || batch.batchId !== item.batchId) return
+  const existing = batch.items.findIndex((value) => value.index === item.index)
+  const next: ImageBatchItem = {
+    index: item.index,
+    status: item.status,
+    imageUrl: item.imageUrl,
+    error: item.error
+  }
+  if (existing >= 0) batch.items.splice(existing, 1, next)
+  else batch.items.push(next)
+  batch.completedCount = item.completedCount
+  batch.failedCount = batch.items.filter((value) => value.status === 'FAILED').length
+  message.statusText = `已完成 ${batch.completedCount} / ${batch.count} 张图片`
+}
+
+function applyImageBatchCompleted(message: Message, event: ImageBatchCompletedEvent) {
+  const batch = message.imageBatch
+  if (!batch || batch.batchId !== event.batchId) return
+  batch.status = event.status
+  batch.completedCount = event.completedCount
+  batch.failedCount = event.failedCount
+}
+
+function applyImageBatchCancelled(message: Message) {
+  const batch = message.imageBatch
+  if (!batch) return
+  batch.status = 'CANCELLED'
+  batch.items = cancelPendingImageItems(batch.items)
 }
 
 function syncPendingMemoriesToLatestAssistant(snapshot = briefMemory.value) {
@@ -572,16 +761,21 @@ function findAssistantIndexForMemory(item: MemoryItem) {
 
 async function handleImageSelect(event: Event) {
   const target = event.target as HTMLInputElement
-  const file = target.files?.[0]
+  const files = Array.from(target.files || [])
   target.value = ''
-  if (!file) return
-  if (!file.type.startsWith('image/')) {
+  if (!files.length) return
+  if (selectedImages.value.length + files.length > 8) {
+    uploadError.value = '单次最多上传 8 张参考图。'
+    error.value = uploadError.value
+    return
+  }
+  if (files.some((file) => !file.type.startsWith('image/'))) {
     uploadError.value = '请选择图片文件。'
     error.value = uploadError.value
     return
   }
-  if (file.size > 4 * 1024 * 1024) {
-    uploadError.value = '图片不能超过 4MB。'
+  if (files.some((file) => file.size > 4 * 1024 * 1024)) {
+    uploadError.value = '每张图片不能超过 4MB。'
     error.value = uploadError.value
     return
   }
@@ -589,15 +783,20 @@ async function handleImageSelect(event: Event) {
   uploadError.value = ''
   error.value = ''
   try {
-    const previewUrl = await readFileAsDataUrl(file)
-    const response = await uploadChatImage(file)
-    selectedImage.value = {
-      name: response.data.fileName || file.name,
-      previewUrl,
-      url: response.data.url
-    }
+    const uploaded = await Promise.all(files.map(async (file) => {
+      const [previewUrl, response] = await Promise.all([
+        readFileAsDataUrl(file),
+        uploadChatImage(file)
+      ])
+      return {
+        name: response.data.fileName || file.name,
+        previewUrl,
+        url: response.data.url
+      }
+    }))
+    selectedImages.value.push(...uploaded)
     if (!input.value.trim()) {
-      input.value = '请识别这张图片'
+      input.value = uploaded.length > 1 ? '请对比这些图片' : '请识别这张图片'
     }
   } catch (exception) {
     uploadError.value = getUploadErrorMessage(exception)
@@ -607,8 +806,8 @@ async function handleImageSelect(event: Event) {
   }
 }
 
-function clearSelectedImage() {
-  selectedImage.value = null
+function clearSelectedImage(index: number) {
+  selectedImages.value.splice(index, 1)
   uploadError.value = ''
 }
 
@@ -655,20 +854,19 @@ function formatToolDebug(tool: ToolResult) {
 }
 
 function userDisplayText(message: Message) {
-  return message.content.replace(/\n?图片：https?:\/\/\S+/g, '').trim()
+  return message.content.replace(/\n?图片\d*\s*：https?:\/\/\S+/g, '').trim()
 }
 
-function userImage(message: Message) {
-  if (message.image) {
-    return message.image
+function userImages(message: Message) {
+  if (message.images?.length) {
+    return message.images
   }
-  const matched = message.content.match(/图片：(https?:\/\/\S+)/)
-  if (!matched) return null
-  return {
-    name: '已上传图片',
+  const matches = message.content.matchAll(/图片\d*\s*：(https?:\/\/\S+)/g)
+  return Array.from(matches).map((matched, index) => ({
+    name: `已上传图片 ${index + 1}`,
     url: matched[1],
     previewUrl: matched[1]
-  }
+  }))
 }
 
 function assistantTextContent(message: Message) {
@@ -676,11 +874,26 @@ function assistantTextContent(message: Message) {
 }
 
 function assistantImages(message: Message) {
+  if (message.imageBatch) return []
   const matches = message.content.matchAll(/!\[([^\]]*)]\((https?:\/\/[^)\s]+)\)/g)
   return Array.from(matches).map((match) => ({
     alt: match[1] || '图片',
     url: match[2]
   }))
+}
+
+function imageItemLabel(item: ImageBatchItem) {
+  if (item.status === 'COMPLETED') return '已完成'
+  if (item.status === 'FAILED') return '生成失败'
+  if (item.status === 'CANCELLED') return '已取消'
+  if (item.status === 'RUNNING') return '生成中'
+  return '排队中'
+}
+
+function showAssistantStatus(message: Message) {
+  return message.role === 'assistant'
+    && message.phase !== 'COMPLETED'
+    && Boolean(message.statusText)
 }
 
 async function copyDebugPayload(message: Message, index: number) {
@@ -1602,18 +1815,54 @@ function escapeHtml(text: string) {
           <div v-if="userDisplayText(message)" class="message-bubble message-content">
             {{ userDisplayText(message) }}
           </div>
+          <div v-if="userImages(message).length" class="uploaded-image-grid">
           <a
-            v-if="userImage(message)"
+            v-for="image in userImages(message)"
+            :key="image.url"
             class="uploaded-image-card"
-            :href="userImage(message)?.url"
+            :href="image.url"
             target="_blank"
             rel="noreferrer"
           >
-            <img :src="userImage(message)?.previewUrl || userImage(message)?.url" :alt="userImage(message)?.name" />
+            <img :src="image.previewUrl || image.url" :alt="image.name" />
           </a>
+          </div>
         </template>
 
         <template v-else>
+          <div
+            v-if="showAssistantStatus(message)"
+            class="turn-status"
+            :class="`phase-${message.phase?.toLowerCase()}`"
+          >
+            <span class="turn-status-dot" aria-hidden="true"></span>
+            <span>{{ message.statusText }}</span>
+          </div>
+          <div v-if="message.imageBatch" class="image-batch-grid">
+            <article
+              v-for="item in [...message.imageBatch.items].sort((a, b) => a.index - b.index)"
+              :key="`${message.imageBatch.batchId}-${item.index}`"
+              class="image-batch-card"
+              :class="`status-${item.status.toLowerCase()}`"
+            >
+              <a
+                v-if="item.imageUrl"
+                :href="item.imageUrl"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <img :src="item.imageUrl" :alt="`生成图片 ${item.index + 1}`" loading="lazy" />
+              </a>
+              <div v-else class="image-skeleton" aria-hidden="true">
+                <span></span>
+              </div>
+              <footer>
+                <span>图片 {{ item.index + 1 }}</span>
+                <strong>{{ imageItemLabel(item) }}</strong>
+              </footer>
+              <small v-if="item.error">{{ item.error }}</small>
+            </article>
+          </div>
           <div
             v-if="assistantTextContent(message)"
             class="message-bubble message-content markdown"
@@ -1629,7 +1878,7 @@ function escapeHtml(text: string) {
           >
             <img class="generated-image" :src="image.url" :alt="image.alt" loading="lazy" />
           </a>
-          <div v-if="!message.content" class="message-bubble message-content">
+          <div v-if="!message.content && !message.statusText" class="message-bubble message-content">
             <span class="typing-cursor">正在生成回答</span>
           </div>
         </template>
@@ -2144,23 +2393,25 @@ function escapeHtml(text: string) {
 
     <form class="panel chat-input" @submit.prevent="submit">
       <div class="chat-compose-main">
-        <div v-if="selectedImage" class="image-attachment-preview">
-          <img :src="selectedImage.previewUrl" :alt="selectedImage.name" />
-          <span>{{ selectedImage.name }}</span>
-          <button class="inline" type="button" @click="clearSelectedImage">移除</button>
+        <div v-if="selectedImages.length" class="image-attachment-grid">
+          <div v-for="(image, index) in selectedImages" :key="image.url" class="image-attachment-preview">
+            <img :src="image.previewUrl" :alt="image.name" />
+            <span>{{ image.name }}</span>
+            <button class="inline" type="button" @click="clearSelectedImage(index)">移除</button>
+          </div>
         </div>
         <textarea ref="composerRef" v-model="input" data-testid="chat-input" rows="2" placeholder="今天想推进什么？" />
       </div>
       <div class="chat-compose-actions">
         <label class="button-link attach-button">
           {{ uploadingImage ? '上传中' : '上传图片' }}
-          <input type="file" accept="image/*" :disabled="loading || uploadingImage" @change="handleImageSelect" />
+          <input type="file" accept="image/*" multiple :disabled="loading || uploadingImage" @change="handleImageSelect" />
         </label>
         <button
           v-if="!loading"
           data-testid="chat-submit"
           type="submit"
-          :disabled="uploadingImage || (!input.trim() && !selectedImage)"
+          :disabled="uploadingImage || (!input.trim() && !selectedImages.length)"
         >
           发送
         </button>
@@ -2250,6 +2501,99 @@ function escapeHtml(text: string) {
 }
 .chat-input textarea { min-height: 60px; resize: vertical; border: 0; background: transparent; box-shadow: none; }
 .chat-input textarea:focus { outline: 0; }
+.image-attachment-grid,
+.uploaded-image-grid,
+.image-batch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: var(--space-3);
+}
+.image-attachment-grid { margin-bottom: var(--space-3); }
+.uploaded-image-grid { width: min(100%, 620px); }
+.turn-status {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--muted-foreground);
+  padding: 7px 11px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.turn-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 35%, transparent);
+  animation: turn-pulse 1.4s ease-out infinite;
+}
+.phase-failed .turn-status-dot { background: var(--danger); animation: none; }
+.image-batch-grid {
+  width: min(100%, 760px);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+.image-batch-card {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.image-batch-card a,
+.image-skeleton {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  background: var(--surface-muted);
+}
+.image-batch-card img { width: 100%; height: 100%; object-fit: cover; }
+.image-skeleton {
+  position: relative;
+  overflow: hidden;
+}
+.image-skeleton::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--surface) 70%, transparent) 48%, transparent 76%);
+  content: '';
+  transform: translateX(-100%);
+  animation: image-shimmer 1.35s ease-in-out infinite;
+}
+.image-skeleton span {
+  position: absolute;
+  inset: 42%;
+  border: 2px solid var(--primary-border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: image-spin .8s linear infinite;
+}
+.image-batch-card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 9px 11px;
+  font-size: 12px;
+}
+.image-batch-card footer span { color: var(--muted-foreground); }
+.image-batch-card footer strong { color: var(--primary); }
+.image-batch-card.status-failed { border-color: var(--danger-border); }
+.image-batch-card.status-failed footer strong,
+.image-batch-card > small { color: var(--danger); }
+.image-batch-card.status-cancelled footer strong { color: var(--muted-foreground); }
+.image-batch-card.status-cancelled .image-skeleton::after,
+.image-batch-card.status-cancelled .image-skeleton span { animation: none; opacity: 0.35; }
+.image-batch-card > small { display: block; padding: 0 11px 11px; }
+@keyframes turn-pulse {
+  70% { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes image-shimmer { to { transform: translateX(100%); } }
+@keyframes image-spin { to { transform: rotate(360deg); } }
 .context-toggle { display: inline-flex; align-items: center; gap: 6px; }
 .debug-controls { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-muted); padding: 3px; }
 .debug-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground); padding: 0 6px; font-size: 12px; font-weight: 700; white-space: nowrap; }
@@ -2295,5 +2639,8 @@ function escapeHtml(text: string) {
   .title-editor { grid-template-columns: 1fr auto auto; }
 }
 
-@media (prefers-reduced-motion: reduce) { .chat-list { scroll-behavior: auto; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-list { scroll-behavior: auto; }
+  .turn-status-dot, .image-skeleton::after, .image-skeleton span { animation: none; }
+}
 </style>

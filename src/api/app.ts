@@ -82,8 +82,51 @@ export type StreamMeta = {
 export type SseHandlers = {
   onDelta: (chunk: string) => void
   onMeta?: (meta: StreamMeta) => void
+  onTurnStatus?: (event: TurnStatusEvent) => void
+  onImageBatchStarted?: (event: ImageBatchStartedEvent) => void
+  onImageItem?: (event: ImageItemEvent) => void
+  onImageBatchCompleted?: (event: ImageBatchCompletedEvent) => void
   onError?: (message: string) => void
   onDone?: () => void
+}
+
+export type TurnStatusEvent = {
+  turnId: string
+  phase: 'THINKING' | 'ANALYZING' | 'GENERATING' | 'RESPONDING' | 'COMPLETED' | 'FAILED'
+  message: string
+}
+
+export type ImageBatchItem = {
+  index: number
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+  imageUrl?: string
+  error?: string
+}
+
+export type ImageBatchStartedEvent = {
+  turnId: string
+  batchId: string
+  count: number
+  mode: 'generate' | 'edit'
+  concurrency: number
+  referenceCount: number
+  items: ImageBatchItem[]
+}
+
+export type ImageItemEvent = ImageBatchItem & {
+  turnId: string
+  batchId: string
+  count: number
+  completedCount: number
+}
+
+export type ImageBatchCompletedEvent = {
+  turnId: string
+  batchId: string
+  status: 'COMPLETED' | 'PARTIALLY_COMPLETED' | 'FAILED'
+  count: number
+  completedCount: number
+  failedCount: number
 }
 
 export function register(username: string, password: string) {
@@ -347,6 +390,12 @@ export function listChatMessages(conversationId: string) {
   return http.get<ChatMessage[]>(`/chat/messages/${conversationId}`)
 }
 
+export function cancelChatTurn(conversationId: string, turnId: string) {
+  return http.post<ChatMessage>(
+    `/chat/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(turnId)}/cancel`
+  )
+}
+
 export function getCurrentMemory(conversationId?: string) {
   return http.get<MemorySnapshot>('/memory/current', {
     params: conversationId ? { conversationId } : {}
@@ -590,6 +639,7 @@ export function listRagChunks(knowledgeBaseId?: string, limit = 50) {
 export async function streamMessage(
   payload: {
     conversationId?: string
+    turnId?: string
     projectId?: number
     message: string
     knowledgeBaseIds: string[]
@@ -653,6 +703,14 @@ export function handleSseBlock(block: string, handlers: SseHandlers) {
     handlers.onDelta(String(data.text ?? ''))
   } else if (event === 'meta') {
     handlers.onMeta?.(data)
+  } else if (event === 'turn.status') {
+    handlers.onTurnStatus?.(data as TurnStatusEvent)
+  } else if (event === 'image.batch.started') {
+    handlers.onImageBatchStarted?.(data as ImageBatchStartedEvent)
+  } else if (event === 'image.item.completed' || event === 'image.item.failed') {
+    handlers.onImageItem?.(data as ImageItemEvent)
+  } else if (event === 'image.batch.completed') {
+    handlers.onImageBatchCompleted?.(data as ImageBatchCompletedEvent)
   } else if (event === 'error') {
     handlers.onError?.(String(data.message ?? '流式请求失败'))
   } else if (event === 'done') {
