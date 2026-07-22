@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, PanelRightOpen, RotateCcw } from '@lucide/vue'
+import { ArrowDown, PanelRightOpen } from '@lucide/vue'
 import {
   createConversation,
   createAgentTodo,
@@ -26,7 +26,8 @@ import {
   changeStructuredMemoryStatus,
   cancelChatTurn,
   updateConversationTitle,
-  uploadChatImage,
+  uploadChatAttachment,
+  deleteChatAttachment,
   type ImageBatchItem,
   type ImageBatchStartedEvent,
   type ImageBatchCompletedEvent,
@@ -42,6 +43,12 @@ import { isConversationNearBottom } from '@/domain/chat-scroll'
 import { historyMessage, isActiveTurnPhase } from '@/domain/chat-history'
 import { NEW_CONVERSATION_STORAGE_VALUE, resolveConversationToRestore } from '@/domain/chat-session'
 import { cancelPendingImageItems } from '@/domain/image-batch'
+import type { ChatAttachment } from '@/domain/chat-attachment'
+import { useChatAttachments } from '@/composables/useChatAttachments'
+import ChatComposer from '@/components/chat/ChatComposer.vue'
+import MessageAttachments from '@/components/chat/MessageAttachments.vue'
+import GeneratedImageGrid from '@/components/chat/GeneratedImageGrid.vue'
+import MessageFailureActions from '@/components/chat/MessageFailureActions.vue'
 import {
   sanitizeAgentTrace,
   sanitizeChatSources,
@@ -59,6 +66,7 @@ interface Message {
     url: string
     previewUrl?: string
   }>
+  attachments?: ChatAttachment[]
   turnId?: string
   phase?: TurnStatusEvent['phase']
   statusText?: string
@@ -85,6 +93,12 @@ interface Message {
   review?: Record<string, unknown>
 }
 
+interface RetryTurnContext {
+  userIndex: number
+  assistantIndex: number
+  turnId: string
+}
+
 const input = ref('')
 const route = useRoute()
 const router = useRouter()
@@ -92,12 +106,9 @@ const workspace = useWorkspaceStore()
 const handoffProject = ref<WorkspaceProjectContext | null>(null)
 const showContextPanel = ref(false)
 const chatListRef = ref<HTMLElement | null>(null)
-const composerRef = ref<HTMLTextAreaElement | null>(null)
+const composerRef = ref<{ focus: () => void } | null>(null)
 const hasMessagesBelow = ref(false)
 const isNearBottom = ref(true)
-const selectedImages = ref<Array<{ name: string; previewUrl: string; url: string }>>([])
-const uploadingImage = ref(false)
-const uploadError = ref('')
 const loading = ref(false)
 const streamController = ref<AbortController | null>(null)
 const recoveringTurnId = ref('')
@@ -129,6 +140,26 @@ const briefError = ref('')
 const messages = ref<Message[]>([
   { role: 'assistant', content: '你好，我是 Lyle。你可以先上传文档到知识库，再带着知识库提问。' }
 ])
+const {
+  attachments: attachmentDrafts,
+  announcement: attachmentAnnouncement,
+  isUploading: attachmentsUploading,
+  hasFailed: attachmentsFailed,
+  addFiles: addAttachmentFiles,
+  retry: retryAttachment,
+  remove: removeAttachment,
+  commitReady: commitReadyAttachments,
+  reset: resetAttachments
+} = useChatAttachments({
+  upload: async (file, kind) => (await uploadChatAttachment(file, kind)).data,
+  remove: async (attachmentId) => deleteChatAttachment(attachmentId)
+})
+const composerDisabled = computed(() => (
+  loading.value
+  || attachmentsUploading.value
+  || attachmentsFailed.value
+  || (!input.value.trim() && !attachmentDrafts.value.length)
+))
 const starterPrompts = [
   { title: '整理项目', description: '归纳目标、进展、风险和下一步', draft: '帮我整理当前项目，归纳目标、进展、风险和下一步。' },
   { title: '生成计划', description: '把目标拆成今天可开始的行动', draft: '帮我把当前目标拆成一份今天可以开始执行的计划。' },
@@ -152,7 +183,6 @@ const activeProjectId = computed(() => {
 })
 const hasUserMessages = computed(() => messages.value.some((message) => message.role === 'user'))
 const latestAssistantMessage = computed(() => [...messages.value].reverse().find((message) => message.role === 'assistant'))
-const latestUserMessage = computed(() => [...messages.value].reverse().find((message) => message.role === 'user'))
 const contextSources = computed(() => latestAssistantMessage.value?.sources || [])
 const contextProject = computed(() => latestAssistantMessage.value?.projectContext?.resolver)
 const contextMemoryCount = computed(() => latestAssistantMessage.value ? usedMemoryItems(latestAssistantMessage.value).length : 0)
@@ -339,8 +369,7 @@ async function loadConversation(id: string) {
   clearRecoveryPolling()
   recoveringTurnId.value = ''
   handoffProject.value = null
-  selectedImages.value = []
-  uploadError.value = ''
+  resetAttachments()
   editingTitle.value = false
   editingConversationId.value = ''
   conversationId.value = String(id)
@@ -416,8 +445,7 @@ function newConversation() {
   clearRecoveryPolling()
   recoveringTurnId.value = ''
   handoffProject.value = null
-  selectedImages.value = []
-  uploadError.value = ''
+  resetAttachments()
   editingTitle.value = false
   editingConversationId.value = ''
   conversationId.value = ''
@@ -463,12 +491,6 @@ function toggleContextPanel() {
   if (showContextPanel.value) {
     void trackProductEvent({ eventType: 'context_panel_opened', page: 'chat', projectId: activeProjectId.value }).catch(() => undefined)
   }
-}
-
-function sendLastMessageAgain() {
-  if (loading.value || !latestUserMessage.value?.content) return
-  input.value = latestUserMessage.value.content
-  nextTick(() => submit())
 }
 
 function onChatScroll() {
@@ -520,50 +542,71 @@ async function cancelStreaming() {
   }
 }
 
-async function submit() {
-  const text = input.value.trim()
-  const attachmentLines = selectedImages.value.map((image, index) => `图片${index + 1}：${image.url}`)
-  const message = selectedImages.value.length
-    ? `${text || '请识别这些图片'}\n${attachmentLines.join('\n')}`
-    : text
-  if (!message || loading.value) return
+async function submit(retryContext?: RetryTurnContext) {
+  const retryUser = retryContext ? messages.value[retryContext.userIndex] : undefined
+  const text = retryUser?.content ?? input.value.trim()
+  if (loading.value || (!retryContext && composerDisabled.value)) return
+  if (retryContext && (!retryUser || retryUser.role !== 'user' || !conversationId.value)) {
+    error.value = '原消息无法恢复，请刷新后重试。'
+    return
+  }
+  const attachmentIds = retryContext
+    ? (retryUser?.attachments || []).map((attachment) => attachment.id)
+    : attachmentDrafts.value.flatMap((draft) => draft.attachmentId ? [draft.attachmentId] : [])
+  const attachmentsForDisplay = retryContext
+    ? (retryUser?.attachments || [])
+    : attachmentDrafts.value.flatMap((draft) => draft.attachment ? [draft.attachment] : [])
+  const message = text || '请分析这些附件'
   const requestProjectId = activeProjectId.value
-  const startsProjectConversation = Boolean(requestProjectId) && !hasUserMessages.value
-  const turnId = crypto.randomUUID()
+  const startsProjectConversation = !retryContext && Boolean(requestProjectId) && !hasUserMessages.value
+  const turnId = retryContext?.turnId || crypto.randomUUID()
 
-  input.value = ''
-  const imagesForDisplay = [...selectedImages.value]
-  selectedImages.value = []
-  uploadError.value = ''
+  if (!retryContext) {
+    input.value = ''
+    commitReadyAttachments()
+  }
   loading.value = true
   error.value = ''
   streamController.value = new AbortController()
 
-  let assistantIndex = -1
+  let assistantIndex = retryContext?.assistantIndex ?? -1
   let streamError = ''
 
   try {
-    const activeConversationId = await ensureConversationId(message)
-    messages.value.push({
-      role: 'user',
-      content: imagesForDisplay.length ? (text || '请识别这些图片') : message,
-      images: imagesForDisplay.length ? imagesForDisplay : undefined
-    })
-    messages.value.push({
-      role: 'assistant',
-      content: '',
-      turnId,
-      phase: 'THINKING',
-      statusText: '正在理解你的需求…'
-    })
-    assistantIndex = messages.value.length - 1
+    const activeConversationId = retryContext ? conversationId.value : await ensureConversationId(message)
+    if (!activeConversationId) throw new Error('会话尚未保存，无法重试。')
+    if (retryContext) {
+      messages.value[assistantIndex] = {
+        role: 'assistant',
+        content: '',
+        turnId,
+        phase: 'THINKING',
+        statusText: '正在理解你的需求…'
+      }
+    } else {
+      messages.value.push({
+        role: 'user',
+        content: message,
+        attachments: attachmentsForDisplay.length ? attachmentsForDisplay : undefined
+      })
+      messages.value.push({
+        role: 'assistant',
+        content: '',
+        turnId,
+        phase: 'THINKING',
+        statusText: '正在理解你的需求…'
+      })
+      assistantIndex = messages.value.length - 1
+    }
 
     await streamMessage({
       conversationId: activeConversationId,
       turnId,
       projectId: requestProjectId,
       message,
-      knowledgeBaseIds: selectedKnowledgeBaseId.value ? [selectedKnowledgeBaseId.value] : []
+      knowledgeBaseIds: selectedKnowledgeBaseId.value ? [selectedKnowledgeBaseId.value] : [],
+      attachmentIds,
+      retry: Boolean(retryContext)
     }, {
       onDelta: (chunk) => {
         messages.value[assistantIndex].content += chunk
@@ -620,7 +663,7 @@ async function submit() {
         projectId: requestProjectId
       }).catch(() => undefined)
     }
-    if (!streamError && window.matchMedia('(max-width: 959px)').matches) {
+    if (!retryContext && !streamError && window.matchMedia('(max-width: 959px)').matches) {
       void trackProductEvent({
         eventType: 'mobile_primary_action_used',
         page: 'chat',
@@ -654,6 +697,25 @@ async function submit() {
     loading.value = false
     streamController.value = null
   }
+}
+
+function retryFailedMessage(index: number) {
+  if (loading.value) return
+  const failed = messages.value[index]
+  if (!failed?.turnId) {
+    error.value = '该失败消息缺少轮次信息，请刷新后重试。'
+    return
+  }
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (messages.value[cursor].role !== 'user') continue
+    void submit({ userIndex: cursor, assistantIndex: index, turnId: failed.turnId })
+    return
+  }
+  error.value = '未找到要重试的原消息，请刷新后重试。'
+}
+
+function handleAttachmentFiles(files: File[], source: 'picker' | 'drop' | 'paste') {
+  void addAttachmentFiles(files, source)
 }
 
 function applyImageBatchStarted(message: Message, batch: ImageBatchStartedEvent) {
@@ -759,82 +821,6 @@ function findAssistantIndexForMemory(item: MemoryItem) {
   return -1
 }
 
-async function handleImageSelect(event: Event) {
-  const target = event.target as HTMLInputElement
-  const files = Array.from(target.files || [])
-  target.value = ''
-  if (!files.length) return
-  if (selectedImages.value.length + files.length > 8) {
-    uploadError.value = '单次最多上传 8 张参考图。'
-    error.value = uploadError.value
-    return
-  }
-  if (files.some((file) => !file.type.startsWith('image/'))) {
-    uploadError.value = '请选择图片文件。'
-    error.value = uploadError.value
-    return
-  }
-  if (files.some((file) => file.size > 4 * 1024 * 1024)) {
-    uploadError.value = '每张图片不能超过 4MB。'
-    error.value = uploadError.value
-    return
-  }
-  uploadingImage.value = true
-  uploadError.value = ''
-  error.value = ''
-  try {
-    const uploaded = await Promise.all(files.map(async (file) => {
-      const [previewUrl, response] = await Promise.all([
-        readFileAsDataUrl(file),
-        uploadChatImage(file)
-      ])
-      return {
-        name: response.data.fileName || file.name,
-        previewUrl,
-        url: response.data.url
-      }
-    }))
-    selectedImages.value.push(...uploaded)
-    if (!input.value.trim()) {
-      input.value = uploaded.length > 1 ? '请对比这些图片' : '请识别这张图片'
-    }
-  } catch (exception) {
-    uploadError.value = getUploadErrorMessage(exception)
-    error.value = uploadError.value
-  } finally {
-    uploadingImage.value = false
-  }
-}
-
-function clearSelectedImage(index: number) {
-  selectedImages.value.splice(index, 1)
-  uploadError.value = ''
-}
-
-function getUploadErrorMessage(exception: unknown) {
-  const fallback = exception instanceof Error ? exception.message : '图片上传失败，请稍后重试。'
-  const responseData = (exception as { response?: { data?: unknown } })?.response?.data
-  if (!responseData) return fallback
-  if (typeof responseData === 'string') return responseData
-  if (typeof responseData === 'object') {
-    const data = responseData as Record<string, unknown>
-    const message = data.message || data.error || data.detail
-    if (typeof message === 'string' && message.trim()) {
-      return message
-    }
-  }
-  return fallback
-}
-
-function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result || ''))
-    reader.onerror = () => reject(new Error('图片读取失败'))
-    reader.readAsDataURL(file)
-  })
-}
-
 function formatTraceDetail(item: AgentTraceItem) {
   const { agent, ...detail } = item
   return Object.keys(detail).length ? JSON.stringify(detail, null, 2) : ''
@@ -880,14 +866,6 @@ function assistantImages(message: Message) {
     alt: match[1] || '图片',
     url: match[2]
   }))
-}
-
-function imageItemLabel(item: ImageBatchItem) {
-  if (item.status === 'COMPLETED') return '已完成'
-  if (item.status === 'FAILED') return '生成失败'
-  if (item.status === 'CANCELLED') return '已取消'
-  if (item.status === 'RUNNING') return '生成中'
-  return '排队中'
 }
 
 function showAssistantStatus(message: Message) {
@@ -1812,20 +1790,21 @@ function escapeHtml(text: string) {
       </section>
       <div v-for="(message, index) in messages" :key="index" class="message" :class="message.role">
         <template v-if="message.role === 'user'">
+          <MessageAttachments v-if="message.attachments?.length" :attachments="message.attachments" />
+          <div v-else-if="userImages(message).length" class="uploaded-image-grid">
+            <a
+              v-for="image in userImages(message)"
+              :key="image.url"
+              class="uploaded-image-card"
+              :href="image.url"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <img :src="image.previewUrl || image.url" :alt="image.name" />
+            </a>
+          </div>
           <div v-if="userDisplayText(message)" class="message-bubble message-content">
             {{ userDisplayText(message) }}
-          </div>
-          <div v-if="userImages(message).length" class="uploaded-image-grid">
-          <a
-            v-for="image in userImages(message)"
-            :key="image.url"
-            class="uploaded-image-card"
-            :href="image.url"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <img :src="image.previewUrl || image.url" :alt="image.name" />
-          </a>
           </div>
         </template>
 
@@ -1838,31 +1817,7 @@ function escapeHtml(text: string) {
             <span class="turn-status-dot" aria-hidden="true"></span>
             <span>{{ message.statusText }}</span>
           </div>
-          <div v-if="message.imageBatch" class="image-batch-grid">
-            <article
-              v-for="item in [...message.imageBatch.items].sort((a, b) => a.index - b.index)"
-              :key="`${message.imageBatch.batchId}-${item.index}`"
-              class="image-batch-card"
-              :class="`status-${item.status.toLowerCase()}`"
-            >
-              <a
-                v-if="item.imageUrl"
-                :href="item.imageUrl"
-                target="_blank"
-                rel="noreferrer"
-              >
-                <img :src="item.imageUrl" :alt="`生成图片 ${item.index + 1}`" loading="lazy" />
-              </a>
-              <div v-else class="image-skeleton" aria-hidden="true">
-                <span></span>
-              </div>
-              <footer>
-                <span>图片 {{ item.index + 1 }}</span>
-                <strong>{{ imageItemLabel(item) }}</strong>
-              </footer>
-              <small v-if="item.error">{{ item.error }}</small>
-            </article>
-          </div>
+          <GeneratedImageGrid v-if="message.imageBatch" :items="message.imageBatch.items" @retry="retryFailedMessage(index)" />
           <div
             v-if="assistantTextContent(message)"
             class="message-bubble message-content markdown"
@@ -1881,6 +1836,7 @@ function escapeHtml(text: string) {
           <div v-if="!message.content && !message.statusText" class="message-bubble message-content">
             <span class="typing-cursor">正在生成回答</span>
           </div>
+          <MessageFailureActions v-if="message.phase === 'FAILED' && !loading" @retry="retryFailedMessage(index)" />
         </template>
 
         <div
@@ -2391,38 +2347,20 @@ function escapeHtml(text: string) {
     </button>
     </div>
 
-    <form class="panel chat-input" @submit.prevent="submit">
-      <div class="chat-compose-main">
-        <div v-if="selectedImages.length" class="image-attachment-grid">
-          <div v-for="(image, index) in selectedImages" :key="image.url" class="image-attachment-preview">
-            <img :src="image.previewUrl" :alt="image.name" />
-            <span>{{ image.name }}</span>
-            <button class="inline" type="button" @click="clearSelectedImage(index)">移除</button>
-          </div>
-        </div>
-        <textarea ref="composerRef" v-model="input" data-testid="chat-input" rows="2" placeholder="今天想推进什么？" />
-      </div>
-      <div class="chat-compose-actions">
-        <label class="button-link attach-button">
-          {{ uploadingImage ? '上传中' : '上传图片' }}
-          <input type="file" accept="image/*" multiple :disabled="loading || uploadingImage" @change="handleImageSelect" />
-        </label>
-        <button
-          v-if="!loading"
-          data-testid="chat-submit"
-          type="submit"
-          :disabled="uploadingImage || (!input.trim() && !selectedImages.length)"
-        >
-          发送
-        </button>
-        <button v-if="!loading && latestUserMessage" class="secondary regenerate-button" type="button" @click="sendLastMessageAgain">
-          <RotateCcw :size="15" aria-hidden="true" />
-          再次发送
-        </button>
-        <button v-if="loading" class="secondary" type="button" @click="cancelStreaming">停止</button>
-        <p v-if="uploadError" class="upload-error">{{ uploadError }}</p>
-      </div>
-    </form>
+    <ChatComposer
+      ref="composerRef"
+      class="chat-input"
+      v-model="input"
+      :attachments="attachmentDrafts"
+      :loading="loading"
+      :disabled="composerDisabled"
+      :announcement="attachmentAnnouncement"
+      @submit="submit"
+      @stop="cancelStreaming"
+      @files="handleAttachmentFiles"
+      @remove="removeAttachment"
+      @retry="retryAttachment"
+    />
   </section>
 </template>
 

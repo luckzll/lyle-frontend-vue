@@ -1,3 +1,5 @@
+import type { ChatAttachment } from '@/domain/chat-attachment'
+
 export interface Conversation {
   id: string
   title: string
@@ -443,6 +445,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   metadata?: Record<string, unknown>
+  attachments?: ChatAttachment[]
   createdAt: string
 }
 

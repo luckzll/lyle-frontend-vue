@@ -1,5 +1,6 @@
 import type { ImageBatchItem, TurnStatusEvent } from '@/api/app'
 import type { ChatMessage } from '@/api/types'
+import type { ChatAttachment } from '@/domain/chat-attachment'
 
 export type RecoveredImageBatch = {
   batchId: string
@@ -18,6 +19,7 @@ export type RecoveredChatMessage = {
   phase?: TurnStatusEvent['phase']
   statusText?: string
   imageBatch?: RecoveredImageBatch
+  attachments?: ChatAttachment[]
 }
 
 export function historyMessage(item: ChatMessage): RecoveredChatMessage {
@@ -28,7 +30,8 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
     turnId: item.turnId || (typeof metadata.turnId === 'string' ? metadata.turnId : undefined),
     phase: historyTurnPhase(metadata.phase),
     statusText: typeof metadata.statusText === 'string' ? metadata.statusText : undefined,
-    imageBatch: historyImageBatch(metadata.imageBatch)
+    imageBatch: historyImageBatch(metadata.imageBatch),
+    attachments: Array.isArray(item.attachments) ? item.attachments : undefined
   }
 }
 

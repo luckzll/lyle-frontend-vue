@@ -1,5 +1,6 @@
 import { http } from './http'
 import { getAuthToken } from '@/auth'
+import type { ChatAttachment, ChatAttachmentKind } from '@/domain/chat-attachment'
 import type {
   AdminOverview,
   AgentPlan,
@@ -143,6 +144,19 @@ export function uploadChatImage(file: File) {
   return http.post<ImageUploadResponse>('/uploads/images', form, {
     headers: { 'Content-Type': 'multipart/form-data' }
   })
+}
+
+export function uploadChatAttachment(file: File, kind: ChatAttachmentKind) {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('kind', kind)
+  return http.post<ChatAttachment>('/chat/attachments', form, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
+export function deleteChatAttachment(attachmentId: string) {
+  return http.delete(`/chat/attachments/${encodeURIComponent(attachmentId)}`)
 }
 
 export function createConversation(title: string) {
@@ -643,6 +657,8 @@ export async function streamMessage(
     projectId?: number
     message: string
     knowledgeBaseIds: string[]
+    attachmentIds?: string[]
+    retry?: boolean
   },
   handlers: SseHandlers,
   options: { signal?: AbortSignal } = {}
