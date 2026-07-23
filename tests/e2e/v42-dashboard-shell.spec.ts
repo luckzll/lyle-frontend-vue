@@ -165,12 +165,15 @@ async function mockDashboardAndChatApis(page: Page) {
   await page.route('**/api/experience/execution/results**', (route) => fulfillJson(route, results))
   await page.route('**/api/experience/connections/recommended**', (route) => fulfillJson(route, connections))
   await page.route('**/api/experience/events', (route) => fulfillJson(route, { accepted: true }))
+  await page.route('**/api/missions/digest**', (route) => fulfillJson(route, { items: [], completedRuns: 0, attentionCount: 0 }))
+  await page.route('**/api/exceptions**', (route) => fulfillJson(route, { items: [] }))
 
   // Chat initializes these reads before focusing the handed-off draft.
   await page.route('**/api/knowledge-bases', (route) => fulfillJson(route, []))
   await page.route('**/api/conversations', (route) => fulfillJson(route, []))
   await page.route('**/api/agent-tools/todos**', (route) => fulfillJson(route, { items: [] }))
   await page.route('**/api/agent-tools/operations**', (route) => fulfillJson(route, { items: [] }))
+  await page.route('**/api/agent-tasks**', (route) => fulfillJson(route, { items: [] }))
   await page.route('**/api/memory/current**', (route) => fulfillJson(route, {
     summary: '',
     short_term: [],
@@ -224,7 +227,7 @@ test('account menu opens settings and signs out from the shared shell', async ({
   await sidebarAccount.click()
   await page.getByRole('menu', { name: '账号菜单' }).getByRole('menuitem', { name: '退出登录' }).click()
   await expect(page).toHaveURL('/login')
-  await expect(page.getByRole('heading', { name: 'Lyle AI' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '欢迎回来' })).toBeVisible()
   expect(await page.evaluate(() => localStorage.getItem('lyle-token'))).toBeNull()
 })
 
@@ -243,6 +246,40 @@ test('chat debug information stays behind the explicit developer entry', async (
   await page.getByRole('button', { name: '退出调试' }).click()
   await expect(page).toHaveURL('/')
   await expect(page.getByLabel('调试信息')).toHaveCount(0)
+})
+
+test('new chat keeps one empty state and a compact composer across breakpoints', async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 1150 })
+  await page.goto('/')
+
+  await expect(page.getByRole('region', { name: '今天想推进什么？' })).toBeVisible()
+  await expect(page.getByRole('log', { name: '对话消息' })).toHaveCount(0)
+  await expect(page.locator('.chat-list .message')).toHaveCount(0)
+  await expect(page.getByText('你好，我是 Lyle。')).toHaveCount(0)
+  await expect(page.getByText('新的会话已经准备好。')).toHaveCount(0)
+
+  const desktopComposerHeight = await page.locator('.chat-input').evaluate((element) => (
+    element.getBoundingClientRect().height
+  ))
+  expect(desktopComposerHeight).toBeLessThanOrEqual(110)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  const mobileLayout = await page.evaluate(() => {
+    const list = document.querySelector('.chat-list')?.getBoundingClientRect()
+    const starter = document.querySelector('.chat-starter')?.getBoundingClientRect()
+    const composer = document.querySelector('.chat-input')?.getBoundingClientRect()
+    return {
+      listBottom: list?.bottom || 0,
+      starterBottom: starter?.bottom || 0,
+      composerTop: composer?.top || 0,
+      composerHeight: composer?.height || 0,
+      overflow: document.documentElement.scrollWidth > window.innerWidth
+    }
+  })
+  expect(mobileLayout.composerHeight).toBeLessThanOrEqual(110)
+  expect(mobileLayout.starterBottom).toBeLessThanOrEqual(mobileLayout.listBottom)
+  expect(mobileLayout.composerTop).toBeGreaterThanOrEqual(mobileLayout.listBottom)
+  expect(mobileLayout.overflow).toBe(false)
 })
 
 test('V4.2 dashboard presents work and hands a project draft to chat once', async ({ page }) => {
@@ -264,7 +301,7 @@ test('V4.2 dashboard presents work and hands a project draft to chat once', asyn
 
   const executionNavigation = page.locator('.app-sidebar__link[href="/execution-center"]')
   await expect(executionNavigation.locator('.app-sidebar__badge')).toHaveText('2')
-  await expect(executionNavigation.locator('.app-sidebar__badge')).toHaveAttribute('aria-label', '2 项执行待处理')
+  await expect(executionNavigation.locator('.app-sidebar__badge')).toHaveAttribute('aria-label', '2 项需处理')
   await expect(page.locator('.app-sidebar__link[href="/tasks"] .app-sidebar__badge')).toHaveCount(0)
 
   const draft = '请把 Lyle V4.2 的发布风险整理成今天的执行清单'
@@ -370,7 +407,7 @@ test('V4.2 shell mobile navigation restores focus and avoids horizontal overflow
   const mobileNavigation = page.getByRole('dialog', { name: 'Lyle AI' })
   const mobileExecutionNavigation = page.locator('.mobile-navigation__link[href="/execution-center"]')
   await expect(mobileExecutionNavigation.locator('.mobile-navigation__badge')).toHaveText('2')
-  await expect(mobileExecutionNavigation.locator('.mobile-navigation__badge')).toHaveAttribute('aria-label', '2 项执行待处理')
+  await expect(mobileExecutionNavigation.locator('.mobile-navigation__badge')).toHaveAttribute('aria-label', '2 项需处理')
 
   const mobileAccount = mobileNavigation.getByRole('button', { name: /打开 V4\.2 验收用户 账号菜单/ })
   await mobileAccount.click()

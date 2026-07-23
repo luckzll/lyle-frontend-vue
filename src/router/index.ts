@@ -441,15 +441,15 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
+  if (to.meta.requiresAuth && !hasAuth()) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
   if (to.path.startsWith('/agent-tasks') && !isAgentTaskFrontendEnabled(getCurrentUser()?.id)) {
     return { path: '/execution-center', query: { feature: 'agent-task-unavailable' } }
   }
   if ((to.path.startsWith('/missions') || to.path.startsWith('/exceptions'))
       && !isMissionFrontendEnabled(getCurrentUser()?.id)) {
     return { path: '/execution-center', query: { feature: 'mission-unavailable' } }
-  }
-  if (to.meta.requiresAuth && !hasAuth()) {
-    return { name: 'login' }
   }
   if (to.name === 'login' && hasAuth()) {
     return { name: 'dashboard' }

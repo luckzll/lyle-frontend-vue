@@ -37,7 +37,7 @@ function positiveId(value: unknown) {
 }
 
 function isPrimaryAction(type: string) {
-  return ['retry', 'resume_workflow', 'resume_workflow_second'].includes(type)
+  return ['retry', 'retry_automation', 'view_incomplete', 'resume_workflow', 'resume_workflow_second'].includes(type)
 }
 </script>
 

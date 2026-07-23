@@ -1,6 +1,6 @@
-import { http } from './http'
+import { http, publicHttp } from './http'
 import { getAuthToken } from '@/auth'
-import type { ChatAttachment, ChatAttachmentKind } from '@/domain/chat-attachment'
+import type { AttachmentFolderMetadata, ChatAttachment, ChatAttachmentKind } from '@/domain/chat-attachment'
 import type {
   AdminOverview,
   AgentPlan,
@@ -138,6 +138,16 @@ export function login(username: string, password: string) {
   return http.post<AuthResponse>('/auth/login', { username, password })
 }
 
+export type RuntimeFeatures = {
+  authLoginV63Enabled: boolean
+  chatWorkspaceDropEnabled: boolean
+  chatFolderAttachmentsEnabled: boolean
+}
+
+export function getRuntimeFeatures() {
+  return publicHttp.get<RuntimeFeatures>('/runtime-config')
+}
+
 export function uploadChatImage(file: File) {
   const form = new FormData()
   form.append('file', file)
@@ -146,10 +156,14 @@ export function uploadChatImage(file: File) {
   })
 }
 
-export function uploadChatAttachment(file: File, kind: ChatAttachmentKind) {
+export function uploadChatAttachment(file: File, kind: ChatAttachmentKind, metadata?: AttachmentFolderMetadata) {
   const form = new FormData()
   form.append('file', file)
   form.append('kind', kind)
+  if (metadata?.sourceType) form.append('sourceType', metadata.sourceType)
+  if (metadata?.folderGroupId) form.append('folderGroupId', metadata.folderGroupId)
+  if (metadata?.folderRoot) form.append('folderRoot', metadata.folderRoot)
+  if (metadata?.relativePath) form.append('relativePath', metadata.relativePath)
   return http.post<ChatAttachment>('/chat/attachments', form, {
     headers: { 'Content-Type': 'multipart/form-data' }
   })
@@ -908,10 +922,15 @@ export type ProductEventPayload = {
   status?: string
   durationMs?: number
   errorCategory?: string
+  itemCount?: number
 }
 
 export function trackProductEvent(payload: ProductEventPayload) {
   return http.post<{ accepted: boolean }>('/experience/events', payload)
+}
+
+export function trackPublicProductEvent(payload: ProductEventPayload) {
+  return publicHttp.post<{ accepted: boolean }>('/experience/public-events', payload)
 }
 
 export function trackEffectiveProgressAction(payload: EffectiveProgressEventPayload) {
@@ -952,6 +971,14 @@ export function listExecutionResults(params: ExecutionResultListParams = {}) {
 
 export function getExecutionResult(id: number) {
   return http.get<ExecutionResultSummary>(`/experience/execution/results/${id}`)
+}
+
+export function dismissExecutionResult(id: number) {
+  return http.post<ExecutionResultSummary>(`/experience/execution/results/${id}/dismiss`)
+}
+
+export function restoreExecutionResult(id: number) {
+  return http.post<ExecutionResultSummary>(`/experience/execution/results/${id}/restore`)
 }
 
 export function listNeedsAttention() {

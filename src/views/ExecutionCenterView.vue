@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   confirmOperation,
   confirmPendingOperation,
+  dismissExecutionResult,
   getConfirmation,
   getExecutionResult,
   listConfirmations,
@@ -11,6 +12,7 @@ import {
   listPendingOperations,
   rejectOperation,
   rejectPendingOperation,
+  restoreExecutionResult,
   resumeWorkflowRun as resumeWorkflowRunRequest,
   runAutomation as runAutomationRequest,
   retryWorkflowRun,
@@ -32,6 +34,7 @@ import FilterBar from '@/components/layout/FilterBar.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import { createQueuedRefresh } from '@/composables/createQueuedRefresh'
+import { notifyExecutionAttentionChanged } from '@/composables/useExecutionBadgePolling'
 import { formatBeijingTime, humanizeIsoDateTimes } from '@/domain/date-time'
 
 type ViewKey = 'confirmations' | 'attention' | 'results' | 'history'
@@ -90,6 +93,9 @@ const mobileFiltersOpen = ref(false)
 const confirmationLoading = ref<Record<number, boolean>>({})
 const historyActionLoading = ref<Record<number, boolean>>({})
 const resultLoading = ref<Record<number, boolean>>({})
+const bulkDismissLoading = ref(false)
+const undoLoading = ref(false)
+const undoDismissedItems = ref<ExecutionResultSummary[]>([])
 const workflowSecondConfirmation = ref<Record<number, boolean>>({})
 const copyStates = ref<Record<number, 'idle' | 'copied' | 'failed'>>({})
 const highRiskTarget = ref<HighRiskTarget | null>(null)
@@ -105,6 +111,7 @@ let resultDetailGeneration = 0
 let confirmationDetailGeneration = 0
 let resultListGeneration = 0
 let attentionListGeneration = 0
+let undoDismissTimer: number | undefined
 const historyRefresh = createQueuedRefresh(refreshHistory)
 let filterQueryWriting = false
 let filterQueryRequested = false
@@ -134,6 +141,9 @@ const displayConfirmations = computed<ConfirmationDisplayItem[]>(() => {
 })
 const filteredResults = computed(() => filterResults(results.value))
 const filteredAttention = computed(() => filterResults(attention.value))
+const dismissibleAttention = computed(() => filteredAttention.value.filter((item) => (
+  !item.dismissedAt && ['failed', 'partial'].includes(item.status)
+)))
 const workflowConfirmationItems = computed(() => attention.value.filter((item) => (
   isWorkflowConfirmation(item)
   && matchesTime(item.createdAt)
@@ -143,7 +153,12 @@ const displayWorkflowConfirmations = computed(() => workflowConfirmationItems.va
 const visibleResults = computed(() => (
   view.value === 'attention' ? filteredAttention.value : filteredResults.value
 ).map(presentResult))
+const isResultView = computed(() => view.value === 'results' || view.value === 'attention')
+const hasResultOnlyFilter = computed(() => (
+  isResultView.value && Boolean(selectedAutomationId.value || selectedStatus.value)
+))
 const visibleAgentTasks = computed(() => agentTasks.value.filter((task) => {
+  if (hasResultOnlyFilter.value) return false
   if (!matchesTime(task.updatedAt)) return false
   if (selectedProjectId.value && String(task.projectId || '') !== selectedProjectId.value) return false
   if (view.value === 'confirmations') return ['AWAITING_PLAN_APPROVAL', 'AWAITING_CONFIRMATION', 'AWAITING_INPUT'].includes(task.status)
@@ -391,6 +406,7 @@ function resultListParams(status?: string, cursor?: string): ExecutionResultList
     ...(status ? { status } : {}),
     ...(projectId ? { projectId } : {}),
     ...(automationId ? { automationId } : {}),
+    ...(view.value === 'attention' ? { attentionOnly: true } : {}),
     ...(cursor ? { cursor } : {})
   }
 }
@@ -462,6 +478,10 @@ function syncFilters(): Promise<void> {
     const cycle = flushFilterQuery()
     filterQueryPromise = cycle.finally(() => {
       filterQueryPromise = null
+      // A filter can change after the flush loop has finished but before this
+      // promise settles (for example, clearing two selects quickly). Do not
+      // strand that final state in the controls without syncing the URL.
+      if (filterQueryRequested) void syncFilters()
     })
   }
   return filterQueryPromise
@@ -575,12 +595,16 @@ async function confirmHighRisk() {
 }
 
 async function handleResultAction(item: ExecutionResultSummary, action: { type: string; label: string }) {
-  if (action.type === 'view') {
+  if (action.type === 'view' || action.type === 'view_incomplete') {
     await requestResultDetail(item)
     return
   }
   if (action.type === 'resume_workflow' || action.type === 'resume_workflow_second') {
     await resumeWorkflowConfirmation(item, action.type === 'resume_workflow_second')
+    return
+  }
+  if (action.type === 'dismiss') {
+    await dismissAttentionResult(item)
     return
   }
   const canRetryWorkflow = action.type === 'retry' && item.sourceType === 'workflow_run'
@@ -598,6 +622,121 @@ async function handleResultAction(item: ExecutionResultSummary, action: { type: 
     feedback.value = requestMessage(error, '执行重试失败，请稍后再试。')
   } finally {
     resultLoading.value = { ...resultLoading.value, [item.id]: false }
+  }
+}
+
+async function dismissAttentionResult(item: ExecutionResultSummary) {
+  if (!['failed', 'partial'].includes(item.status) || resultLoading.value[item.id]) return
+  resultLoading.value = { ...resultLoading.value, [item.id]: true }
+  feedback.value = ''
+  try {
+    const dismissed = (await dismissExecutionResult(item.id)).data
+    attention.value = attention.value.filter((candidate) => candidate.id !== item.id)
+    results.value = results.value.map((candidate) => candidate.id === item.id ? dismissed : candidate)
+    offerDismissUndo([dismissed], '已移出待处理；执行历史仍保留。')
+    notifyExecutionAttentionChanged(-1)
+  } catch (error: any) {
+    feedback.value = requestMessage(error, '暂时无法移出待处理，请稍后重试。')
+  } finally {
+    resultLoading.value = { ...resultLoading.value, [item.id]: false }
+  }
+}
+
+async function dismissAllAttention() {
+  const items = [...dismissibleAttention.value]
+  if (!items.length || bulkDismissLoading.value) return
+  bulkDismissLoading.value = true
+  clearDismissUndo()
+  feedback.value = ''
+  resultLoading.value = {
+    ...resultLoading.value,
+    ...Object.fromEntries(items.map((item) => [item.id, true]))
+  }
+  try {
+    const settled = await Promise.allSettled(items.map((item) => dismissExecutionResult(item.id)))
+    const dismissed = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value.data] : [])
+    const dismissedIds = new Set(dismissed.map((item) => item.id))
+    if (dismissed.length) {
+      attention.value = attention.value.filter((item) => !dismissedIds.has(item.id))
+      results.value = results.value.map((item) => dismissedIds.has(item.id)
+        ? dismissed.find((dismissedItem) => dismissedItem.id === item.id) || item
+        : item)
+      const failedCount = items.length - dismissed.length
+      offerDismissUndo(
+        dismissed,
+        failedCount
+          ? `已移出 ${dismissed.length} 条，另有 ${failedCount} 条暂时失败；执行历史仍保留。`
+          : `已移出 ${dismissed.length} 条待处理结果；执行历史仍保留。`
+      )
+      notifyExecutionAttentionChanged(-dismissed.length)
+    } else {
+      feedback.value = '暂时无法移出这些结果，请稍后重试。'
+    }
+  } finally {
+    resultLoading.value = {
+      ...resultLoading.value,
+      ...Object.fromEntries(items.map((item) => [item.id, false]))
+    }
+    bulkDismissLoading.value = false
+  }
+}
+
+function offerDismissUndo(items: ExecutionResultSummary[], message: string) {
+  clearDismissUndoTimer()
+  undoDismissedItems.value = items
+  feedback.value = message
+  undoDismissTimer = window.setTimeout(() => {
+    undoDismissedItems.value = []
+    undoDismissTimer = undefined
+  }, 10_000)
+}
+
+function clearDismissUndoTimer() {
+  if (undoDismissTimer !== undefined) window.clearTimeout(undoDismissTimer)
+  undoDismissTimer = undefined
+}
+
+function clearDismissUndo() {
+  clearDismissUndoTimer()
+  undoDismissedItems.value = []
+}
+
+async function undoDismissedResults() {
+  const items = [...undoDismissedItems.value]
+  if (!items.length || undoLoading.value) return
+  clearDismissUndoTimer()
+  undoLoading.value = true
+  resultLoading.value = {
+    ...resultLoading.value,
+    ...Object.fromEntries(items.map((item) => [item.id, true]))
+  }
+  try {
+    const settled = await Promise.allSettled(items.map((item) => restoreExecutionResult(item.id)))
+    const restored = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value.data] : [])
+    const restoredIds = new Set(restored.map((item) => item.id))
+    if (restored.length) {
+      attention.value = mergeUniqueResults(attention.value, restored)
+      results.value = results.value.map((item) => restoredIds.has(item.id)
+        ? restored.find((restoredItem) => restoredItem.id === item.id) || item
+        : item)
+      notifyExecutionAttentionChanged(restored.length)
+    }
+    const failedItems = items.filter((item) => !restoredIds.has(item.id))
+    if (failedItems.length) {
+      offerDismissUndo(
+        failedItems,
+        `已恢复 ${restored.length} 条，另有 ${failedItems.length} 条暂时失败，可再次撤销。`
+      )
+    } else {
+      undoDismissedItems.value = []
+      feedback.value = `已撤销，${restored.length} 条结果已恢复到待处理。`
+    }
+  } finally {
+    resultLoading.value = {
+      ...resultLoading.value,
+      ...Object.fromEntries(items.map((item) => [item.id, false]))
+    }
+    undoLoading.value = false
   }
 }
 
@@ -633,7 +772,27 @@ function isWorkflowConfirmation(item: ExecutionResultSummary) {
 }
 
 function presentResult(item: ExecutionResultSummary): ExecutionResultSummary {
-  if (!isWorkflowConfirmation(item)) return item
+  if (!isWorkflowConfirmation(item)) {
+    if (view.value !== 'attention' || item.dismissedAt || !['failed', 'partial'].includes(item.status)) return item
+    const actions = item.recommendedActions.filter((action) => !['view', 'dismiss'].includes(action.type))
+    const statusActions = item.status === 'partial'
+      ? [
+          { type: 'view_incomplete', label: '查看未完成步骤' },
+          ...actions.filter((action) => !['retry', 'retry_automation'].includes(action.type))
+        ]
+      : actions.map((action) => (
+          ['retry', 'retry_automation'].includes(action.type)
+            ? { ...action, label: '修复后重试' }
+            : action
+        ))
+    return {
+      ...item,
+      recommendedActions: [
+        ...statusActions,
+        { type: 'dismiss', label: '移出待处理' }
+      ]
+    }
+  }
   const runId = positiveNumber(item.sourceId)
   if (!runId) return { ...item, recommendedActions: [] }
   const secondConfirmation = Boolean(workflowSecondConfirmation.value[runId])
@@ -644,6 +803,12 @@ function presentResult(item: ExecutionResultSummary): ExecutionResultSummary {
       label: secondConfirmation ? '二次确认并继续' : '确认并继续'
     }]
   }
+}
+
+async function clearResultOnlyFilters() {
+  selectedAutomationId.value = ''
+  selectedStatus.value = ''
+  await syncFilters()
 }
 
 function workflowRunNeedsSecondConfirmation(run: Record<string, unknown>) {
@@ -899,6 +1064,7 @@ onMounted(async () => {
   }
   await load()
 })
+onBeforeUnmount(clearDismissUndoTimer)
 </script>
 
 <template>
@@ -914,7 +1080,16 @@ onMounted(async () => {
     </section>
     <template v-else>
       <p v-if="partialError" class="partial-warning" role="status">{{ partialError }}</p>
-      <p v-if="feedback" class="feedback" role="status">{{ feedback }}</p>
+      <div v-if="feedback" class="feedback-row">
+        <p class="feedback" role="status" aria-live="polite">{{ feedback }}</p>
+        <AppButton
+          v-if="undoDismissedItems.length"
+          variant="ghost"
+          size="sm"
+          :loading="undoLoading"
+          @click="undoDismissedResults"
+        >撤销</AppButton>
+      </div>
 
       <nav class="execution-tabs" aria-label="执行中心分区">
         <button
@@ -964,6 +1139,14 @@ onMounted(async () => {
         <template #actions><AppButton variant="secondary" size="sm" @click="load">刷新</AppButton></template>
       </FilterBar>
 
+      <div v-if="isResultView" class="filter-scope" data-testid="execution-filter-scope" aria-live="polite">
+        <p>
+          项目和时间同时筛选 Agent Task 与执行结果；自动化和状态仅筛选执行结果。
+          <strong v-if="hasResultOnlyFilter">当前已启用结果专属筛选，Agent Task 暂时隐藏。</strong>
+        </p>
+        <AppButton v-if="hasResultOnlyFilter" variant="ghost" size="sm" @click="clearResultOnlyFilters">清除结果专属筛选</AppButton>
+      </div>
+
       <section v-if="visibleAgentTasks.length" class="agent-task-section" aria-label="Agent Task">
         <header><div><span>Agent Task</span><h2>受控任务运行</h2></div><RouterLink to="/agent-tasks">查看全部</RouterLink></header>
         <div class="agent-task-grid"><AgentTaskCard v-for="task in visibleAgentTasks" :key="task.id" :task="task" /></div>
@@ -996,10 +1179,25 @@ onMounted(async () => {
       <section v-else-if="view === 'results' || view === 'attention'" class="card-list" :aria-label="view === 'attention' ? '需要处理' : '最新结果'">
         <LoadingState v-if="visibleResultsLoading" :label="view === 'attention' ? '正在加载需处理结果' : '正在加载最新结果'" :cards="2" />
         <template v-else>
+          <header v-if="view === 'attention' && visibleResults.length" class="attention-heading">
+            <div>
+              <h2>需要处理 {{ filteredAttention.length }}{{ attentionHasMore ? '+' : '' }}</h2>
+              <p>移出只关闭提醒，执行结果仍保留在历史中。</p>
+            </div>
+            <AppButton
+              v-if="dismissibleAttention.length"
+              variant="secondary"
+              size="sm"
+              :loading="bulkDismissLoading"
+              :disabled="undoLoading"
+              :aria-label="`全部知悉 ${dismissibleAttention.length} 条已结束结果`"
+              @click="dismissAllAttention"
+            >全部知悉</AppButton>
+          </header>
           <EmptyState
             v-if="!visibleResults.length && !visibleAgentTasks.length"
-            :title="view === 'attention' ? '没有需要处理的结果' : '还没有执行结果'"
-            description="运行首次巡检或自动化后，用户可读结果会出现在这里。"
+            :title="hasResultOnlyFilter ? '没有符合筛选的执行结果' : view === 'attention' ? '没有需要处理的结果' : '还没有执行结果'"
+            :description="hasResultOnlyFilter ? '当前自动化或状态筛选只作用于执行结果，Agent Task 已暂时隐藏。' : '运行首次巡检或自动化后，用户可读结果会出现在这里。'"
           ><RouterLink class="secondary-link" to="/automations">运行首次巡检</RouterLink></EmptyState>
           <ResultSummaryCard
             v-for="item in visibleResults"
@@ -1114,11 +1312,14 @@ onMounted(async () => {
 .secondary-link { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--foreground); padding: 9px 14px; font-weight: 650; }.secondary-link:hover { background: var(--surface-muted); }
 .load-error { display: grid; gap: var(--space-3); }.load-error > h2 { margin: 0; color: var(--danger-strong); font-size: 20px; }
 .partial-warning, .feedback { margin: 0; border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); }.partial-warning { border: 1px solid var(--warning-border); background: var(--warning-soft); color: var(--lyle-color-amber-800); }.feedback { border: 1px solid var(--info-border); background: var(--info-soft); color: var(--info-strong); }
+.feedback-row { display: flex; align-items: center; gap: var(--space-2); border: 1px solid var(--info-border); border-radius: var(--radius-md); background: var(--info-soft); padding-right: var(--space-2); }.feedback-row .feedback { min-width: 0; flex: 1; border: 0; background: transparent; }
 .execution-tabs { display: flex; gap: var(--space-1); overflow-x: auto; border-bottom: 1px solid var(--border); }
 .execution-tabs button { flex: 0 0 auto; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--muted-foreground); padding: 12px 14px; white-space: nowrap; }.execution-tabs button.active { border-bottom-color: var(--primary); color: var(--primary); font-weight: 750; }
 .mobile-view-select, .mobile-filter-toggle { display: none; }
 :deep(.filter-bar label) { display: grid; gap: 4px; color: var(--muted-foreground); font-size: 12px; font-weight: 650; }
+.filter-scope { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-muted); padding: 8px var(--space-3); color: var(--muted-foreground); font-size: 13px; }.filter-scope p { margin: 0; line-height: 1.5; }.filter-scope strong { color: var(--foreground); }
 .card-list { display: grid; gap: var(--space-4); }
+.attention-heading { display: flex; align-items: end; justify-content: space-between; gap: var(--space-4); border-bottom: 1px solid var(--border); padding-bottom: var(--space-3); }.attention-heading h2 { margin: 0; font-size: 18px; }.attention-heading p { margin: 5px 0 0; color: var(--muted-foreground); font-size: 13px; }
 .agent-task-section { display: grid; gap: var(--space-3); border-bottom: 1px solid var(--border); padding-bottom: var(--space-5); }.agent-task-section > header { display: flex; align-items: end; justify-content: space-between; gap: var(--space-3); }.agent-task-section > header span { color: var(--primary); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }.agent-task-section h2 { margin: 4px 0 0; font-size: 17px; }.agent-task-section a { color: var(--primary); font-size: 13px; font-weight: 700; text-decoration: none; }.agent-task-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-3); }
 .load-more-row { display: flex; justify-content: center; padding: var(--space-2) 0; }
 .history-section { display: grid; gap: var(--space-4); }.history-heading { display: flex; align-items: end; justify-content: space-between; gap: var(--space-4); }.history-heading h2 { margin: 0; }.history-heading p { margin: 5px 0 0; color: var(--muted-foreground); }
@@ -1133,6 +1334,8 @@ onMounted(async () => {
   .mobile-view-select select { min-height: 42px; }
   .mobile-filter-toggle { display: inline-flex; width: 100%; min-height: 40px; align-items: center; justify-content: center; }
   :deep(.execution-filter-bar:not(.open)) { display: none; }
+  .filter-scope { align-items: stretch; flex-direction: column; }.filter-scope :deep(button) { width: 100%; }
+  .feedback-row, .attention-heading { align-items: stretch; flex-direction: column; }.feedback-row { padding: 0; }.feedback-row :deep(button), .attention-heading :deep(button) { width: 100%; }
   .history-heading, .operation-row header { align-items: stretch; flex-direction: column; }
   .history-tabs { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
   .operation-row footer :deep(button), .secondary-link { width: 100%; }

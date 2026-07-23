@@ -77,6 +77,6 @@ describe('application navigation', () => {
     expect(getNavigationBadge(tasks, counts)).toBe(2)
     expect(getNavigationBadgeLabel(tasks, 2)).toBe('2 条未读提醒')
     expect(getNavigationBadge(executionCenter, counts)).toBe(5)
-    expect(getNavigationBadgeLabel(executionCenter, 5)).toBe('5 项执行待处理')
+    expect(getNavigationBadgeLabel(executionCenter, 5)).toBe('5 项需处理')
   })
 })

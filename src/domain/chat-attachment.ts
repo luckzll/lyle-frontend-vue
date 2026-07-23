@@ -1,5 +1,18 @@
 export type ChatAttachmentKind = 'image' | 'file'
 export type ChatAttachmentStatus = 'local' | 'uploading' | 'ready' | 'failed' | 'attached'
+export type AttachmentSource = 'picker' | 'drop' | 'paste' | 'folder_picker' | 'folder_drop'
+
+export interface AttachmentFolderMetadata {
+  sourceType: AttachmentSource
+  folderGroupId?: string
+  folderRoot?: string
+  relativePath?: string
+  sourceOrder: number
+}
+
+export interface IncomingAttachmentFile extends AttachmentFolderMetadata {
+  file: File
+}
 
 export interface ChatAttachment {
   id: string
@@ -12,6 +25,11 @@ export interface ChatAttachment {
   downloadUrl?: string
   width?: number
   height?: number
+  position?: number
+  sourceType?: AttachmentSource
+  folderGroupId?: string
+  folderRoot?: string
+  relativePath?: string
 }
 
 export interface ChatAttachmentDraft {
@@ -26,6 +44,11 @@ export interface ChatAttachmentDraft {
   status: ChatAttachmentStatus
   error?: string
   attachment?: ChatAttachment
+  sourceType: AttachmentSource
+  folderGroupId?: string
+  folderRoot?: string
+  relativePath?: string
+  sourceOrder: number
 }
 
 export const CHAT_ATTACHMENT_LIMITS = {

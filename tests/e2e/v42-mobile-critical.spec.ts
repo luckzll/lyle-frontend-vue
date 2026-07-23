@@ -4,6 +4,7 @@ test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 800 })
   await seedAuth(page)
   await page.route('**/api/agent-tools/reminders**', (route) => json(route, { items: [] }))
+  await page.route('**/api/agent-tasks**', (route) => json(route, { items: [] }))
   await page.route('**/api/experience/events', (route) => json(route, { accepted: true }))
   await page.route('**/api/experience/confirmations', (route) => json(route, { items: [] }))
   await page.route('**/api/experience/execution/needs-attention', (route) => json(route, { items: [] }))

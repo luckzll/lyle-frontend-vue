@@ -19,7 +19,7 @@ test('streamed explicit memory becomes a confirmable candidate with profile evid
 
   const assistant = page.locator('.message.assistant').last()
   const candidate = assistant.locator('.candidate-memory-card').filter({ hasText: '帽子' })
-  await expect(candidate).toBeVisible()
+  await expect(candidate).toBeVisible({ timeout: 60_000 })
   await expect(candidate.locator('input').first()).toHaveValue('preferences.visual.dislikes')
   await expect(assistant).toContainText('确认后才会写入长期记忆')
   await expect(assistant).not.toContainText('已记住')

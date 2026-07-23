@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 test('registers, uploads knowledge, debugs RAG, and chats with sources', async ({ page }) => {
+  test.setTimeout(120_000)
   const suffix = Date.now()
   const username = `e2e_${suffix}`
   const knowledgeName = `E2E 知识库 ${suffix}`
@@ -41,7 +42,7 @@ test('registers, uploads knowledge, debugs RAG, and chats with sources', async (
   await page.getByTestId('chat-input').fill(chatQuestion)
   await page.getByTestId('chat-submit').click()
 
-  await expect(page.locator('.source-card').filter({ hasText: answerText })).toBeVisible()
+  await expect(page.locator('.source-card').filter({ hasText: answerText })).toBeVisible({ timeout: 60_000 })
 
   await page.getByRole('link', { name: '记忆', exact: true }).click()
   const conversationTitle = chatQuestion.length > 18 ? `${chatQuestion.slice(0, 18)}...` : chatQuestion

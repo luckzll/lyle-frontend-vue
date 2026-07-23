@@ -6,6 +6,13 @@ export const http = axios.create({
   timeout: 60000
 })
 
+// Public bootstrap requests must never clear an existing authenticated session.
+// They also use a short timeout so optional runtime configuration cannot delay UI.
+export const publicHttp = axios.create({
+  baseURL: '/api',
+  timeout: 3000
+})
+
 http.interceptors.request.use((config) => {
   const token = getAuthToken()
   if (token) {

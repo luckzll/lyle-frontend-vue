@@ -18,6 +18,7 @@ function formatBytes(bytes: number) {
     <span v-else class="file-icon"><FileText :size="22" aria-hidden="true" /></span>
     <span class="attachment-meta">
       <strong :title="attachment.name">{{ attachment.name }}</strong>
+      <small v-if="attachment.relativePath" class="relative-path" :title="attachment.relativePath">{{ attachment.relativePath }}</small>
       <small v-if="attachment.status === 'uploading'"><LoaderCircle class="spin" :size="13" aria-hidden="true" /> 上传中</small>
       <small v-else-if="attachment.status === 'failed'" class="failure"><CircleAlert :size="13" aria-hidden="true" /> {{ attachment.error }}</small>
       <small v-else>{{ formatBytes(attachment.size) }} · {{ attachment.status === 'ready' ? '已就绪' : '等待上传' }}</small>
@@ -39,6 +40,7 @@ function formatBytes(bytes: number) {
 .attachment-meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .attachment-meta small { display: flex; align-items: center; gap: 4px; color: var(--muted-foreground); font-size: 11px; }
 .attachment-meta .failure { color: var(--danger); white-space: normal; }
+.attachment-meta .relative-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-action { display: inline-grid; width: 32px; height: 32px; place-items: center; border-radius: 50%; padding: 0; }
 .status-failed { border-color: var(--danger-border); }
 .spin { animation: spin .8s linear infinite; }

@@ -268,6 +268,6 @@ export function getNavigationBadge(
 }
 
 export function getNavigationBadgeLabel(item: NavigationItem, count: number): string {
-  if (item.badgeSource === 'execution') return `${count} 项执行待处理`
+  if (item.badgeSource === 'execution') return `${count} 项需处理`
   return `${count} 条未读提醒`
 }

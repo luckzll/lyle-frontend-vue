@@ -190,6 +190,8 @@ async function mockDashboard(page: Page) {
   }))
   await page.route('**/api/experience/events', (route) => json(route, { accepted: true }))
   await page.route('**/api/experience/execution/needs-attention', (route) => json(route, { items: [] }))
+  await page.route('**/api/missions/digest**', (route) => json(route, { items: [], completedRuns: 0, attentionCount: 0 }))
+  await page.route('**/api/exceptions**', (route) => json(route, { items: [] }))
 }
 
 async function json(route: Route, body: unknown) {

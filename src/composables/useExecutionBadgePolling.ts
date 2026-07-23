@@ -10,6 +10,13 @@ import {
 import { listConfirmations, listNeedsAttention } from '@/api/app'
 
 const DEFAULT_POLL_INTERVAL = 60_000
+export const EXECUTION_ATTENTION_CHANGED_EVENT = 'lyle:execution-attention-changed'
+
+export function notifyExecutionAttentionChanged(delta?: number) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(EXECUTION_ATTENTION_CHANGED_EVENT, { detail: { delta } }))
+  }
+}
 
 export interface UseExecutionBadgePollingOptions {
   enabled?: MaybeRefOrGetter<boolean>
@@ -83,14 +90,26 @@ export function useExecutionBadgePolling(options: UseExecutionBadgePollingOption
     }
   }
 
+  function handleAttentionChanged(event: Event) {
+    const delta = Number((event as CustomEvent<{ delta?: number }>).detail?.delta)
+    if (Number.isFinite(delta) && delta !== 0) count.value = Math.max(0, count.value + Math.trunc(delta))
+    void refreshCount()
+  }
+
   watch(isEnabled, (enabled) => {
     if (enabled) void refreshCount()
     else clearCount()
   })
 
   if (options.autoStart !== false) {
-    onMounted(startPolling)
-    onBeforeUnmount(stopPolling)
+    onMounted(() => {
+      startPolling()
+      window.addEventListener(EXECUTION_ATTENTION_CHANGED_EVENT, handleAttentionChanged)
+    })
+    onBeforeUnmount(() => {
+      stopPolling()
+      window.removeEventListener(EXECUTION_ATTENTION_CHANGED_EVENT, handleAttentionChanged)
+    })
   }
 
   return {

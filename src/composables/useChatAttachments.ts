@@ -1,15 +1,18 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
-import type { ChatAttachment, ChatAttachmentDraft, ChatAttachmentKind } from '@/domain/chat-attachment'
+import type { AttachmentFolderMetadata, ChatAttachment, ChatAttachmentDraft, ChatAttachmentKind, IncomingAttachmentFile } from '@/domain/chat-attachment'
 import { CHAT_ATTACHMENT_LIMITS } from '@/domain/chat-attachment'
+import type { DirectorySkip } from '@/domain/directory-entry'
+import { directorySkippedCount } from '@/domain/directory-entry'
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
 const FILE_EXTENSIONS = new Set(['pdf', 'docx', 'txt', 'md', 'csv', 'json', 'log', 'xlsx'])
 
 export function useChatAttachments(options: {
-  upload: (file: File, kind: ChatAttachmentKind) => Promise<ChatAttachment>
+  upload: (file: File, kind: ChatAttachmentKind, metadata: AttachmentFolderMetadata) => Promise<ChatAttachment>
   remove?: (attachmentId: string) => Promise<unknown>
 }) {
   const attachments = ref<ChatAttachmentDraft[]>([])
+  const skipped = ref<DirectorySkip[]>([])
   const announcement = ref('')
 
   const isUploading = computed(() => attachments.value.some((item) => ['local', 'uploading'].includes(item.status)))
@@ -17,20 +20,39 @@ export function useChatAttachments(options: {
   const allReady = computed(() => attachments.value.length > 0 && attachments.value.every((item) => item.status === 'ready'))
   const totalBytes = computed(() => attachments.value.reduce((sum, item) => sum + item.size, 0))
 
-  async function addFiles(files: File[], source: 'picker' | 'drop' | 'paste' = 'picker') {
-    if (!files.length) return
+  async function addFiles(files: IncomingAttachmentFile[], scanSkipped: DirectorySkip[] = []) {
+    if (!files.length && !scanSkipped.length) return
+    skipped.value = [...scanSkipped]
     const slots = Math.max(0, CHAT_ATTACHMENT_LIMITS.maxCount - attachments.value.length)
-    const acceptedFiles = files.slice(0, slots)
+    const acceptedFiles: IncomingAttachmentFile[] = []
+    let acceptedBytes = attachments.value.reduce((sum, item) => sum + item.size, 0)
+    for (const item of files) {
+      const validationError = validateFile(item.file)
+      if (validationError) {
+        skipped.value.push({
+          name: item.file.name,
+          relativePath: item.relativePath,
+          reason: validationError.includes('5MB') ? 'size' : 'unsupported'
+        })
+        continue
+      }
+      if (acceptedFiles.length >= slots) {
+        skipped.value.push({ name: item.file.name, relativePath: item.relativePath, reason: 'count' })
+        continue
+      }
+      if (acceptedBytes + item.file.size > CHAT_ATTACHMENT_LIMITS.maxTotalBytes) {
+        skipped.value.push({ name: item.file.name, relativePath: item.relativePath, reason: 'total_size' })
+        continue
+      }
+      acceptedFiles.push(item)
+      acceptedBytes += item.file.size
+    }
+
     const drafts = acceptedFiles.map(createDraft)
     const startIndex = attachments.value.length
     attachments.value.push(...drafts)
     const reactiveDrafts = attachments.value.slice(startIndex)
-    if (files.length > slots) {
-      announcement.value = `单轮最多添加 ${CHAT_ATTACHMENT_LIMITS.maxCount} 个附件，超出的文件未加入。`
-    } else {
-      announcement.value = `已从${sourceLabel(source)}添加 ${drafts.length} 个附件。`
-    }
-    validateTotals()
+    updateAnnouncement(drafts.length)
     await uploadQueue(reactiveDrafts.filter((item) => item.status === 'local'))
   }
 
@@ -52,6 +74,7 @@ export function useChatAttachments(options: {
     const index = attachments.value.findIndex((item) => item.localId === localId)
     if (index < 0) return
     const [draft] = attachments.value.splice(index, 1)
+    if (!draft) return
     revokePreview(draft)
     if (draft.attachmentId && options.remove) {
       await options.remove(draft.attachmentId).catch(() => undefined)
@@ -60,9 +83,10 @@ export function useChatAttachments(options: {
   }
 
   function commitReady(): ChatAttachment[] {
-    const committed = attachments.value.flatMap((draft) => draft.attachment ? [draft.attachment] : [])
+    const committed = attachments.value.flatMap((draft, position) => draft.attachment ? [{ ...draft.attachment, position }] : [])
     attachments.value.forEach(revokePreview)
     attachments.value = []
+    skipped.value = []
     announcement.value = committed.length ? `${committed.length} 个附件已随消息发送。` : ''
     return committed
   }
@@ -70,36 +94,28 @@ export function useChatAttachments(options: {
   function reset() {
     attachments.value.forEach(revokePreview)
     attachments.value = []
+    skipped.value = []
     announcement.value = ''
   }
 
-  function createDraft(file: File): ChatAttachmentDraft {
+  function createDraft(incoming: IncomingAttachmentFile): ChatAttachmentDraft {
+    const { file } = incoming
     const kind: ChatAttachmentKind = IMAGE_TYPES.has(file.type.toLowerCase()) ? 'image' : 'file'
-    const error = validateFile(file)
     return {
-      localId: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
+      localId: newId(),
       kind,
       file,
       name: file.name,
       mimeType: file.type || 'application/octet-stream',
       size: file.size,
       previewUrl: kind === 'image' && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : undefined,
-      status: error ? 'failed' : 'local',
-      error
+      status: 'local',
+      sourceType: incoming.sourceType,
+      folderGroupId: incoming.folderGroupId,
+      folderRoot: incoming.folderRoot,
+      relativePath: incoming.relativePath,
+      sourceOrder: incoming.sourceOrder
     }
-  }
-
-  function validateTotals() {
-    if (totalBytes.value <= CHAT_ATTACHMENT_LIMITS.maxTotalBytes) return
-    let running = 0
-    for (const draft of attachments.value) {
-      running += draft.size
-      if (running > CHAT_ATTACHMENT_LIMITS.maxTotalBytes && draft.status !== 'failed') {
-        draft.status = 'failed'
-        draft.error = '单轮附件总量不能超过 20MB。'
-      }
-    }
-    announcement.value = '部分附件超过单轮 20MB 总量限制，请移除后重试。'
   }
 
   async function uploadQueue(drafts: ChatAttachmentDraft[]) {
@@ -110,7 +126,21 @@ export function useChatAttachments(options: {
         if (!draft || draft.status !== 'local') continue
         draft.status = 'uploading'
         try {
-          const attachment = await options.upload(draft.file, draft.kind)
+          const metadata: AttachmentFolderMetadata = {
+            sourceType: draft.sourceType,
+            folderGroupId: draft.folderGroupId,
+            folderRoot: draft.folderRoot,
+            relativePath: draft.relativePath,
+            sourceOrder: draft.sourceOrder
+          }
+          const response = await options.upload(draft.file, draft.kind, metadata)
+          const attachment = {
+            ...response,
+            sourceType: response.sourceType || draft.sourceType,
+            folderGroupId: response.folderGroupId || draft.folderGroupId,
+            folderRoot: response.folderRoot || draft.folderRoot,
+            relativePath: response.relativePath || draft.relativePath
+          }
           draft.attachment = attachment
           draft.attachmentId = attachment.id
           draft.status = 'ready'
@@ -123,12 +153,17 @@ export function useChatAttachments(options: {
     })
     await Promise.all(workers)
     const readyCount = attachments.value.filter((item) => item.status === 'ready').length
-    announcement.value = `${readyCount} 个附件已就绪。`
+    const failedCount = attachments.value.filter((item) => item.status === 'failed').length
+    announcement.value = `${readyCount} 个附件已就绪${failedCount ? `，${failedCount} 个需要处理` : ''}${skipped.value.length ? `，跳过 ${directorySkippedCount(skipped.value)} 个` : ''}。`
+  }
+
+  function updateAnnouncement(added: number) {
+    announcement.value = `已加入 ${added} 个文件${skipped.value.length ? `，跳过 ${directorySkippedCount(skipped.value)} 个` : ''}。`
   }
 
   onBeforeUnmount(reset)
 
-  return { attachments, announcement, isUploading, hasFailed, allReady, totalBytes, addFiles, retry, remove, commitReady, reset }
+  return { attachments, skipped, announcement, isUploading, hasFailed, allReady, totalBytes, addFiles, retry, remove, commitReady, reset }
 }
 
 function validateFile(file: File) {
@@ -155,8 +190,6 @@ function revokePreview(draft: ChatAttachmentDraft) {
   if (draft.previewUrl?.startsWith('blob:') && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(draft.previewUrl)
 }
 
-function sourceLabel(source: 'picker' | 'drop' | 'paste') {
-  if (source === 'drop') return '拖拽'
-  if (source === 'paste') return '剪贴板'
-  return '文件选择器'
+function newId() {
+  return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`
 }

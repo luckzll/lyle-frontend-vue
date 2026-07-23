@@ -161,6 +161,7 @@ onBeforeUnmount(() => {
                       v-if="badgeFor(item) > 0"
                       class="mobile-navigation__badge"
                       :aria-label="getNavigationBadgeLabel(item, badgeFor(item))"
+                      :title="getNavigationBadgeLabel(item, badgeFor(item))"
                     >
                       <span aria-hidden="true">{{ badgeFor(item) > 99 ? '99+' : badgeFor(item) }}</span>
                     </span>

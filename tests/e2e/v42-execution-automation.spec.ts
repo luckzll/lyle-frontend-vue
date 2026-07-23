@@ -45,6 +45,9 @@ test.describe('V4.2 execution and automation workspace', () => {
     let confirmCalls = 0
     let rejectCalls = 0
     let retryCalls = 0
+    let dismissCalls = 0
+    let restoreCalls = 0
+    let dismissed = false
 
     await page.route('**/api/experience/confirmations', (route) => json(route, { items: confirmations }))
     await page.route('**/api/experience/confirmations/101', (route) => {
@@ -61,14 +64,29 @@ test.describe('V4.2 execution and automation workspace', () => {
       confirmations = confirmations.filter((item) => item.pendingOperationId !== 102)
       return json(route, { accepted: true })
     })
-    await page.route('**/api/experience/execution/results?**', (route) =>
-      json(route, { items: [completedResult, failedResult, otherProjectResult] }))
+    await page.route('**/api/experience/execution/results?**', (route) => {
+      const attentionOnly = new URL(route.request().url()).searchParams.get('attentionOnly') === 'true'
+      const items = [completedResult, failedResult, otherProjectResult].filter((item) => (
+        !attentionOnly || (!dismissed && ['failed', 'partial', 'awaiting_confirmation'].includes(item.status))
+      ))
+      return json(route, { items, nextCursor: null, hasMore: false })
+    })
+    await page.route('**/api/experience/execution/results/202/dismiss', (route) => {
+      dismissCalls += 1
+      dismissed = true
+      return json(route, { ...failedResult, dismissedAt: new Date().toISOString() })
+    })
+    await page.route('**/api/experience/execution/results/202/restore', (route) => {
+      restoreCalls += 1
+      dismissed = false
+      return json(route, { ...failedResult, dismissedAt: null })
+    })
     await page.route('**/api/experience/execution/results/201', (route) => {
       resultDetailCalls += 1
       return json(route, completedResult)
     })
     await page.route('**/api/experience/execution/needs-attention', (route) =>
-      json(route, { items: [failedResult] }))
+      json(route, { items: dismissed ? [] : [failedResult] }))
     await page.route('**/api/agent-tools/operations?**', (route) => json(route, { items: operations }))
     await page.route('**/api/agent-tools/operations/302/confirm', (route) => json(route, { operation: operations[1], result: {} }))
     await page.route('**/api/agent-tools/operations/302/reject', (route) => json(route, { operation: operations[1] }))
@@ -142,10 +160,27 @@ test.describe('V4.2 execution and automation workspace', () => {
     await statusFilter.selectOption('failed')
     await page.getByRole('button', { name: /需要处理/ }).click()
     await expectQuery(page, 'view', 'attention')
+    const executionBadge = page.locator('.app-sidebar__link[href="/execution-center"] .app-sidebar__badge')
+    await expect(executionBadge).toHaveText('3')
     const failedCard = page.getByRole('article').filter({ hasText: '发布流程需要重试' })
-    await failedCard.getByRole('button', { name: '重新运行' }).click()
+    await failedCard.getByRole('button', { name: '修复后重试' }).click()
     await expect.poll(() => retryCalls).toBe(1)
     await expect(page.getByText('已提交重试，最新状态已刷新。')).toBeVisible()
+    await failedCard.getByRole('button', { name: '移出待处理' }).click()
+    await expect.poll(() => dismissCalls).toBe(1)
+    await expect(page.getByText('已移出待处理；执行历史仍保留。')).toBeVisible()
+    await expect(failedCard).toHaveCount(0)
+    await expect(executionBadge).toHaveText('2')
+    await page.getByRole('button', { name: '撤销' }).click()
+    await expect.poll(() => restoreCalls).toBe(1)
+    await expect(page.getByText('已撤销，1 条结果已恢复到待处理。')).toBeVisible()
+    await expect(failedCard).toBeVisible()
+    await expect(executionBadge).toHaveText('3')
+    await page.getByRole('button', { name: '全部知悉 1 条已结束结果' }).click()
+    await expect.poll(() => dismissCalls).toBe(2)
+    await expect(page.getByText('已移出 1 条待处理结果；执行历史仍保留。')).toBeVisible()
+    await expect(failedCard).toHaveCount(0)
+    await expect(executionBadge).toHaveText('2')
 
     await projectFilter.fill('')
     await projectFilter.dispatchEvent('change')
@@ -204,6 +239,7 @@ test.describe('V4.2 execution and automation workspace', () => {
     const listRequests: URL[] = []
 
     await page.route('**/api/experience/confirmations', (route) => json(route, { items: [] }))
+    await page.route('**/api/agent-tasks**', (route) => json(route, { items: [agentTask('501', '仍在列表中的 Agent Task', now)] }))
     await page.route('**/api/experience/execution/needs-attention', (route) => json(route, { items: [nextPageResult] }))
     await page.route('**/api/agent-tools/operations?**', (route) => json(route, { items: [] }))
     await page.route('**/api/experience/execution/results?**', (route) => {
@@ -226,6 +262,7 @@ test.describe('V4.2 execution and automation workspace', () => {
 
     await page.goto('/execution-center?view=results')
     await expect(page.getByRole('heading', { name: '首批巡检结果' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '仍在列表中的 Agent Task' })).toBeVisible()
     await page.getByRole('button', { name: '加载更多' }).click()
     await expect(page.getByRole('heading', { name: '分页后的失败结果' })).toBeVisible()
     await expect(page.getByRole('button', { name: '加载更多' })).toHaveCount(0)
@@ -250,6 +287,15 @@ test.describe('V4.2 execution and automation workspace', () => {
     ))).toBe(true)
     await expect(page.getByRole('heading', { name: '分页后的失败结果' })).toBeVisible()
     await expect(page.getByRole('heading', { name: '首批巡检结果' })).toHaveCount(0)
+
+    await statusFilter.selectOption('awaiting_confirmation')
+    await expect(page.getByTestId('execution-filter-scope')).toContainText('Agent Task 暂时隐藏')
+    await expect(page.getByRole('heading', { name: '仍在列表中的 Agent Task' })).toHaveCount(0)
+    await expect(page.getByText('没有符合筛选的执行结果', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '清除结果专属筛选' }).click()
+    await expectQuery(page, 'automationId', null)
+    await expectQuery(page, 'status', null)
+    await expect(page.getByRole('heading', { name: '仍在列表中的 Agent Task' })).toBeVisible()
   })
 
   test('surfaces paused workflow steps in confirmation inbox and resumes them without retrying', async ({ page }) => {
@@ -446,6 +492,7 @@ async function seedAuth(page: Page, username: string) {
 
 async function mockShellRequests(page: Page) {
   await page.route('**/api/agent-tools/reminders?**', (route) => json(route, { items: [] }))
+  await page.route('**/api/agent-tasks**', (route) => json(route, { items: [] }))
   await page.route('**/api/experience/confirmations', (route) => json(route, { items: [] }))
   await page.route('**/api/experience/execution/needs-attention', (route) => json(route, { items: [] }))
   await page.route('**/api/experience/events', (route) => json(route, { accepted: true }))
@@ -505,6 +552,23 @@ function result(
     traceRef: `trace-${id}`,
     createdAt,
     ...overrides
+  }
+}
+
+function agentTask(id: string, title: string, updatedAt: string) {
+  return {
+    id,
+    title,
+    goal: '验证执行中心筛选范围',
+    completionCriteria: [],
+    constraints: {},
+    projectId: '7',
+    status: 'COMPLETED',
+    riskLevel: 'READ',
+    autonomyLevel: 0,
+    version: 1,
+    createdAt: updatedAt,
+    updatedAt
   }
 }
 

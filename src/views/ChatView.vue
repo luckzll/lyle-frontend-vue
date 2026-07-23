@@ -45,8 +45,13 @@ import { NEW_CONVERSATION_STORAGE_VALUE, resolveConversationToRestore } from '@/
 import { cancelPendingImageItems } from '@/domain/image-batch'
 import type { ChatAttachment } from '@/domain/chat-attachment'
 import { useChatAttachments } from '@/composables/useChatAttachments'
+import { scanDataTransfer, scanFlatFiles, scanPickerFiles } from '@/composables/useDirectoryEntries'
+import { useWorkspaceDrop } from '@/composables/useWorkspaceDrop'
+import { useRuntimeFeatures } from '@/composables/useRuntimeFeatures'
+import type { DirectorySkip } from '@/domain/directory-entry'
 import ChatComposer from '@/components/chat/ChatComposer.vue'
 import MessageAttachments from '@/components/chat/MessageAttachments.vue'
+import WorkspaceDropOverlay from '@/components/chat/WorkspaceDropOverlay.vue'
 import GeneratedImageGrid from '@/components/chat/GeneratedImageGrid.vue'
 import MessageFailureActions from '@/components/chat/MessageFailureActions.vue'
 import {
@@ -102,6 +107,7 @@ interface RetryTurnContext {
 const input = ref('')
 const route = useRoute()
 const router = useRouter()
+const runtimeFeatures = useRuntimeFeatures()
 const workspace = useWorkspaceStore()
 const handoffProject = ref<WorkspaceProjectContext | null>(null)
 const showContextPanel = ref(false)
@@ -137,11 +143,10 @@ const briefReminders = ref<AgentReminderItem[]>([])
 const briefMemory = ref<MemorySnapshot | null>(null)
 const briefOperations = ref<Array<Pick<PendingOperationItem, 'id' | 'status'>>>([])
 const briefError = ref('')
-const messages = ref<Message[]>([
-  { role: 'assistant', content: '你好，我是 Lyle。你可以先上传文档到知识库，再带着知识库提问。' }
-])
+const messages = ref<Message[]>([])
 const {
   attachments: attachmentDrafts,
+  skipped: attachmentSkipped,
   announcement: attachmentAnnouncement,
   isUploading: attachmentsUploading,
   hasFailed: attachmentsFailed,
@@ -151,8 +156,31 @@ const {
   commitReady: commitReadyAttachments,
   reset: resetAttachments
 } = useChatAttachments({
-  upload: async (file, kind) => (await uploadChatAttachment(file, kind)).data,
+  upload: async (file, kind, metadata) => (await uploadChatAttachment(file, kind, metadata)).data,
   remove: async (attachmentId) => deleteChatAttachment(attachmentId)
+})
+const attachmentHintDismissed = ref(window.localStorage.getItem('lyle.chat.attachment-hint-dismissed') === '1')
+const showAttachmentHint = computed(() => !attachmentHintDismissed.value && !hasUserMessages.value)
+const dropController = useWorkspaceDrop(async (dataTransfer, signal) => {
+  const startedAt = performance.now()
+  const result = runtimeFeatures.chatFolderAttachmentsEnabled
+    ? await scanDataTransfer(dataTransfer, signal)
+    : scanFlatFiles(Array.from(dataTransfer.files || []), 'drop')
+  if (signal.aborted) return
+  const source = result.files.some((item) => item.sourceType === 'folder_drop') ? 'folder_drop' : 'drop'
+  void trackProductEvent({
+    eventType: source === 'folder_drop' ? 'chat_folder_scan_total' : 'chat_attachment_added_total',
+    page: 'chat',
+    actionType: source,
+    status: result.skipped.length ? 'partial' : result.files.length ? 'succeeded' : 'failed',
+    itemCount: result.files.length,
+    durationMs: Math.round(performance.now() - startedAt)
+  }).catch(() => undefined)
+  trackDirectorySkips(result.skipped)
+  await addAttachmentFiles(result.files, result.skipped)
+  if (result.files.length) dismissAttachmentHint()
+}, (action) => {
+  void trackProductEvent({ eventType: 'chat_drag_overlay_total', page: 'chat', actionType: action }).catch(() => undefined)
 })
 const composerDisabled = computed(() => (
   loading.value
@@ -377,9 +405,7 @@ async function loadConversation(id: string) {
   loading.value = true
   try {
     const response = await listChatMessages(conversationId.value)
-    messages.value = response.data.length
-      ? response.data.map(historyMessage)
-      : [{ role: 'assistant', content: '这个会话还没有消息。' }]
+    messages.value = response.data.map(historyMessage)
     window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, conversationId.value)
     await refreshBrief()
   } catch {
@@ -416,9 +442,7 @@ async function pollRecoveredConversation() {
   try {
     const response = await listChatMessages(targetConversationId)
     if (conversationId.value !== targetConversationId) return
-    messages.value = response.data.length
-      ? response.data.map(historyMessage)
-      : [{ role: 'assistant', content: '这个会话还没有消息。' }]
+    messages.value = response.data.map(historyMessage)
   } catch {
     error.value = '图片任务状态暂时无法更新，正在重试。'
   } finally {
@@ -450,9 +474,7 @@ function newConversation() {
   editingConversationId.value = ''
   conversationId.value = ''
   window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, NEW_CONVERSATION_STORAGE_VALUE)
-  messages.value = [
-    { role: 'assistant', content: '新的会话已经准备好。输入第一句话后，我会自动创建会话并保存历史。' }
-  ]
+  messages.value = []
   nextTick(() => composerRef.value?.focus())
 }
 
@@ -562,6 +584,13 @@ async function submit(retryContext?: RetryTurnContext) {
   const turnId = retryContext?.turnId || crypto.randomUUID()
 
   if (!retryContext) {
+    void trackProductEvent({
+      eventType: 'chat_turn_submitted_total',
+      page: 'chat',
+      actionType: attachmentsForDisplay.some((attachment) => attachment.folderGroupId) ? 'with_folder' : 'without_folder',
+      status: 'succeeded',
+      itemCount: attachmentIds.length
+    }).catch(() => undefined)
     input.value = ''
     commitReadyAttachments()
   }
@@ -714,8 +743,52 @@ function retryFailedMessage(index: number) {
   error.value = '未找到要重试的原消息，请刷新后重试。'
 }
 
-function handleAttachmentFiles(files: File[], source: 'picker' | 'drop' | 'paste') {
-  void addAttachmentFiles(files, source)
+function handleAttachmentFiles(files: File[], source: 'picker' | 'paste' | 'folder_picker') {
+  if (source === 'folder_picker' && !runtimeFeatures.chatFolderAttachmentsEnabled) return
+  const result = scanPickerFiles(files, source)
+  void trackProductEvent({
+    eventType: source === 'folder_picker' ? 'chat_folder_scan_total' : 'chat_attachment_added_total',
+    page: 'chat',
+    actionType: source,
+    status: result.skipped.length ? 'partial' : result.files.length ? 'succeeded' : 'failed',
+    itemCount: result.files.length
+  }).catch(() => undefined)
+  trackDirectorySkips(result.skipped)
+  void addAttachmentFiles(result.files, result.skipped)
+  if (result.files.length) dismissAttachmentHint()
+}
+
+function trackDirectorySkips(skipped: DirectorySkip[]) {
+  const byReason = skipped.reduce<Record<string, number>>((counts, item) => {
+    counts[item.reason] = (counts[item.reason] || 0) + Math.max(1, item.count || 1)
+    return counts
+  }, {})
+  for (const [reason, itemCount] of Object.entries(byReason)) {
+    void trackProductEvent({
+      eventType: 'chat_folder_skip_total', page: 'chat', actionType: reason, status: 'skipped', itemCount
+    }).catch(() => undefined)
+  }
+}
+
+function workspaceDragenter(event: DragEvent) {
+  if (runtimeFeatures.chatWorkspaceDropEnabled) dropController.dragenter(event)
+}
+
+function workspaceDragleave(event: DragEvent) {
+  if (runtimeFeatures.chatWorkspaceDropEnabled) dropController.dragleave(event)
+}
+
+function workspaceDragover(event: DragEvent) {
+  if (runtimeFeatures.chatWorkspaceDropEnabled) dropController.dragover(event)
+}
+
+function workspaceDrop(event: DragEvent) {
+  if (runtimeFeatures.chatWorkspaceDropEnabled) void dropController.drop(event)
+}
+
+function dismissAttachmentHint() {
+  attachmentHintDismissed.value = true
+  window.localStorage.setItem('lyle.chat.attachment-hint-dismissed', '1')
 }
 
 function applyImageBatchStarted(message: Message, batch: ImageBatchStartedEvent) {
@@ -1727,7 +1800,14 @@ function escapeHtml(text: string) {
 </script>
 
 <template>
-  <section class="page">
+  <section
+    class="page"
+    @dragenter="workspaceDragenter"
+    @dragleave="workspaceDragleave"
+    @dragover="workspaceDragover"
+    @drop="workspaceDrop"
+  >
+    <WorkspaceDropOverlay v-if="runtimeFeatures.chatWorkspaceDropEnabled && (dropController.dragging.value || dropController.scanning.value)" :scanning="dropController.scanning.value" />
     <div class="toolbar">
       <div>
         <h1>AI 聊天</h1>
@@ -1766,7 +1846,15 @@ function escapeHtml(text: string) {
     <p v-if="briefError" class="alert danger">{{ briefError }}</p>
 
     <div class="chat-workspace" :class="{ 'context-closed': !showContextPanel }">
-    <div ref="chatListRef" class="panel chat-list" role="log" aria-label="对话消息" aria-live="polite" @scroll="onChatScroll">
+    <div
+      ref="chatListRef"
+      class="panel chat-list"
+      :class="{ 'chat-list--empty': !hasUserMessages }"
+      :role="hasUserMessages ? 'log' : undefined"
+      :aria-label="hasUserMessages ? '对话消息' : undefined"
+      :aria-live="hasUserMessages ? 'polite' : undefined"
+      @scroll="onChatScroll"
+    >
       <div v-if="initializing" class="empty-state">
         <strong>正在加载会话和知识库</strong>
         <span>请稍候。</span>
@@ -2352,14 +2440,18 @@ function escapeHtml(text: string) {
       class="chat-input"
       v-model="input"
       :attachments="attachmentDrafts"
+      :skipped="attachmentSkipped"
       :loading="loading"
       :disabled="composerDisabled"
       :announcement="attachmentAnnouncement"
+      :show-attachment-hint="showAttachmentHint"
+      :folder-attachments-enabled="runtimeFeatures.chatFolderAttachmentsEnabled"
       @submit="submit"
       @stop="cancelStreaming"
       @files="handleAttachmentFiles"
       @remove="removeAttachment"
       @retry="retryAttachment"
+      @dismiss-hint="dismissAttachmentHint"
     />
   </section>
 </template>
@@ -2384,6 +2476,8 @@ function escapeHtml(text: string) {
   background: var(--surface);
   scroll-behavior: smooth;
 }
+
+.chat-list--empty { overflow: hidden; }
 
 .chat-starter {
   display: grid;
@@ -2431,13 +2525,17 @@ function escapeHtml(text: string) {
   position: sticky;
   z-index: 5;
   bottom: calc(var(--space-2) + env(safe-area-inset-bottom));
+  display: block;
+  grid-template-columns: none;
+  gap: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   background: color-mix(in srgb, var(--surface) 94%, transparent);
+  padding: 0;
   box-shadow: var(--shadow-popover);
   backdrop-filter: blur(12px);
 }
-.chat-input textarea { min-height: 60px; resize: vertical; border: 0; background: transparent; box-shadow: none; }
+.chat-input textarea { min-height: 48px; resize: vertical; border: 0; background: transparent; box-shadow: none; }
 .chat-input textarea:focus { outline: 0; }
 .image-attachment-grid,
 .uploaded-image-grid,
@@ -2558,7 +2656,19 @@ function escapeHtml(text: string) {
 }
 
 @media (max-width: 640px) {
-  .starter-grid { grid-template-columns: 1fr; }
+  .chat-list--empty { overflow-y: auto; }
+  .chat-starter {
+    align-self: start;
+    gap: var(--space-3);
+    padding: var(--space-2) 0 var(--space-4);
+  }
+  .starter-grid { grid-template-columns: 1fr; gap: var(--space-2); }
+  .starter-grid :deep(.suggestion-card.compact) {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--space-2);
+    padding: 10px;
+  }
+  .starter-grid :deep(.suggestion-card.compact .action) { grid-column: auto; }
   .chat-list { min-height: calc(100dvh - 300px); max-height: calc(100dvh - 300px); padding: var(--space-3); }
   .toolbar-controls {
     display: flex;

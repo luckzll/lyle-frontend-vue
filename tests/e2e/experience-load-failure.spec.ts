@@ -13,6 +13,9 @@ test('Product experience pages distinguish API failures from real empty states',
   await page.route('**/api/agent-tools/reminders**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [] }) })
   })
+  await page.route('**/api/agent-tasks**', async (route) => {
+    await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ message: 'AI 服务暂时不可用' }) })
+  })
 
   await page.route('**/api/experience/**', async (route) => {
     await route.fulfill({

@@ -116,6 +116,7 @@ function toggleGroup(groupId: NavigationGroupId) {
                 class="app-sidebar__badge"
                 :class="{ 'app-sidebar__badge--compact': collapsed }"
                 :aria-label="getNavigationBadgeLabel(item, badgeFor(item))"
+                :title="getNavigationBadgeLabel(item, badgeFor(item))"
               >
                 {{ badgeFor(item) > 99 ? '99+' : badgeFor(item) }}
               </span>

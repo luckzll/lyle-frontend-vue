@@ -356,6 +356,7 @@ export interface ExecutionResultSummary {
   dataScope: string[]
   durationMs?: number | null
   traceRef?: string | null
+  dismissedAt?: string | null
   createdAt: string
 }
 
@@ -363,6 +364,7 @@ export interface ExecutionResultListParams {
   status?: string
   projectId?: number
   automationId?: number
+  attentionOnly?: boolean
   cursor?: string
   limit?: number
 }

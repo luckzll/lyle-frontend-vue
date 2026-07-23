@@ -1,13 +1,25 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 
 test.beforeEach(async ({ page }) => {
+  await page.route(/^https?:\/\/[^/]+\/api\//, (route) => json(route, { message: `Unmocked E2E API: ${route.request().url()}` }, 401))
   await seedAuth(page)
+  await page.route('**/api/runtime-config', (route) => json(route, {
+    authLoginV63Enabled: true, chatWorkspaceDropEnabled: true, chatFolderAttachmentsEnabled: true,
+  }))
   await page.route('**/api/users/me', (route) => json(route, {
     id: '7', username: 'V6 验收用户', role: 'USER', createdAt: '2026-07-16T00:00:00Z',
   }))
+  await page.route('**/api/workbench/workspaces', (route) => json(route, { items: [] }))
+  await page.route('**/api/projects**', (route) => json(route, { items: [] }))
+  await page.route('**/api/agent-tasks?**', (route) => json(route, { items: [] }))
   await page.route('**/api/agent-tools/reminders**', (route) => json(route, { items: [] }))
   await page.route('**/api/experience/confirmations**', (route) => json(route, { items: [] }))
   await page.route('**/api/experience/execution/needs-attention**', (route) => json(route, { items: [] }))
+  await page.route('**/api/experience/execution/results**', (route) => json(route, { items: [], nextCursor: null }))
+  await page.route('**/api/experience/connections/recommended', (route) => json(route, { items: [] }))
+  await page.route('**/api/briefings/today', (route) => json(route, { items: [] }))
+  await page.route('**/api/experience/events', (route) => json(route, { accepted: true }))
+  await page.route('**/api/experience/public-events', (route) => json(route, { accepted: true }))
 })
 
 test('draft, shadow, grant approval and compensation stay in the controlled V6 flow', async ({ page }) => {
