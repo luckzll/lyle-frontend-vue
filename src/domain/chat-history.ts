@@ -1,5 +1,5 @@
 import type { ImageBatchItem, TurnStatusEvent } from '@/api/app'
-import type { ChatMessage } from '@/api/types'
+import type { ChatMessage, ChatUsage } from '@/api/types'
 import type { ChatAttachment } from '@/domain/chat-attachment'
 
 export type RecoveredImageBatch = {
@@ -20,6 +20,7 @@ export type RecoveredChatMessage = {
   statusText?: string
   imageBatch?: RecoveredImageBatch
   attachments?: ChatAttachment[]
+  usage?: ChatUsage
 }
 
 export function historyMessage(item: ChatMessage): RecoveredChatMessage {
@@ -31,7 +32,8 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
     phase: historyTurnPhase(metadata.phase),
     statusText: typeof metadata.statusText === 'string' ? metadata.statusText : undefined,
     imageBatch: historyImageBatch(metadata.imageBatch),
-    attachments: Array.isArray(item.attachments) ? item.attachments : undefined
+    attachments: Array.isArray(item.attachments) ? item.attachments : undefined,
+    usage: historyUsage(metadata.usage)
   }
 }
 
@@ -76,4 +78,17 @@ function historyImageBatch(value: unknown): RecoveredImageBatch | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function historyUsage(value: unknown): ChatUsage | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    promptTokens: Number(value.promptTokens || 0),
+    completionTokens: Number(value.completionTokens || 0),
+    callCount: Number(value.callCount || 0),
+    estimatedCostMicros: Number(value.estimatedCostMicros || 0),
+    measurementSource: ['PROVIDER_REPORTED', 'ESTIMATED', 'PARTIAL_ESTIMATE'].includes(String(value.measurementSource))
+      ? value.measurementSource as ChatUsage['measurementSource']
+      : 'PENDING'
+  }
 }

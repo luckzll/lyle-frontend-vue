@@ -17,6 +17,8 @@ npm run dev
 npx vue-tsc --noEmit
 npm run test:unit
 npm run build
+npm run test:e2e
+npm run test:e2e:v64-real
 npx playwright test tests/e2e/v42-dashboard-shell.spec.ts
 npx playwright test tests/e2e/v42-core-workflows.spec.ts
 npx playwright test tests/e2e/v42-execution-automation.spec.ts
@@ -27,6 +29,11 @@ npx playwright test tests/e2e/v42-core-accessibility.spec.ts
 ```
 
 端到端测试使用 Playwright。V4.2 的 mock 契约测试不依赖本地后端，覆盖首次巡检、自然语言启用自动化、Chat 候选任务、连接并行诊断、执行确认、失败重试、移动端关键动作、任务韧性和视觉基线；原有集成测试仍需 Java 与 Python 服务可用。
+
+`npm run test:e2e:v64-real` 是 V6.4 发布门禁：脚本会创建隔离的
+MySQL/PostgreSQL 数据库、执行 Flyway/Alembic 全链迁移并启动三端真实服务，
+验证双用户的会话轮换与重放撤销、改密、会话/附件/知识库/记忆/待办/Mission/
+用量隔离、额度执行和管理员权限。测试结束会清理临时数据库、服务进程和附件文件。
 
 ## 工程边界
 

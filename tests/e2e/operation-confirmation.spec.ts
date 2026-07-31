@@ -1,5 +1,7 @@
 import { expect, type Page, test } from '@playwright/test'
 
+test.skip(process.env.V6_3_REAL_E2E !== '1', 'requires the V6.3 real backend stack')
+
 test('confirms operation idempotently and prevents rejected operation confirmation', async ({ page }) => {
   test.setTimeout(120000)
   const suffix = Date.now()

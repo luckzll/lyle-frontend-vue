@@ -256,6 +256,15 @@ export interface ChatResponse {
   executionSuggestions?: ExecutionSuggestionItem[]
   projectContext?: ProjectChatContext
   review: Record<string, unknown>
+  usage?: ChatUsage
+}
+
+export interface ChatUsage {
+  promptTokens: number
+  completionTokens: number
+  callCount: number
+  estimatedCostMicros: number
+  measurementSource: 'PROVIDER_REPORTED' | 'ESTIMATED' | 'PARTIAL_ESTIMATE' | 'PENDING'
 }
 
 export interface ExecutionSuggestionItem {
@@ -455,11 +464,16 @@ export interface User {
   id: string
   username: string
   role: string
+  status?: 'ACTIVE' | 'DISABLED' | string
+  lastLoginAt?: string | null
 }
 
 export interface AuthResponse {
   user: User
-  token: string
+  accessToken: string
+  expiresInSeconds: number
+  /** Temporary response compatibility for staged V6.3 backends. */
+  token?: string
 }
 
 export interface ImageUploadResponse {

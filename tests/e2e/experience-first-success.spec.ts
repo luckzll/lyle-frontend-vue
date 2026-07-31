@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+test.skip(process.env.V6_3_REAL_E2E !== '1', 'requires the V6.3 real backend stack')
+
 test('Product experience lets a first-time user run an inspection and enable a result template', async ({ page }) => {
   test.setTimeout(90_000)
   const username = `experience_first_success_${Date.now()}`

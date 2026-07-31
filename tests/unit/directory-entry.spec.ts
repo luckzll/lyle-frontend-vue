@@ -45,6 +45,21 @@ describe('directory entry scanning', () => {
     expect(result.skipped).toEqual([expect.objectContaining({ name: '.secret', reason: 'hidden' })])
   })
 
+  it('reports an empty dropped folder instead of failing silently', async () => {
+    const root = directoryEntry('空资料', [[]])
+    const dataTransfer = {
+      items: [{ kind: 'file', getAsEntry: () => root, getAsFile: () => null }],
+      files: []
+    } as unknown as DataTransfer
+
+    const result = await scanDataTransfer(dataTransfer)
+
+    expect(result.files).toHaveLength(0)
+    expect(result.skipped).toEqual([
+      expect.objectContaining({ name: '空资料', relativePath: '空资料', reason: 'empty_directory' })
+    ])
+  })
+
   it('groups picker files and keeps stable natural order', () => {
     const ten = new File(['10'], '10.txt', { type: 'text/plain' })
     const two = new File(['2'], '2.txt', { type: 'text/plain' })
@@ -105,7 +120,17 @@ describe('directory entry scanning', () => {
     expect(result.skipped).toContainEqual(expect.objectContaining({ reason: 'scan_limit', count: 1, isMinimum: true }))
   })
 
-  it.each(['../secret.txt', '/tmp/file.txt', 'C:/tmp/file.txt', '资料//file.txt', '资料/./file.txt'])('rejects unsafe path %s', (path) => {
+  it.each([
+    '../secret.txt',
+    '/tmp/file.txt',
+    'C:/tmp/file.txt',
+    'file:/etc/passwd',
+    'file:etc/passwd',
+    'jar:file:/etc/passwd',
+    ' https:/example.test/file.txt',
+    '资料//file.txt',
+    '资料/./file.txt'
+  ])('rejects unsafe path %s', (path) => {
     expect(normalizeRelativePath(path)).toBeNull()
   })
 })

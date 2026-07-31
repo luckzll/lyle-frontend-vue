@@ -3,6 +3,8 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
+test.skip(process.env.V6_3_REAL_E2E !== '1', 'requires the V6.3 real backend stack')
+
 test('registers, uploads knowledge, debugs RAG, and chats with sources', async ({ page }) => {
   test.setTimeout(120_000)
   const suffix = Date.now()

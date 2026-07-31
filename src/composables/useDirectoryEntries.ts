@@ -115,8 +115,8 @@ export function scanFlatFiles(files: File[], source: Extract<AttachmentSource, '
 
 export function normalizeRelativePath(raw: string): string | null {
   const value = raw.normalize('NFC').replace(/\\/g, '/')
-  if (!value || value.length > DIRECTORY_SCAN_LIMITS.maxPathLength || value.startsWith('/') || value.startsWith('//')) return null
-  if (/^[a-zA-Z]:/.test(value) || /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) return null
+  if (!value || value !== value.trim() || value.length > DIRECTORY_SCAN_LIMITS.maxPathLength || value.startsWith('/') || value.startsWith('//')) return null
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value)) return null
   if (/[\u0000-\u001f\u007f]/.test(value)) return null
   const segments = value.split('/')
   if (segments.some((segment) => !segment || segment === '.' || segment === '..' || segment.length > DIRECTORY_SCAN_LIMITS.maxSegmentLength)) return null
@@ -174,6 +174,10 @@ async function readEntry(
     children = await readBoundedEntries(entry.createReader(), ctx, entry.name, relativePath)
   } catch {
     if (!ctx.signal?.aborted && !ctx.truncated) ctx.skipped.push({ name: entry.name, relativePath, reason: 'read_error' })
+    return
+  }
+  if (!children.length && !ctx.signal?.aborted && !ctx.truncated) {
+    ctx.skipped.push({ name: entry.name, relativePath, reason: 'empty_directory' })
     return
   }
   children.sort((a, b) => naturalOrder.compare(a.name, b.name))

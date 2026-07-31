@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+test.skip(process.env.V6_3_REAL_E2E !== '1', 'requires the V6.3 real backend stack')
+
 test('covers V3 project plan controls and connector states', async ({ page }) => {
   test.setTimeout(120000)
   const suffix = Date.now()

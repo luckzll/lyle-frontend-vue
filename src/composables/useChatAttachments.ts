@@ -119,6 +119,13 @@ export function useChatAttachments(options: {
   }
 
   async function uploadQueue(drafts: ChatAttachmentDraft[]) {
+    if (!drafts.length) {
+      const skippedCount = directorySkippedCount(skipped.value)
+      announcement.value = skippedCount
+        ? `未添加附件，已跳过 ${skippedCount} 个文件或条目。`
+        : '未添加附件。'
+      return
+    }
     let cursor = 0
     const workers = Array.from({ length: Math.min(CHAT_ATTACHMENT_LIMITS.uploadConcurrency, drafts.length) }, async () => {
       while (cursor < drafts.length) {

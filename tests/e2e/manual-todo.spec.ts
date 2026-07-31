@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+test.skip(process.env.V6_3_REAL_E2E !== '1', 'requires the V6.3 real backend stack')
+
 test('user can create a todo directly from the task page', async ({ page }) => {
   const username = `manual_todo_${Date.now()}`
   const title = `手动待办-${Date.now()}`

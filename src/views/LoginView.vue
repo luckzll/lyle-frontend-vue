@@ -82,7 +82,11 @@ async function submit() {
   try {
     const request = mode.value === 'login' ? login : register
     const response = await request(username.value.trim(), password.value)
-    setAuth(response.data.user, response.data.token)
+    setAuth(
+      response.data.user,
+      response.data.accessToken || response.data.token || '',
+      response.data.expiresInSeconds
+    )
     void trackProductEvent({
       eventType: 'auth_submit_total',
       page: 'login',

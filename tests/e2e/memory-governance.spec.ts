@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+test.skip(process.env.V6_3_REAL_E2E !== '1', 'requires the V6.3 real backend stack')
+
 test('shows confirmed low-confidence memory in governance center', async ({ page }) => {
   const suffix = Date.now()
   const username = `memory_e2e_${suffix}`

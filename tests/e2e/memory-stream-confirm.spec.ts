@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+test.skip(process.env.V6_3_REAL_E2E !== '1', 'requires the V6.3 real backend stack')
+
 test('streamed explicit memory becomes a confirmable candidate with profile evidence', async ({ page }) => {
   test.setTimeout(120_000)
   const username = `memory_stream_${Date.now()}`

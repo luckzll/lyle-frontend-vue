@@ -333,6 +333,49 @@ test('nested folder drop preserves top-level file and folder delivery order', as
   expect(multipartBodies.some((body) => body.includes('资料/一级/10.txt'))).toBe(true)
 })
 
+test('empty folder drop shows a skip summary and live announcement', async ({ page }) => {
+  let uploads = 0
+  await mockChatApis(page, async (route, pathname) => {
+    if (pathname === '/api/chat/attachments' && route.request().method() === 'POST') {
+      uploads += 1
+    }
+    return false
+  })
+
+  await page.goto('/')
+  await expect(page.getByTestId('chat-input')).toBeVisible()
+  await page.evaluate(() => {
+    const emptyDirectory = {
+      isFile: false,
+      isDirectory: true,
+      name: '空资料',
+      createReader: () => ({
+        readEntries: (success: (entries: unknown[]) => void) => success([])
+      })
+    }
+    const dataTransfer = {
+      types: ['Files'],
+      files: [],
+      items: [{ kind: 'file', getAsEntry: () => emptyDirectory, getAsFile: () => null }]
+    }
+    const dispatch = (type: string) => {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+      document.querySelector('.chat-composer')?.dispatchEvent(event)
+    }
+    dispatch('dragenter')
+    dispatch('drop')
+  })
+
+  const skipSummary = page.locator('.skip-summary')
+  await expect(skipSummary).toBeVisible()
+  await expect(skipSummary.locator(':scope > summary')).toHaveText('跳过 1 个文件或条目')
+  await skipSummary.locator(':scope > summary').click()
+  await expect(skipSummary).toContainText('1 个空文件夹')
+  await expect(page.locator('.sr-announcement')).toHaveText('未添加附件，已跳过 1 个文件或条目。')
+  expect(uploads).toBe(0)
+})
+
 test('sent attachment metadata is restored from history after refresh', async ({ page }) => {
   const suffix = Date.now()
   const attachmentName = `refresh-${suffix}.txt`
@@ -428,10 +471,18 @@ async function mockChatApis(
   page: Page,
   custom: (route: Route, pathname: string) => Promise<boolean | void>
 ) {
+  const tokenPayload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')
   await page.route(/^https?:\/\/[^/]+\/api\//, async (route) => {
     const pathname = new URL(route.request().url()).pathname
     const handled = await custom(route, pathname)
     if (handled !== false) return
+    if (pathname === '/api/auth/refresh') {
+      return json(route, {
+        user: { id: 'v62-user', username: 'V6.2 用户', role: 'USER' },
+        accessToken: `header.${tokenPayload}.signature`,
+        expiresInSeconds: 3600
+      })
+    }
     if (pathname === '/api/conversations' && route.request().method() === 'POST') {
       return json(route, { id: '100', title: 'V6.2 会话', createdAt: '2026-07-21T00:00:00Z', updatedAt: '2026-07-21T00:00:00Z' })
     }

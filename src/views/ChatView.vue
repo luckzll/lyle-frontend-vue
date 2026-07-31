@@ -34,7 +34,7 @@ import {
   type ImageItemEvent,
   type TurnStatusEvent
 } from '@/api/app'
-import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, Conversation, KnowledgeBase, MemoryItem, MemorySnapshot, PendingOperationItem, ProjectChatContext, ToolResult, ExecutionSuggestionItem } from '@/api/types'
+import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, ChatUsage, Conversation, KnowledgeBase, MemoryItem, MemorySnapshot, PendingOperationItem, ProjectChatContext, ToolResult, ExecutionSuggestionItem } from '@/api/types'
 import ContextPanel from '@/components/layout/ContextPanel.vue'
 import ExecutionTimeline from '@/components/domain/ExecutionTimeline.vue'
 import SuggestionCard from '@/components/domain/SuggestionCard.vue'
@@ -49,6 +49,7 @@ import { scanDataTransfer, scanFlatFiles, scanPickerFiles } from '@/composables/
 import { useWorkspaceDrop } from '@/composables/useWorkspaceDrop'
 import { useRuntimeFeatures } from '@/composables/useRuntimeFeatures'
 import type { DirectorySkip } from '@/domain/directory-entry'
+import { formatEstimatedCost, formatTokens, measurementLabel } from '@/domain/usage'
 import ChatComposer from '@/components/chat/ChatComposer.vue'
 import MessageAttachments from '@/components/chat/MessageAttachments.vue'
 import WorkspaceDropOverlay from '@/components/chat/WorkspaceDropOverlay.vue'
@@ -96,6 +97,7 @@ interface Message {
   executionSuggestions?: ExecutionSuggestionItem[]
   projectContext?: ProjectChatContext
   review?: Record<string, unknown>
+  usage?: ChatUsage
 }
 
 interface RetryTurnContext {
@@ -657,6 +659,7 @@ async function submit(retryContext?: RetryTurnContext) {
         messages.value[assistantIndex].executionSuggestions = sanitizeExecutionSuggestions(meta.executionSuggestions)
         messages.value[assistantIndex].projectContext = sanitizeProjectContext(meta.projectContext)
         messages.value[assistantIndex].review = sanitizeReview(meta.review)
+        messages.value[assistantIndex].usage = meta.usage
       },
       onTurnStatus: (status) => {
         const target = messages.value[assistantIndex]
@@ -1925,6 +1928,18 @@ function escapeHtml(text: string) {
             <span class="typing-cursor">正在生成回答</span>
           </div>
           <MessageFailureActions v-if="message.phase === 'FAILED' && !loading" @retry="retryFailedMessage(index)" />
+          <details v-if="message.usage?.callCount" class="turn-usage">
+            <summary>
+              本轮 {{ formatTokens((message.usage.promptTokens || 0) + (message.usage.completionTokens || 0)) }} Token
+              · 估算 {{ formatEstimatedCost(message.usage.estimatedCostMicros) }}
+              · {{ message.usage.callCount }} 次 AI 调用
+            </summary>
+            <div>
+              <span>输入 {{ formatTokens(message.usage.promptTokens) }}</span>
+              <span>输出 {{ formatTokens(message.usage.completionTokens) }}</span>
+              <span>{{ measurementLabel(message.usage.measurementSource) }}</span>
+            </div>
+          </details>
         </template>
 
         <div
@@ -2567,6 +2582,14 @@ function escapeHtml(text: string) {
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 35%, transparent);
   animation: turn-pulse 1.4s ease-out infinite;
 }
+.turn-usage {
+  width: fit-content;
+  max-width: min(100%, 620px);
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.turn-usage summary { cursor: pointer; list-style-position: inside; }
+.turn-usage div { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; border-left: 2px solid var(--primary-border); padding-left: 10px; }
 .phase-failed .turn-status-dot { background: var(--danger); animation: none; }
 .image-batch-grid {
   width: min(100%, 760px);

@@ -19,6 +19,7 @@ import {
   PlugZap,
   ShieldCheck,
   SlidersHorizontal,
+  Settings,
   Workflow
 } from '@lucide/vue'
 
@@ -169,6 +170,14 @@ export const navigationGroups: NavigationGroup[] = [
     id: 'system',
     label: '系统',
     items: [
+      {
+        id: 'settings',
+        label: '设置',
+        description: '管理账号安全与 AI 用量',
+        to: '/settings',
+        icon: Settings,
+        match: { routeNames: ['settings', 'usage'] }
+      },
       {
         id: 'connections',
         label: '连接',

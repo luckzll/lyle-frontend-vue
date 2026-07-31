@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+test.skip(process.env.V6_3_REAL_E2E !== '1', 'requires the V6.3 real backend stack')
+
 test('shows execution suggestions and requires an explicit user action', async ({ page }) => {
   const suffix = Date.now()
   const originalIntent = '用 MCP 检查代码，并保存为每天执行的工作流'

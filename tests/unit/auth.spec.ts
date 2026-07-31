@@ -16,6 +16,12 @@ describe('auth token expiry', () => {
       removeItem: (key: string) => values.delete(key),
       clear: () => values.clear()
     })
+    vi.stubGlobal('sessionStorage', {
+      getItem: (key: string) => values.get(`session:${key}`) ?? null,
+      setItem: (key: string, value: string) => values.set(`session:${key}`, value),
+      removeItem: (key: string) => values.delete(`session:${key}`),
+      clear: () => values.clear()
+    })
     localStorage.clear()
   })
 
@@ -26,6 +32,8 @@ describe('auth token expiry', () => {
 
     expect(isAuthTokenExpired(token)).toBe(false)
     expect(hasAuth()).toBe(true)
+    expect(localStorage.getItem('lyle-token')).toBeNull()
+    expect(localStorage.getItem('lyle-user')).toBeNull()
   })
 
   it('clears auth when token is expired', () => {
@@ -44,6 +52,19 @@ describe('auth token expiry', () => {
 
     expect(hasAuth()).toBe(false)
     expect(localStorage.getItem('lyle-token')).toBeNull()
+  })
+
+  it('purges legacy persisted credentials', () => {
+    localStorage.setItem('lyle-token', 'legacy')
+    localStorage.setItem('lyle-user', '{"id":1}')
+
+    setAuth(
+      { id: '1', username: 'lyle', role: 'USER' },
+      jwtWithExp(Math.floor(Date.now() / 1000) + 60)
+    )
+
+    expect(localStorage.getItem('lyle-token')).toBeNull()
+    expect(localStorage.getItem('lyle-user')).toBeNull()
   })
 
   afterEach(() => {

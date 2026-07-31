@@ -6,6 +6,9 @@ const playwrightPort = Number(process.env.PLAYWRIGHT_PORT || new URL(baseURL).po
 
 export default defineConfig({
   testDir: './tests/e2e',
+  testIgnore: process.env.V64_REAL_E2E === '1'
+    ? undefined
+    : /v64-account-usage\.real\.spec\.ts/,
   timeout: 60_000,
   expect: {
     timeout: 15_000
@@ -41,6 +44,7 @@ export default defineConfig({
     timeout: 60_000,
     env: {
       ...process.env,
+      VITE_E2E_LEGACY_AUTH: process.env.VITE_E2E_LEGACY_AUTH ?? 'true',
       VITE_AGENT_TASK_ENABLED: 'true',
       VITE_AGENT_TASK_ENABLED_USERS: '*',
       VITE_MISSION_ENABLED: 'true',

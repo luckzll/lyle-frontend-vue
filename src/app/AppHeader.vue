@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { Bell, Menu, PanelLeftClose, PanelLeftOpen } from '@lucide/vue'
 import type { User } from '@/api/types'
+import AccountMenu from '@/components/layout/AccountMenu.vue'
 
 const props = defineProps<{
   title: string
+  contextLabel: string
   collapsed: boolean
   user: User | null
   reminderCount: number
@@ -12,6 +14,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggleSidebar: []
   openMobileNavigation: []
+  logout: []
 }>()
 </script>
 
@@ -38,7 +41,7 @@ const emit = defineEmits<{
         <Menu :size="21" :stroke-width="1.8" aria-hidden="true" />
       </button>
       <div class="app-header__title-block">
-        <span>个人 AI 工作台</span>
+        <span>{{ contextLabel }}</span>
         <p class="app-header__page-title">{{ title }}</p>
       </div>
     </div>
@@ -55,7 +58,13 @@ const emit = defineEmits<{
           {{ reminderCount > 99 ? '99+' : reminderCount }}
         </span>
       </RouterLink>
-
+      <AccountMenu
+        :user="user"
+        variant="header"
+        side="bottom"
+        align="end"
+        @logout="emit('logout')"
+      />
     </div>
   </header>
 </template>

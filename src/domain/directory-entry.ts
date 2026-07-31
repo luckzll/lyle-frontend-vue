@@ -1,6 +1,6 @@
 import type { IncomingAttachmentFile } from '@/domain/chat-attachment'
 
-export type DirectorySkipReason = 'hidden' | 'system' | 'unsupported' | 'depth' | 'scan_limit' | 'timeout' | 'read_error' | 'count' | 'size' | 'total_size'
+export type DirectorySkipReason = 'hidden' | 'system' | 'unsupported' | 'depth' | 'scan_limit' | 'timeout' | 'read_error' | 'empty_directory' | 'count' | 'size' | 'total_size'
 
 export interface DirectorySkip {
   name: string
@@ -35,6 +35,7 @@ export const DIRECTORY_SKIP_LABELS: Record<DirectorySkipReason, string> = {
   scan_limit: '超过扫描条目限制',
   timeout: '扫描超时',
   read_error: '读取失败',
+  empty_directory: '空文件夹',
   count: '超过数量限制',
   size: '超过单文件大小限制',
   total_size: '超过单轮总量限制'

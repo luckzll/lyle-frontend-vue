@@ -1,9 +1,10 @@
 import axios from 'axios'
-import { clearAuth, getAuthToken } from '@/auth'
+import { clearAuth, getAuthToken, refreshAuth } from '@/auth'
 
 export const http = axios.create({
   baseURL: '/api',
-  timeout: 60000
+  timeout: 60000,
+  withCredentials: true
 })
 
 // Public bootstrap requests must never clear an existing authenticated session.
@@ -23,11 +24,22 @@ http.interceptors.request.use((config) => {
 
 http.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const status = error?.response?.status
-    if (status === 401 && window.location.pathname !== '/login') {
+    const config = error?.config as (typeof error.config & { _authRetry?: boolean }) | undefined
+    const isAuthEndpoint = typeof config?.url === 'string' && config.url.startsWith('/auth/')
+    if (status === 401 && config && !config._authRetry && !isAuthEndpoint) {
+      config._authRetry = true
+      if (await refreshAuth()) {
+        const token = getAuthToken()
+        if (token) config.headers.Authorization = `Bearer ${token}`
+        return http.request(config)
+      }
+    }
+    if (status === 401 && window.location.pathname !== '/login' && !isAuthEndpoint) {
+      const redirect = `${window.location.pathname}${window.location.search}${window.location.hash}`
       clearAuth()
-      window.location.assign('/login')
+      window.location.assign(`/login?redirect=${encodeURIComponent(redirect)}`)
     }
     return Promise.reject(error)
   }

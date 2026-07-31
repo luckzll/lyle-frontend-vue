@@ -78,6 +78,7 @@ export type StreamMeta = {
   executionSuggestions?: ChatResponse['executionSuggestions']
   projectContext?: ChatResponse['projectContext']
   review?: ChatResponse['review']
+  usage?: ChatResponse['usage']
 }
 
 export type SseHandlers = {
@@ -484,6 +485,21 @@ export function changeFragmentStatus(fragmentId: number, status: string) {
 
 export function getMe() {
   return http.get<User>('/users/me')
+}
+
+export interface AuthSessionInfo {
+  createdAt: string
+  lastUsedAt: string
+  expiresAt: string
+  current: boolean
+}
+
+export function getAuthSession() {
+  return http.get<AuthSessionInfo>('/auth/session')
+}
+
+export function changePassword(currentPassword: string, newPassword: string) {
+  return http.post<AuthResponse>('/auth/change-password', { currentPassword, newPassword })
 }
 
 export function getAdminOverview() {

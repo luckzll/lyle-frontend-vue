@@ -1,5 +1,7 @@
 import { expect, type Page, test } from '@playwright/test'
 
+test.skip(process.env.V6_3_REAL_E2E !== '1', 'requires the V6.3 real backend stack')
+
 test('recovers, retries, cancels, and second-confirms V4 workflow runs', async ({ page }) => {
   test.setTimeout(120000)
   const suffix = Date.now()

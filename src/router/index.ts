@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { getCurrentUser, hasAuth } from '@/auth'
+import { getCurrentUser, hasAuth, initializeAuth } from '@/auth'
 import { isAgentTaskFrontendEnabled } from '@/features/agentTask'
 import { isMissionFrontendEnabled } from '@/features/mission'
 import type { NavigationGroupId } from '@/app/navigation'
@@ -414,6 +414,19 @@ const router = createRouter({
       }
     },
     {
+      path: '/settings/usage',
+      name: 'usage',
+      component: () => import('@/views/UsageView.vue'),
+      meta: {
+        title: '设置',
+        navGroup: 'system',
+        icon: 'bar-chart-3',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
       path: '/admin',
       name: 'admin',
       component: () => import('@/views/AdminView.vue'),
@@ -440,7 +453,8 @@ const router = createRouter({
   ]
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
+  await initializeAuth()
   if (to.meta.requiresAuth && !hasAuth()) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }

@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { BellRing } from '@lucide/vue'
-import { clearAuth, getCurrentUser } from '@/auth'
+import { authState, logoutCurrentDevice } from '@/auth'
 import type { User } from '@/api/types'
 import { useExecutionBadgePolling } from '@/composables/useExecutionBadgePolling'
 import { useReminderPolling } from '@/composables/useReminderPolling'
@@ -22,13 +22,21 @@ function initialSidebarState(): boolean {
 
 const route = useRoute()
 const router = useRouter()
-const currentUser = ref<User | null>(getCurrentUser())
+const currentUser = computed<User | null>(() => authState.user)
 const sidebarCollapsed = ref(initialSidebarState())
 const mobileNavigationOpen = ref(false)
 const pageTitle = computed(() => (
   typeof route.meta.title === 'string' && route.meta.title.trim()
     ? route.meta.title
     : 'Lyle AI'
+))
+const pageContext = computed(() => (
+  ['settings', 'usage'].includes(String(route.name || ''))
+    ? '个人 AI 工作台 / 设置'
+    : '个人 AI 工作台'
+))
+const isSettingsRoute = computed(() => (
+  ['settings', 'usage'].includes(String(route.name || ''))
 ))
 
 const {
@@ -60,8 +68,7 @@ function toggleSidebar() {
 }
 
 async function logout() {
-  clearAuth()
-  currentUser.value = null
+  await logoutCurrentDevice()
   mobileNavigationOpen.value = false
   clearReminders()
   clearExecutionAttentionCount()
@@ -80,7 +87,6 @@ watch(
   () => route.fullPath,
   () => {
     mobileNavigationOpen.value = false
-    currentUser.value = getCurrentUser()
     if (currentUser.value) {
       void refreshReminders()
       void refreshExecutionAttentionCount()
@@ -107,14 +113,16 @@ watch(
     <div class="lyle-shell__workspace">
       <AppHeader
         :title="pageTitle"
+        :context-label="pageContext"
         :collapsed="sidebarCollapsed"
         :user="currentUser"
         :reminder-count="reminders.length"
         @toggle-sidebar="toggleSidebar"
         @open-mobile-navigation="mobileNavigationOpen = true"
+        @logout="logout"
       />
 
-      <main class="lyle-shell__main">
+      <main class="lyle-shell__main" :class="{ 'lyle-shell__main--settings': isSettingsRoute }">
         <section v-if="reminders.length > 0" class="lyle-reminder" aria-live="polite">
           <div class="lyle-reminder__message">
             <span class="lyle-reminder__icon" aria-hidden="true">
@@ -166,6 +174,8 @@ watch(
 <style scoped>
 .lyle-shell {
   display: grid;
+  width: 100%;
+  min-width: 0;
   min-height: 100dvh;
   grid-template-columns: var(--lyle-sidebar-width) minmax(0, 1fr);
   background: var(--background);
@@ -187,6 +197,7 @@ watch(
 }
 
 .lyle-shell__workspace {
+  width: 100%;
   min-width: 0;
 }
 
@@ -196,6 +207,10 @@ watch(
   min-height: calc(100dvh - var(--lyle-header-height));
   flex-direction: column;
   padding: var(--lyle-space-6);
+}
+
+.lyle-shell__main--settings {
+  padding: 0;
 }
 
 .lyle-shell__main :deep(.page) {
@@ -288,6 +303,7 @@ watch(
 @media (max-width: 959px) {
   .lyle-shell,
   .lyle-shell--collapsed {
+    width: 100%;
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -298,11 +314,19 @@ watch(
   .lyle-shell__main {
     padding: var(--lyle-space-4);
   }
+
+  .lyle-shell__main.lyle-shell__main--settings {
+    padding: 0;
+  }
 }
 
 @media (max-width: 639px) {
   .lyle-shell__main {
     padding: var(--lyle-space-3);
+  }
+
+  .lyle-shell__main.lyle-shell__main--settings {
+    padding: 0;
   }
 
   .lyle-reminder {
