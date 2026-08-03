@@ -150,6 +150,24 @@ async function fulfillV64Route(route: Route, identity: MockIdentity, month = fal
       current: true
     })
   }
+  if (path === '/billing/account') {
+    return fulfill(route, {
+      status: 'ACTIVE',
+      plan: {
+        code: 'FREE',
+        name: '免费版',
+        status: 'ACTIVE',
+        benefits: ['基础聊天与记忆']
+      },
+      availableCreditMicros: 100_000_000,
+      totalGrantedCreditMicros: 100_000_000,
+      totalConsumedCreditMicros: 0,
+      nextExpiryAt: null,
+      commercialQuotaEnforced: false,
+      settlementMode: 'SHADOW',
+      checkoutEnabled: false
+    })
+  }
   if (path === '/usage/summary') {
     return fulfill(route, {
       period: month ? 'month' : 'today',

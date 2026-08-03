@@ -173,10 +173,10 @@ export const navigationGroups: NavigationGroup[] = [
       {
         id: 'settings',
         label: '设置',
-        description: '管理账号安全与 AI 用量',
+        description: '管理账号、AI 用量与套餐账单',
         to: '/settings',
         icon: Settings,
-        match: { routeNames: ['settings', 'usage'] }
+        match: { routeNames: ['settings', 'usage', 'billing', 'billing-order', 'pricing', 'checkout', 'billing-result'] }
       },
       {
         id: 'connections',

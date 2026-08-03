@@ -332,4 +332,15 @@ onBeforeUnmount(() => {
   opacity: 0;
   transform: translateY(0.25rem) scale(0.98);
 }
+
+@media (max-width: 480px) {
+  .account-menu--header .account-menu__trigger-copy {
+    display: none;
+  }
+
+  .account-menu--header .account-menu__trigger {
+    justify-content: center;
+    padding-inline: 0.25rem;
+  }
+}
 </style>

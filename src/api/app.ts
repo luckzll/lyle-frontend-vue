@@ -82,6 +82,7 @@ export type StreamMeta = {
 }
 
 export type SseHandlers = {
+  onOpen?: () => void
   onDelta: (chunk: string) => void
   onMeta?: (meta: StreamMeta) => void
   onTurnStatus?: (event: TurnStatusEvent) => void
@@ -90,6 +91,16 @@ export type SseHandlers = {
   onImageBatchCompleted?: (event: ImageBatchCompletedEvent) => void
   onError?: (message: string) => void
   onDone?: () => void
+}
+
+export class HttpStreamError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message)
+    this.name = 'HttpStreamError'
+  }
 }
 
 export type TurnStatusEvent = {
@@ -704,9 +715,17 @@ export async function streamMessage(
   })
 
   if (!response.ok || !response.body) {
-    throw new Error(`Chat stream failed: ${response.status}`)
+    let message = `Chat stream failed: ${response.status}`
+    try {
+      const payload = await response.json()
+      message = String(payload?.message || payload?.detail || message)
+    } catch {
+      // Preserve the stable fallback when the server did not return JSON.
+    }
+    throw new HttpStreamError(message, response.status)
   }
 
+  handlers.onOpen?.()
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''

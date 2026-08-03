@@ -1,6 +1,6 @@
 {
   "name": "ai-app-frontend",
-  "version": "6.4.0",
+  "version": "6.5.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -37,6 +37,7 @@
     "@playwright/test": "^1.57.0",
     "@tailwindcss/vite": "^4.3.2",
     "lighthouse": "^13.4.0",
+    "postcss": "^8.5.23",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10",
     "vue-tsc": "^2.2.0"

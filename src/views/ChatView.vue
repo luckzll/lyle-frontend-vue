@@ -21,6 +21,7 @@ import {
   saveStructuredMemory,
   rejectPendingOperation,
   streamMessage,
+  HttpStreamError,
   trackEffectiveProgressAction,
   trackProductEvent,
   changeStructuredMemoryStatus,
@@ -125,6 +126,7 @@ const initializing = ref(true)
 const debugControlsEnabled = computed(() => route.query.debug === '1')
 const showDebug = ref(debugControlsEnabled.value)
 const error = ref('')
+const commercialQuotaError = ref(false)
 const conversationId = ref('')
 const ACTIVE_CONVERSATION_STORAGE_KEY = 'lyle.chat.active-conversation'
 const editingTitle = ref(false)
@@ -593,11 +595,10 @@ async function submit(retryContext?: RetryTurnContext) {
       status: 'succeeded',
       itemCount: attachmentIds.length
     }).catch(() => undefined)
-    input.value = ''
-    commitReadyAttachments()
   }
   loading.value = true
   error.value = ''
+  commercialQuotaError.value = false
   streamController.value = new AbortController()
 
   let assistantIndex = retryContext?.assistantIndex ?? -1
@@ -639,6 +640,12 @@ async function submit(retryContext?: RetryTurnContext) {
       attachmentIds,
       retry: Boolean(retryContext)
     }, {
+      onOpen: () => {
+        if (!retryContext) {
+          input.value = ''
+          commitReadyAttachments()
+        }
+      },
       onDelta: (chunk) => {
         messages.value[assistantIndex].content += chunk
         nextTick(() => {
@@ -706,6 +713,14 @@ async function submit(retryContext?: RetryTurnContext) {
     await refreshConversations()
     await refreshBrief()
   } catch (exception) {
+    if (exception instanceof HttpStreamError && exception.status === 402) {
+      commercialQuotaError.value = true
+      error.value = ''
+      if (!retryContext && assistantIndex > 0) {
+        messages.value.splice(assistantIndex - 1, 2)
+      }
+      return
+    }
     if (exception instanceof DOMException && exception.name === 'AbortError') {
       if (assistantIndex >= 0) {
         messages.value[assistantIndex].content ||= '已停止生成。'
@@ -1846,6 +1861,14 @@ function escapeHtml(text: string) {
     </div>
 
     <p v-if="error" class="alert danger">{{ error }}</p>
+    <section v-if="commercialQuotaError" class="commercial-quota-card" role="alert">
+      <div>
+        <strong>当前 AI 额度不足</strong>
+        <p>输入和附件草稿已保留。购买完成后请返回并主动重新发送，本任务不会自动执行。</p>
+      </div>
+      <RouterLink :to="{ path: '/pricing', query: { returnTo: route.fullPath } }">升级套餐或购买额度</RouterLink>
+      <button type="button" @click="commercialQuotaError = false">稍后再试</button>
+    </section>
     <p v-if="briefError" class="alert danger">{{ briefError }}</p>
 
     <div class="chat-workspace" :class="{ 'context-closed': !showContextPanel }">
@@ -2661,6 +2684,34 @@ function escapeHtml(text: string) {
 .regenerate-button { display: inline-flex; align-items: center; gap: 6px; }
 .conversation-title-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .title-editor { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; gap: var(--space-2); margin-top: var(--space-2); }
+.commercial-quota-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-lg);
+  background: var(--danger-soft);
+  padding: var(--space-3) var(--space-4);
+}
+.commercial-quota-card strong { color: var(--danger-strong); }
+.commercial-quota-card p { margin: 3px 0 0; color: var(--muted-foreground); font-size: 11px; }
+.commercial-quota-card a,
+.commercial-quota-card button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  color: white;
+  padding: 0 var(--space-3);
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.commercial-quota-card button { border: 1px solid var(--border); background: var(--surface); color: var(--foreground); }
 
 @media (max-width: 1024px) {
   .toolbar {
@@ -2679,6 +2730,8 @@ function escapeHtml(text: string) {
 }
 
 @media (max-width: 640px) {
+  .commercial-quota-card { grid-template-columns: 1fr 1fr; }
+  .commercial-quota-card > div { grid-column: 1 / -1; }
   .chat-list--empty { overflow-y: auto; }
   .chat-starter {
     align-self: start;

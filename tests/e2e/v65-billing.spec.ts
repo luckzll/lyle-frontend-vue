@@ -1,0 +1,274 @@
+import { expect, test, type Page, type Route } from '@playwright/test'
+
+const user = {
+  id: 65,
+  username: 'V6.5 验收用户',
+  role: 'USER',
+  status: 'ACTIVE',
+  lastLoginAt: '2026-07-30T09:00:00'
+}
+const token = `header.${Buffer.from(JSON.stringify({
+  sub: '65',
+  exp: Math.floor(Date.now() / 1000) + 3600
+})).toString('base64url')}.signature`
+
+const product = {
+  productCode: 'PRO',
+  productType: 'PLAN',
+  name: 'Pro',
+  description: '适合持续使用 Lyle 的个人用户',
+  priceVersionCode: 'PRO_30D_V1',
+  amount: { currency: 'CNY', payableMinor: 2900, paidMinor: 0, formatted: '¥29.00' },
+  includedCreditMicros: 50_000_000,
+  validityDays: 30,
+  benefits: ['更高 AI 额度', '完整订单与额度明细']
+}
+const account = {
+  status: 'ACTIVE',
+  plan: { code: 'FREE', name: '免费版', status: 'ACTIVE', benefits: ['基础聊天与记忆'] },
+  availableCreditMicros: 100_000_000,
+  totalGrantedCreditMicros: 100_000_000,
+  totalConsumedCreditMicros: 0,
+  nextExpiryAt: null,
+  commercialQuotaEnforced: true,
+  settlementMode: 'ACTIVE',
+  checkoutEnabled: true
+}
+const order = {
+  orderNo: 'L202607300001',
+  status: 'CREATED',
+  orderType: 'NEW_PURCHASE',
+  productCode: product.productCode,
+  priceVersionCode: product.priceVersionCode,
+  product,
+  amount: product.amount,
+  paymentNo: null,
+  paymentStatus: null,
+  paymentProvider: null,
+  refundStatus: null,
+  expiresAt: '2026-07-30T10:30:00',
+  paidAt: null,
+  fulfilledAt: null,
+  createdAt: '2026-07-30T10:00:00'
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(({ token, user }) => {
+    localStorage.setItem('lyle-token', token)
+    localStorage.setItem('lyle-user', JSON.stringify(user))
+  }, { token, user })
+})
+
+test('V6.5 uses server price snapshots and only completes after FULFILLED', async ({ page }) => {
+  let createdPayload: Record<string, unknown> | null = null
+  let statusCalls = 0
+  await mockBillingApi(page, async (route, path) => {
+    if (path === '/billing/orders' && route.request().method() === 'POST') {
+      createdPayload = route.request().postDataJSON()
+      return fulfill(route, order)
+    }
+    if (path === `/billing/orders/${order.orderNo}/checkout`) {
+      return fulfill(route, {
+        orderNo: order.orderNo,
+        orderStatus: 'PENDING_PAYMENT',
+        paymentNo: 'P202607300001',
+        paymentStatus: 'PENDING',
+        provider: 'MOCK',
+        checkoutType: 'SANDBOX',
+        action: null,
+        expiresAt: order.expiresAt,
+        sandbox: true
+      })
+    }
+    if (path === `/billing/orders/${order.orderNo}/status`) {
+      statusCalls += 1
+      return fulfill(route, statusCalls >= 2
+        ? { ...order, status: 'FULFILLED', paymentNo: 'P202607300001', paymentStatus: 'SUCCEEDED', fulfilledAt: '2026-07-30T10:01:00' }
+        : { ...order, status: 'FULFILLING', paymentNo: 'P202607300001', paymentStatus: 'SUCCEEDED', paidAt: '2026-07-30T10:00:30' })
+    }
+    if (path === `/billing/orders/${order.orderNo}`) return fulfill(route, order)
+    return false
+  })
+
+  await page.goto('/pricing?returnTo=/tasks')
+  await expect(page.getByText('¥29.00', { exact: true })).toBeVisible()
+  await expect(page.getByText('50 AI 额度', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '升级到 Pro' }).click()
+  await expect(page).toHaveURL(new RegExp(`/checkout/${order.orderNo}`))
+  expect(createdPayload).toMatchObject({
+    priceVersionCode: 'PRO_30D_V1',
+    purchaseIntent: 'NEW_PURCHASE'
+  })
+  expect(String(createdPayload?.clientRequestId)).toHaveLength(36)
+  await expect(page.getByText('开发沙箱', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '我已完成支付' }).click()
+  await expect(page).toHaveURL(new RegExp(`/billing/result/${order.orderNo}`))
+  await expect(page.getByRole('heading', { name: '权益已到账' })).toBeVisible()
+  await expect(page.getByRole('link', { name: '返回刚才的任务' })).toHaveAttribute('href', '/tasks')
+})
+
+test('V6.5 billing dashboard keeps credit, order and money language separate on mobile', async ({ page }) => {
+  await mockBillingApi(page)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/settings/billing')
+
+  await expect(page.getByRole('heading', { name: '套餐与账单' })).toBeVisible()
+  await expect(page.getByText('免费版', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('100', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('免费额度到账', { exact: true })).toBeVisible()
+  await expect(page.getByText('¥29.00', { exact: true })).toBeVisible()
+
+  const overflow = await page.evaluate(() => ({
+    document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    body: document.body.scrollWidth - document.body.clientWidth
+  }))
+  expect(overflow.document).toBeLessThanOrEqual(1)
+  expect(overflow.body).toBeLessThanOrEqual(1)
+  await expectUsableWidth(page, '.lyle-shell', 388)
+  await expectUsableWidth(page, '.settings-frame', 360)
+  await expectUsableWidth(page, '.billing-page', 340)
+})
+
+test('V6.5 core commercial pages remain usable at 390px', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await mockBillingApi(page, async (route, path) => {
+    if (path === `/billing/orders/${order.orderNo}/checkout`) {
+      return fulfill(route, {
+        orderNo: order.orderNo,
+        orderStatus: 'PENDING_PAYMENT',
+        paymentNo: 'P202607300001',
+        paymentStatus: 'PENDING',
+        provider: 'MOCK',
+        checkoutType: 'SANDBOX',
+        action: null,
+        expiresAt: order.expiresAt,
+        sandbox: true
+      })
+    }
+    if (path === `/billing/orders/${order.orderNo}/status`) {
+      return fulfill(route, {
+        ...order,
+        status: 'FULFILLED',
+        paymentNo: 'P202607300001',
+        paymentStatus: 'SUCCEEDED',
+        paidAt: '2026-07-30T10:00:30',
+        fulfilledAt: '2026-07-30T10:01:00'
+      })
+    }
+    return false
+  })
+
+  const pages = [
+    { path: '/pricing', selector: '.pricing-page', heading: '选择适合你的 Lyle' },
+    { path: `/checkout/${order.orderNo}`, selector: '.checkout-page', heading: 'Pro' },
+    { path: `/billing/result/${order.orderNo}`, selector: '.result-card', heading: '权益已到账' },
+    { path: '/settings/billing', selector: '.billing-page', heading: '套餐与账单' },
+    { path: `/settings/billing/orders/${order.orderNo}`, selector: '.order-page', heading: 'Pro' }
+  ]
+
+  for (const target of pages) {
+    await page.goto(target.path)
+    await expect(page.getByRole('heading', { name: target.heading, exact: true }).first()).toBeVisible()
+    await expectUsableWidth(page, target.selector, 340)
+    await expectUsableWidth(page, '.app-header', 388)
+  }
+})
+
+test('V6.5 pay later keeps the order open and returns to billing', async ({ page }) => {
+  let closeCalls = 0
+  await mockBillingApi(page, async (route, path) => {
+    if (path === `/billing/orders/${order.orderNo}/checkout`) {
+      return fulfill(route, {
+        orderNo: order.orderNo,
+        orderStatus: 'PENDING_PAYMENT',
+        paymentNo: 'P202607300001',
+        paymentStatus: 'PENDING',
+        provider: 'MOCK',
+        checkoutType: 'SANDBOX',
+        action: null,
+        expiresAt: order.expiresAt,
+        sandbox: true
+      })
+    }
+    if (path === `/billing/orders/${order.orderNo}/close`) {
+      closeCalls += 1
+      return fulfill(route, { ...order, status: 'CLOSED' })
+    }
+    return false
+  })
+
+  await page.goto(`/checkout/${order.orderNo}`)
+  await page.getByRole('button', { name: '稍后支付' }).click()
+  await expect(page).toHaveURL(/\/settings\/billing$/)
+  expect(closeCalls).toBe(0)
+  await expect(page.getByRole('heading', { name: '套餐与账单' })).toBeVisible()
+})
+
+test('V6.5 order detail localizes purchase intent and payment provider', async ({ page }) => {
+  await mockBillingApi(page, async (route, path) => {
+    if (path === `/billing/orders/${order.orderNo}`) {
+      return fulfill(route, { ...order, paymentProvider: 'MOCK' })
+    }
+    return false
+  })
+
+  await page.goto(`/settings/billing/orders/${order.orderNo}`)
+  await expect(page.getByText('新购', { exact: true })).toBeVisible()
+  await expect(page.getByText('开发沙箱', { exact: true })).toBeVisible()
+  await expect(page.getByText('NEW_PURCHASE', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('MOCK', { exact: true })).toHaveCount(0)
+})
+
+async function expectUsableWidth(page: Page, selector: string, minimumWidth: number) {
+  const geometry = await page.locator(selector).first().evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return {
+      width: rect.width,
+      left: rect.left,
+      right: rect.right,
+      viewport: window.innerWidth
+    }
+  })
+  expect(geometry.width).toBeGreaterThanOrEqual(minimumWidth)
+  expect(geometry.left).toBeGreaterThanOrEqual(-1)
+  expect(geometry.right).toBeLessThanOrEqual(geometry.viewport + 1)
+}
+
+async function mockBillingApi(
+  page: Page,
+  override?: (route: Route, path: string) => Promise<boolean | void>
+) {
+  await page.route(/^https?:\/\/[^/]+\/api\//, async (route) => {
+    const path = new URL(route.request().url()).pathname.replace(/^\/api/, '')
+    if (override && await override(route, path) !== false) return
+    if (path === '/runtime-config') return fulfill(route, {})
+    if (path === '/users/me') return fulfill(route, user)
+    if (path === '/billing/catalog') return fulfill(route, [product])
+    if (path === '/billing/account') return fulfill(route, account)
+    if (path === '/billing/account/ledger') {
+      return fulfill(route, [{
+        entryType: 'FREE_GRANT',
+        direction: 'CREDIT',
+        creditMicros: 100_000_000,
+        balanceAfterMicros: 100_000_000,
+        sourceType: 'FREE_CYCLE',
+        sourceId: 'WELCOME',
+        occurredAt: '2026-07-30T09:00:00',
+        expiresAt: null,
+        metadata: {}
+      }])
+    }
+    if (path === '/billing/orders') return fulfill(route, [{ ...order, status: 'FULFILLED', paymentStatus: 'SUCCEEDED' }])
+    if (path === '/billing/refunds') return fulfill(route, [])
+    if (path === `/billing/orders/${order.orderNo}`) return fulfill(route, order)
+    return fulfill(route, { items: [] })
+  })
+}
+
+async function fulfill(route: Route, body: unknown, status = 200) {
+  await route.fulfill({
+    status,
+    contentType: 'application/json',
+    body: JSON.stringify(body)
+  })
+}

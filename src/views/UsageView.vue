@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Info } from '@lucide/vue'
+import { CreditCard, Info } from '@lucide/vue'
+import { getBillingAccount, type BillingAccount } from '@/api/billing'
 import {
   getUsageByTask,
   getUsagePolicy,
@@ -22,6 +23,7 @@ import UsagePolicyForm from '@/components/usage/UsagePolicyForm.vue'
 import UsageSummaryCards from '@/components/usage/UsageSummaryCards.vue'
 import UsageTrend from '@/components/usage/UsageTrend.vue'
 import { useToast } from '@/composables/useToast'
+import { formatCredits } from '@/domain/billing'
 
 const period = ref<UsagePeriod>('today')
 const summary = ref<UsageSummary | null>(null)
@@ -32,6 +34,7 @@ const policy = ref<UsagePolicy | null>(null)
 const loading = ref(true)
 const moduleErrors = ref<string[]>([])
 const savingPolicy = ref(false)
+const billingAccount = ref<BillingAccount | null>(null)
 const { show } = useToast()
 const periodTabs: UsagePeriod[] = ['today', 'month']
 
@@ -49,12 +52,13 @@ watch(period, () => {
 async function loadUsage() {
   loading.value = true
   moduleErrors.value = []
-  const [summaryResult, taskResult, trendResult, turnsResult, policyResult] = await Promise.allSettled([
+  const [summaryResult, taskResult, trendResult, turnsResult, policyResult, billingResult] = await Promise.allSettled([
     getUsageSummary(period.value),
     getUsageByTask(period.value),
     getUsageTrend(period.value),
     getUsageTurns(period.value, 20),
-    getUsagePolicy()
+    getUsagePolicy(),
+    getBillingAccount()
   ])
   if (summaryResult.status === 'fulfilled') summary.value = summaryResult.value.data
   else moduleErrors.value.push('汇总')
@@ -66,6 +70,13 @@ async function loadUsage() {
   else moduleErrors.value.push('最近消耗')
   if (policyResult.status === 'fulfilled') policy.value = policyResult.value.data
   else moduleErrors.value.push('额度')
+  if (
+    billingResult.status === 'fulfilled'
+    && billingResult.value.data
+    && typeof billingResult.value.data.plan?.name === 'string'
+  ) {
+    billingAccount.value = billingResult.value.data
+  }
   loading.value = false
 }
 
@@ -153,6 +164,12 @@ async function savePolicy(payload: {
           <button type="button" @click="loadUsage">重试</button>
         </p>
 
+        <RouterLink v-if="billingAccount" class="billing-summary-link" to="/settings/billing">
+          <CreditCard :size="17" aria-hidden="true" />
+          <span><strong>{{ billingAccount.plan.name }}</strong> · 可用 {{ formatCredits(billingAccount.availableCreditMicros) }} AI 额度</span>
+          <small>查看套餐与账单</small>
+        </RouterLink>
+
         <UsageSummaryCards :summary="summary" :policy="policy" :period="period" :loading="loading" />
 
         <div class="usage-overview">
@@ -182,6 +199,10 @@ async function savePolicy(payload: {
 .period-switch button + button { border-left: 1px solid var(--border); }
 .period-switch button[aria-selected='true'] { background: var(--primary-soft); color: var(--primary); }
 .usage-period-panel { display: grid; gap: 11px; }
+.billing-summary-link { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted-foreground); padding: 10px 12px; font-size: 11px; }
+.billing-summary-link svg { color: var(--primary); }
+.billing-summary-link strong { color: var(--foreground); }
+.billing-summary-link small { color: var(--primary); font-weight: 700; }
 .usage-overview { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, 1fr); gap: 14px; }
 .usage-error { display: flex; align-items: center; gap: 8px; margin: 0; border: 1px solid var(--warning-border); border-radius: 8px; background: var(--warning-soft); color: var(--warning-strong); padding: 9px 12px; font-size: 12px; }
 .usage-error button { margin-left: auto; border: 0; background: transparent; color: inherit; padding: 0; font-size: 12px; font-weight: 700; }

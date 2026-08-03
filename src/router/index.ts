@@ -401,6 +401,45 @@ const router = createRouter({
       }
     },
     {
+      path: '/pricing',
+      name: 'pricing',
+      component: () => import('@/views/PricingView.vue'),
+      meta: {
+        title: '套餐与定价',
+        navGroup: 'system',
+        icon: 'credit-card',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/checkout/:orderNo',
+      name: 'checkout',
+      component: () => import('@/views/CheckoutView.vue'),
+      meta: {
+        title: '收银台',
+        navGroup: 'system',
+        icon: 'credit-card',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/billing/result/:orderNo',
+      name: 'billing-result',
+      component: () => import('@/views/BillingResultView.vue'),
+      meta: {
+        title: '支付结果',
+        navGroup: 'system',
+        icon: 'badge-check',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
       path: '/settings',
       name: 'settings',
       component: () => import('@/views/SettingsView.vue'),
@@ -421,6 +460,32 @@ const router = createRouter({
         title: '设置',
         navGroup: 'system',
         icon: 'bar-chart-3',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/settings/billing',
+      name: 'billing',
+      component: () => import('@/views/BillingView.vue'),
+      meta: {
+        title: '套餐与账单',
+        navGroup: 'system',
+        icon: 'wallet-cards',
+        requiresAuth: true,
+        requiresAdmin: false,
+        layout: 'default'
+      }
+    },
+    {
+      path: '/settings/billing/orders/:orderNo',
+      name: 'billing-order',
+      component: () => import('@/views/BillingOrderDetailView.vue'),
+      meta: {
+        title: '订单详情',
+        navGroup: 'system',
+        icon: 'receipt-text',
         requiresAuth: true,
         requiresAdmin: false,
         layout: 'default'

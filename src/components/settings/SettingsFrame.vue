@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BarChart3, ShieldCheck } from '@lucide/vue'
+import { BarChart3, ShieldCheck, WalletCards } from '@lucide/vue'
 </script>
 
 <template>
@@ -14,6 +14,10 @@ import { BarChart3, ShieldCheck } from '@lucide/vue'
         <RouterLink to="/settings/usage">
           <BarChart3 :size="18" :stroke-width="1.8" aria-hidden="true" />
           <span>AI 用量</span>
+        </RouterLink>
+        <RouterLink to="/settings/billing">
+          <WalletCards :size="18" :stroke-width="1.8" aria-hidden="true" />
+          <span>套餐与账单</span>
         </RouterLink>
       </nav>
     </aside>
@@ -106,7 +110,7 @@ import { BarChart3, ShieldCheck } from '@lucide/vue'
     margin-bottom: 12px;
   }
   .settings-frame__nav nav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .settings-frame__nav a {
     justify-content: center;
