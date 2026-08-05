@@ -27,10 +27,11 @@ const timeline = computed(() => {
     { label: '权益已发放', time: order.value.fulfilledAt, done: Boolean(order.value.fulfilledAt) }
   ]
   if (order.value.refundStatus) {
+    const succeeded = order.value.refundStatus === 'SUCCEEDED'
     items.push({
-      label: order.value.refundStatus === 'SUCCEEDED' ? '退款已完成' : '退款处理中',
-      time: undefined,
-      done: order.value.refundStatus === 'SUCCEEDED'
+      label: succeeded ? '退款已完成' : '退款处理中',
+      time: succeeded ? order.value.refundSucceededAt : undefined,
+      done: succeeded
     })
   }
   return items
@@ -83,7 +84,7 @@ async function copyOrderNo() {
             <ol class="timeline">
               <li v-for="item in timeline" :key="item.label" :class="{ done: item.done }">
                 <span aria-hidden="true"></span>
-                <div><strong>{{ item.label }}</strong><small>{{ item.time ? formatBillingTime(item.time) : '等待处理' }}</small></div>
+                <div><strong>{{ item.label }}</strong><small>{{ item.time ? formatBillingTime(item.time) : item.done ? '已完成' : '等待处理' }}</small></div>
               </li>
             </ol>
           </article>

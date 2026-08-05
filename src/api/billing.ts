@@ -88,6 +88,7 @@ export type BillingOrder = {
   paymentStatus?: string | null
   paymentProvider?: string | null
   refundStatus?: string | null
+  refundSucceededAt?: string | null
   expiresAt: string
   paidAt?: string | null
   fulfilledAt?: string | null

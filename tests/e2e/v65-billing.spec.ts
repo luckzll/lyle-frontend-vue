@@ -46,6 +46,7 @@ const order = {
   paymentStatus: null,
   paymentProvider: null,
   refundStatus: null,
+  refundSucceededAt: null,
   expiresAt: '2026-07-30T10:30:00',
   paidAt: null,
   fulfilledAt: null,
@@ -207,7 +208,13 @@ test('V6.5 pay later keeps the order open and returns to billing', async ({ page
 test('V6.5 order detail localizes purchase intent and payment provider', async ({ page }) => {
   await mockBillingApi(page, async (route, path) => {
     if (path === `/billing/orders/${order.orderNo}`) {
-      return fulfill(route, { ...order, paymentProvider: 'MOCK' })
+      return fulfill(route, {
+        ...order,
+        status: 'REFUNDED',
+        paymentProvider: 'MOCK',
+        refundStatus: 'SUCCEEDED',
+        refundSucceededAt: '2026-07-30T10:02:00'
+      })
     }
     return false
   })
@@ -217,6 +224,9 @@ test('V6.5 order detail localizes purchase intent and payment provider', async (
   await expect(page.getByText('开发沙箱', { exact: true })).toBeVisible()
   await expect(page.getByText('NEW_PURCHASE', { exact: true })).toHaveCount(0)
   await expect(page.getByText('MOCK', { exact: true })).toHaveCount(0)
+  const refundStep = page.locator('.timeline li').filter({ hasText: '退款已完成' })
+  await expect(refundStep).toContainText('2026/07/30 10:02')
+  await expect(refundStep).not.toContainText('等待处理')
 })
 
 async function expectUsableWidth(page: Page, selector: string, minimumWidth: number) {
