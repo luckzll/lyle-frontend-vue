@@ -39,9 +39,10 @@ function isCurrent(product: CatalogProduct) {
 }
 
 function cta(product: CatalogProduct) {
-  if (pendingOrder(product)) return '继续支付'
-  if (isCurrent(product)) return store.account?.plan.code === 'FREE' ? '当前套餐' : '续期套餐'
+  if (isCurrent(product) && store.account?.plan.code === 'FREE') return '当前套餐'
   if (!store.account?.checkoutEnabled) return '支付暂未开放'
+  if (pendingOrder(product)) return '继续支付'
+  if (isCurrent(product)) return '续期套餐'
   if (product.productType === 'CREDIT_PACK') return '购买额度包'
   return store.account?.plan.code === 'FREE' ? '升级到 Pro' : '续期套餐'
 }
@@ -84,6 +85,19 @@ async function choose(product: CatalogProduct) {
     </header>
 
     <p v-if="error" class="pricing-alert" role="alert">{{ error }}</p>
+
+    <section
+      v-if="store.account && !store.account.checkoutEnabled"
+      class="checkout-notice"
+      role="status"
+      aria-live="polite"
+    >
+      <ShieldCheck :size="20" aria-hidden="true" />
+      <div>
+        <strong>支付功能尚未开放</strong>
+        <span>套餐和价格可正常查看，现有套餐与 AI 额度不受影响。支付渠道完成平台配置并通过验收后再开放购买。</span>
+      </div>
+    </section>
 
     <section v-if="loading" class="pricing-loading" aria-live="polite">正在加载已发布价格…</section>
     <section v-else-if="!plans.length && !creditPacks.length" class="pricing-empty">
@@ -161,6 +175,10 @@ async function choose(product: CatalogProduct) {
 .current-summary strong { color: var(--foreground); }
 .pricing-alert, .pricing-loading, .pricing-empty { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 24px; text-align: center; }
 .pricing-alert { border-color: var(--danger-border); background: var(--danger-soft); color: var(--danger-strong); }
+.checkout-notice { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); padding: 14px 16px; color: var(--muted-foreground); font-size: 12px; line-height: 1.6; }
+.checkout-notice svg { flex: 0 0 auto; color: var(--primary); }
+.checkout-notice div { display: grid; gap: 2px; }
+.checkout-notice strong { color: var(--foreground); font-size: 13px; }
 .pricing-empty { display: grid; justify-items: center; gap: 8px; color: var(--muted-foreground); }
 .pricing-empty h2, .pricing-empty p { margin: 0; }
 .plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; align-items: stretch; }

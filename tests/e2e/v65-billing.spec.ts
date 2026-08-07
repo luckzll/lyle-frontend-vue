@@ -229,6 +229,33 @@ test('V6.5 order detail localizes purchase intent and payment provider', async (
   await expect(refundStep).not.toContainText('等待处理')
 })
 
+test('V6.5 platform pending mode explains and blocks checkout', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await mockBillingApi(page, async (route, path) => {
+    if (path === '/billing/account') {
+      return fulfill(route, {
+        ...account,
+        checkoutEnabled: false,
+        commercialQuotaEnforced: false,
+        settlementMode: 'SHADOW'
+      })
+    }
+    if (path === '/billing/orders' && route.request().method() === 'GET') {
+      return fulfill(route, [order])
+    }
+    return false
+  })
+
+  await page.goto('/pricing')
+  const notice = page.getByRole('status')
+  await expect(notice).toContainText('支付功能尚未开放')
+  await expect(notice).toContainText('现有套餐与 AI 额度不受影响')
+  const disabledCheckout = page.getByRole('button', { name: '支付暂未开放' })
+  await expect(disabledCheckout).toBeDisabled()
+  await expect(page.getByRole('button', { name: '继续支付' })).toHaveCount(0)
+  await expectUsableWidth(page, '.pricing-page', 340)
+})
+
 async function expectUsableWidth(page: Page, selector: string, minimumWidth: number) {
   const geometry = await page.locator(selector).first().evaluate((element) => {
     const rect = element.getBoundingClientRect()
