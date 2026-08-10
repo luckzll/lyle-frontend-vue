@@ -17,6 +17,8 @@ npm run dev
 npx vue-tsc --noEmit
 npm run test:unit
 npm run build
+npm run audit:dependencies
+npm run audit:dependencies:production
 npm run test:e2e
 npm run test:e2e:v64-real
 npx playwright test tests/e2e/v42-dashboard-shell.spec.ts
@@ -27,6 +29,8 @@ npx playwright test tests/e2e/v42-tasks-resilience.spec.ts
 npx playwright test tests/e2e/v42-visual-regression.spec.ts
 npx playwright test tests/e2e/v42-core-accessibility.spec.ts
 ```
+
+`audit:dependencies` 检查包含开发与测试工具在内的完整依赖树，中等及以上漏洞会使命令失败；`audit:dependencies:production` 只检查生产依赖，用于生产发布门禁。
 
 端到端测试使用 Playwright。V4.2 的 mock 契约测试不依赖本地后端，覆盖首次巡检、自然语言启用自动化、Chat 候选任务、连接并行诊断、执行确认、失败重试、移动端关键动作、任务韧性和视觉基线；原有集成测试仍需 Java 与 Python 服务可用。
 
