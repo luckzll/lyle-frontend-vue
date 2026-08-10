@@ -1531,12 +1531,15 @@ pre {
 }
 
 .message.user .message-bubble {
-  background: #0f766e;
-  color: #fff;
+  border: 1px solid var(--primary-border);
+  background: var(--primary-soft);
+  color: var(--foreground);
 }
 
 .message.assistant .message-bubble {
-  background: #f1f5f9;
+  background: transparent;
+  padding-right: 4px;
+  padding-left: 4px;
 }
 
 .message-content {

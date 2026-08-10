@@ -1,5 +1,5 @@
 import type { ImageBatchItem, TurnStatusEvent } from '@/api/app'
-import type { ChatMessage, ChatUsage } from '@/api/types'
+import type { ChatMessage, ChatUsage, MemoryExclusions, UsedMemory } from '@/api/types'
 import type { ChatAttachment } from '@/domain/chat-attachment'
 
 export type RecoveredImageBatch = {
@@ -13,6 +13,7 @@ export type RecoveredImageBatch = {
 }
 
 export type RecoveredChatMessage = {
+  id?: string
   role: 'user' | 'assistant'
   content: string
   turnId?: string
@@ -21,11 +22,15 @@ export type RecoveredChatMessage = {
   imageBatch?: RecoveredImageBatch
   attachments?: ChatAttachment[]
   usage?: ChatUsage
+  usedMemories?: UsedMemory[]
+  memoryExclusions?: MemoryExclusions
+  memoryExplanationVersion?: string
 }
 
 export function historyMessage(item: ChatMessage): RecoveredChatMessage {
   const metadata = isRecord(item.metadata) ? item.metadata : {}
   return {
+    id: item.id,
     role: item.role,
     content: item.content,
     turnId: item.turnId || (typeof metadata.turnId === 'string' ? metadata.turnId : undefined),
@@ -33,7 +38,12 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
     statusText: typeof metadata.statusText === 'string' ? metadata.statusText : undefined,
     imageBatch: historyImageBatch(metadata.imageBatch),
     attachments: Array.isArray(item.attachments) ? item.attachments : undefined,
-    usage: historyUsage(metadata.usage)
+    usage: historyUsage(metadata.usage),
+    usedMemories: historyUsedMemories(metadata.usedMemories),
+    memoryExclusions: historyMemoryExclusions(metadata.memoryExclusions),
+    memoryExplanationVersion: typeof metadata.memoryExplanationVersion === 'string'
+      ? metadata.memoryExplanationVersion
+      : undefined
   }
 }
 
@@ -90,5 +100,37 @@ function historyUsage(value: unknown): ChatUsage | undefined {
     measurementSource: ['PROVIDER_REPORTED', 'ESTIMATED', 'PARTIAL_ESTIMATE'].includes(String(value.measurementSource))
       ? value.measurementSource as ChatUsage['measurementSource']
       : 'PENDING'
+  }
+}
+
+function historyUsedMemories(value: unknown): UsedMemory[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const items = value.flatMap((raw): UsedMemory[] => {
+    if (!isRecord(raw)) return []
+    const memoryId = typeof raw.memoryId === 'string' ? raw.memoryId : ''
+    const title = typeof raw.title === 'string' ? raw.title : ''
+    const valueSummary = typeof raw.valueSummary === 'string' ? raw.valueSummary : ''
+    if (!memoryId || !title || !valueSummary) return []
+    const reliability = String(raw.reliability || '')
+    return [{
+      memoryId,
+      title,
+      valueSummary,
+      reasonCode: typeof raw.reasonCode === 'string' ? raw.reasonCode : 'QUESTION_RELEVANT',
+      reliability: ['RELIABLE', 'BASIC', 'REVIEW_REQUIRED'].includes(reliability)
+        ? reliability as UsedMemory['reliability']
+        : 'REVIEW_REQUIRED',
+      sourceCount: Math.max(0, Number(raw.sourceCount || 0))
+    }]
+  })
+  return items.length ? items : undefined
+}
+
+function historyMemoryExclusions(value: unknown): MemoryExclusions | undefined {
+  if (!isRecord(value)) return undefined
+  return {
+    conflicted: Math.max(0, Number(value.conflicted || 0)),
+    sensitive: Math.max(0, Number(value.sensitive || 0)),
+    governed: Math.max(0, Number(value.governed || 0))
   }
 }

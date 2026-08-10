@@ -35,6 +35,14 @@ import type {
   KnowledgeBase,
   KnowledgeFile,
   MemoryItem,
+  MemoryRecord,
+  MemorySource,
+  MemoryInboxItem,
+  MemoryConflict,
+  MemoryGovernanceEvent,
+  MemoryPurgeJob,
+  UsedMemory,
+  MemoryExclusions,
   MemorySnapshot,
   OperationConfirmResponse,
   PageResponse,
@@ -79,6 +87,9 @@ export type StreamMeta = {
   projectContext?: ChatResponse['projectContext']
   review?: ChatResponse['review']
   usage?: ChatResponse['usage']
+  usedMemories?: UsedMemory[]
+  memoryExclusions?: MemoryExclusions
+  memoryExplanationVersion?: string
 }
 
 export type SseHandlers = {
@@ -440,6 +451,77 @@ export function getCurrentMemory(conversationId?: string) {
   return http.get<MemorySnapshot>('/memory/current', {
     params: conversationId ? { conversationId } : {}
   })
+}
+
+export function getMemoryRecords(params: { status?: string; query?: string; limit?: number } = {}) {
+  return http.get<{ items: MemoryRecord[]; nextCursor?: string | null }>('/memory/records', {
+    params: { ...params, limit: params.limit ?? 100 }
+  })
+}
+
+export function getMemoryRecord(memoryId: string) {
+  return http.get<MemoryRecord>(`/memory/records/${encodeURIComponent(memoryId)}`)
+}
+
+export function getMemoryRecordSources(memoryId: string) {
+  return http.get<{ items: MemorySource[] }>(`/memory/records/${encodeURIComponent(memoryId)}/sources`)
+}
+
+export function getMemoryInbox() {
+  return http.get<{ items: MemoryInboxItem[]; count: number }>('/memory/inbox')
+}
+
+export function getMemoryGovernanceEvents() {
+  return http.get<{ items: MemoryGovernanceEvent[]; nextCursor?: string | null }>('/memory/governance-events')
+}
+
+export function correctMemoryRecord(memoryId: string, value: string, reason?: string) {
+  return http.post<{ memory: MemoryRecord; governanceEventId: number }>(
+    `/memory/records/${encodeURIComponent(memoryId)}:correct`,
+    { value, reason, clientRequestId: crypto.randomUUID() }
+  )
+}
+
+export function governMemoryRecord(
+  memoryId: string,
+  action: 'disable' | 'restore' | 'forget',
+  reason?: string
+) {
+  return http.post<{ memory: MemoryRecord; governanceEventId: number }>(
+    `/memory/records/${encodeURIComponent(memoryId)}:${action}`,
+    { reason, clientRequestId: crypto.randomUUID() }
+  )
+}
+
+export function purgeMemoryRecord(memoryId: string) {
+  return http.post<MemoryPurgeJob>(
+    `/memory/records/${encodeURIComponent(memoryId)}:purge`,
+    { clientRequestId: crypto.randomUUID() }
+  )
+}
+
+export function getMemoryPurgeJob(jobId: number) {
+  return http.get<MemoryPurgeJob>(`/memory/purge-jobs/${jobId}`)
+}
+
+export function retryMemoryPurgeJob(jobId: number) {
+  return http.post<MemoryPurgeJob>(`/memory/purge-jobs/${jobId}:retry`)
+}
+
+export function resolveMemoryConflict(
+  conflict: MemoryConflict,
+  resolution: 'KEEP_CURRENT' | 'USE_CANDIDATE' | 'MERGE' | 'USE_NEITHER' | 'FORGET',
+  mergedValue?: string
+) {
+  return http.post<{ conflict: MemoryConflict; memory?: MemoryRecord; governanceEventId: number }>(
+    `/memory/conflicts/${conflict.id}:resolve`,
+    {
+      resolution,
+      mergedValue: mergedValue || null,
+      expectedVersion: conflict.version,
+      clientRequestId: crypto.randomUUID()
+    }
+  )
 }
 
 export function saveStructuredMemory(key: string, value: string, confidence = 1, source = 'manual') {

@@ -257,6 +257,24 @@ export interface ChatResponse {
   projectContext?: ProjectChatContext
   review: Record<string, unknown>
   usage?: ChatUsage
+  usedMemories?: UsedMemory[]
+  memoryExclusions?: MemoryExclusions
+  memoryExplanationVersion?: string
+}
+
+export interface UsedMemory {
+  memoryId: string
+  title: string
+  valueSummary: string
+  reasonCode: 'QUESTION_RELEVANT' | 'USER_REQUESTED_RECALL' | 'PROJECT_CONTEXT' | string
+  reliability: MemoryReliability
+  sourceCount: number
+}
+
+export interface MemoryExclusions {
+  conflicted: number
+  sensitive: number
+  governed: number
 }
 
 export interface ChatUsage {
@@ -894,6 +912,103 @@ export interface MemoryItem {
   category?: string
   fragment?: MemoryItem
   relation?: string
+}
+
+export type MemoryReliability = 'RELIABLE' | 'BASIC' | 'REVIEW_REQUIRED'
+export type MemoryRecordStatus =
+  | 'ACTIVE'
+  | 'PENDING'
+  | 'CONFLICTED'
+  | 'DISABLED'
+  | 'FORGOTTEN'
+  | 'PURGING'
+  | 'PURGE_FAILED'
+  | 'REVIEW_REQUIRED'
+
+export interface MemorySource {
+  sourceId: string
+  type: 'CONVERSATION' | 'KNOWLEDGE' | 'MANUAL' | 'SYSTEM' | string
+  label: string
+  relation: 'SUPPORT' | 'SUPPLEMENT' | 'CORRECTION' | 'CONTRADICT' | 'DUPLICATE' | 'MANUAL' | string
+  excerpt: string
+  occurredAt?: string | null
+  availability: 'AVAILABLE' | 'UNAVAILABLE'
+  unavailableReason?: string | null
+  conversationId?: string | null
+  messageId?: string | null
+  chunkId?: string | null
+  link?: string | null
+}
+
+export interface MemoryRecord {
+  memoryId: string
+  profileId: number
+  schemaPath: string
+  title: string
+  value: string
+  rawValue: string
+  status: MemoryRecordStatus
+  reliability: MemoryReliability
+  confirmedByUser: boolean
+  sourceCount: number
+  latestSource?: MemorySource | null
+  usageDescription: string
+  lastUsedAt?: string | null
+  updatedAt?: string | null
+  allowedActions: Array<'CORRECT' | 'DISABLE' | 'RESTORE' | 'FORGET' | 'PURGE' | 'RESOLVE'>
+  sources?: MemorySource[]
+  history?: MemoryGovernanceEvent[]
+}
+
+export interface MemoryConflict {
+  id: number
+  schemaPath: string
+  title: string
+  status: 'OPEN' | 'RESOLVED' | 'DISMISSED'
+  version: number
+  currentMemory?: MemoryRecord | null
+  candidate?: {
+    fragmentId: number
+    value: string
+    source: Omit<MemorySource, 'sourceId' | 'relation' | 'availability'>
+  } | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MemoryInboxItem {
+  inboxId: string
+  type: 'CONFLICT' | 'LOW_RELIABILITY' | 'CANDIDATE' | 'PURGE_FAILED'
+  title: string
+  description: string
+  status: string
+  createdAt?: string | null
+  conflict?: MemoryConflict
+  memory?: MemoryRecord
+  candidate?: Record<string, unknown>
+  purgeJob?: MemoryPurgeJob
+}
+
+export interface MemoryGovernanceEvent {
+  eventId: number
+  subjectType: string
+  subjectId: string
+  action: string
+  beforeSnapshot: Record<string, unknown>
+  afterSnapshot: Record<string, unknown>
+  reasonCode: string
+  createdAt: string
+}
+
+export interface MemoryPurgeJob {
+  jobId: number
+  memoryId: string
+  status: 'PENDING' | 'RUNNING' | 'RETRY' | 'SUCCEEDED' | 'FAILED'
+  attemptCount: number
+  steps: Record<string, string>
+  createdAt: string
+  updatedAt: string
+  completedAt?: string | null
 }
 
 export interface MemorySnapshot {

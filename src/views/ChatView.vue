@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, PanelRightOpen } from '@lucide/vue'
+import { ArrowDown, BrainCircuit, ChevronRight, PanelRightOpen } from '@lucide/vue'
 import {
   createConversation,
   createAgentTodo,
@@ -35,8 +35,9 @@ import {
   type ImageItemEvent,
   type TurnStatusEvent
 } from '@/api/app'
-import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, ChatUsage, Conversation, KnowledgeBase, MemoryItem, MemorySnapshot, PendingOperationItem, ProjectChatContext, ToolResult, ExecutionSuggestionItem } from '@/api/types'
+import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, ChatUsage, Conversation, KnowledgeBase, MemoryExclusions, MemoryItem, MemorySnapshot, PendingOperationItem, ProjectChatContext, ToolResult, ExecutionSuggestionItem, UsedMemory } from '@/api/types'
 import ContextPanel from '@/components/layout/ContextPanel.vue'
+import MemoryExplanationPanel from '@/components/memory/MemoryExplanationPanel.vue'
 import ExecutionTimeline from '@/components/domain/ExecutionTimeline.vue'
 import SuggestionCard from '@/components/domain/SuggestionCard.vue'
 import { useWorkspaceStore, type WorkspaceProjectContext } from '@/stores/workspace'
@@ -66,6 +67,7 @@ import {
 } from '@/domain/chat-safety'
 
 interface Message {
+  id?: string
   role: 'user' | 'assistant'
   content: string
   images?: Array<{
@@ -99,6 +101,9 @@ interface Message {
   projectContext?: ProjectChatContext
   review?: Record<string, unknown>
   usage?: ChatUsage
+  usedMemories?: UsedMemory[]
+  memoryExclusions?: MemoryExclusions
+  memoryExplanationVersion?: string
 }
 
 interface RetryTurnContext {
@@ -114,6 +119,10 @@ const runtimeFeatures = useRuntimeFeatures()
 const workspace = useWorkspaceStore()
 const handoffProject = ref<WorkspaceProjectContext | null>(null)
 const showContextPanel = ref(false)
+const showMemoryExplanation = ref(false)
+const explainedMemories = ref<UsedMemory[]>([])
+const highlightedMessageId = ref('')
+const sourceReplayNotice = ref('')
 const chatListRef = ref<HTMLElement | null>(null)
 const composerRef = ref<{ focus: () => void } | null>(null)
 const hasMessagesBelow = ref(false)
@@ -122,6 +131,7 @@ const loading = ref(false)
 const streamController = ref<AbortController | null>(null)
 const recoveringTurnId = ref('')
 let recoveryPollTimer: number | undefined
+let sourceHighlightTimer: number | undefined
 const initializing = ref(true)
 const debugControlsEnabled = computed(() => route.query.debug === '1')
 const showDebug = ref(debugControlsEnabled.value)
@@ -306,9 +316,7 @@ onMounted(async () => {
   }
   try {
     await Promise.all([refreshKnowledgeBases(), refreshConversations(), refreshBrief()])
-    const requestedConversationId = typeof route.query.conversationId === 'string'
-      ? route.query.conversationId
-      : undefined
+    const requestedConversationId = routeQueryText(route.query.conversationId) || undefined
     const initialConversationId = resolveConversationToRestore({
       requestedId: requestedConversationId,
       storedId: window.localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY),
@@ -325,10 +333,26 @@ onMounted(async () => {
     initializing.value = false
     await nextTick()
     if (handoff) composerRef.value?.focus()
-    if (conversationId.value || hasUserMessages.value) scrollToBottom(false)
+    if (requestedSourceMessageId()) await revealSourceMessage(requestedSourceMessageId())
+    else if (conversationId.value || hasUserMessages.value) scrollToBottom(false)
     else if (chatListRef.value) chatListRef.value.scrollTop = 0
   }
 })
+
+watch(
+  [() => route.query.conversationId, () => route.query.messageId],
+  async ([rawConversationId, rawMessageId], previous) => {
+    if (initializing.value) return
+    const requestedConversationId = routeQueryText(rawConversationId)
+    const requestedMessageId = routeQueryText(rawMessageId)
+    if (!requestedConversationId || !requestedMessageId) return
+    if (previous && routeQueryText(previous[0]) === requestedConversationId && routeQueryText(previous[1]) === requestedMessageId) return
+    showContextPanel.value = false
+    showMemoryExplanation.value = false
+    if (conversationId.value !== requestedConversationId) await loadConversation(requestedConversationId)
+    await revealSourceMessage(requestedMessageId)
+  }
+)
 
 watch(() => messages.value.length, async () => {
   await nextTick()
@@ -346,6 +370,7 @@ onActivated(async () => {
 
 onBeforeUnmount(() => {
   clearRecoveryPolling()
+  if (sourceHighlightTimer !== undefined) window.clearTimeout(sourceHighlightTimer)
 })
 
 async function refreshKnowledgeBases() {
@@ -513,10 +538,17 @@ function applyStarterPrompt(draft: string) {
 }
 
 function toggleContextPanel() {
+  showMemoryExplanation.value = false
   showContextPanel.value = !showContextPanel.value
   if (showContextPanel.value) {
     void trackProductEvent({ eventType: 'context_panel_opened', page: 'chat', projectId: activeProjectId.value }).catch(() => undefined)
   }
+}
+
+function openMemoryExplanation(message: Message) {
+  explainedMemories.value = message.usedMemories || []
+  showContextPanel.value = false
+  showMemoryExplanation.value = true
 }
 
 function onChatScroll() {
@@ -535,6 +567,40 @@ function scrollToBottom(smooth = true) {
   })
   isNearBottom.value = true
   hasMessagesBelow.value = false
+}
+
+function requestedSourceMessageId() {
+  return routeQueryText(route.query.messageId)
+}
+
+function routeQueryText(value: unknown) {
+  return Array.isArray(value) ? String(value[0] || '').trim() : typeof value === 'string' ? value.trim() : ''
+}
+
+async function revealSourceMessage(messageId: string) {
+  if (!messageId) return
+  await nextTick()
+  const target = Array.from(chatListRef.value?.querySelectorAll<HTMLElement>('[data-message-id]') || [])
+    .find((element) => element.dataset.messageId === messageId)
+  if (!target) {
+    highlightedMessageId.value = ''
+    sourceReplayNotice.value = '原消息已删除、无权访问或不在当前会话中。'
+    return
+  }
+  showContextPanel.value = false
+  showMemoryExplanation.value = false
+  highlightedMessageId.value = messageId
+  sourceReplayNotice.value = '已定位到这条记忆的原消息。'
+  await nextTick()
+  target.scrollIntoView({
+    block: 'center',
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+  })
+  target.focus({ preventScroll: true })
+  if (sourceHighlightTimer !== undefined) window.clearTimeout(sourceHighlightTimer)
+  sourceHighlightTimer = window.setTimeout(() => {
+    if (highlightedMessageId.value === messageId) highlightedMessageId.value = ''
+  }, 5000)
 }
 
 async function cancelStreaming() {
@@ -667,6 +733,9 @@ async function submit(retryContext?: RetryTurnContext) {
         messages.value[assistantIndex].projectContext = sanitizeProjectContext(meta.projectContext)
         messages.value[assistantIndex].review = sanitizeReview(meta.review)
         messages.value[assistantIndex].usage = meta.usage
+        messages.value[assistantIndex].usedMemories = meta.usedMemories || []
+        messages.value[assistantIndex].memoryExclusions = meta.memoryExclusions
+        messages.value[assistantIndex].memoryExplanationVersion = meta.memoryExplanationVersion
       },
       onTurnStatus: (status) => {
         const target = messages.value[assistantIndex]
@@ -1159,6 +1228,13 @@ function usedMemorySummary(message: Message) {
 }
 
 function usedMemoryItems(message: Message) {
+  if (message.usedMemories?.length) {
+    return message.usedMemories.map((item) => ({
+      label: item.title,
+      value: item.valueSummary,
+      meta: `可靠性：${item.reliability} · ${item.sourceCount} 个来源`
+    }))
+  }
   const summary = usedMemorySummary(message)
   if (!summary) return []
   const items: Array<{ label: string; value: string; meta: string }> = []
@@ -1306,7 +1382,7 @@ function memoryBelongsToConversation(item: MemoryItem, currentConversationId?: s
 function memorySourceConversationId(item: MemoryItem) {
   const source = item.source || item.sourceRef || ''
   const match = source.match(/^source_ref:conversation:([^\n]+)|^conversation:([^\n]+)/)
-  return match?.[1] || match?.[2] || ''
+  return (match?.[1] || match?.[2] || '').split(';message:', 1)[0]
 }
 
 function memorySourceText(item: MemoryItem) {
@@ -1861,6 +1937,7 @@ function escapeHtml(text: string) {
     </div>
 
     <p v-if="error" class="alert danger">{{ error }}</p>
+    <p v-if="sourceReplayNotice" class="source-replay-notice" role="status">{{ sourceReplayNotice }}</p>
     <section v-if="commercialQuotaError" class="commercial-quota-card" role="alert">
       <div>
         <strong>当前 AI 额度不足</strong>
@@ -1871,7 +1948,13 @@ function escapeHtml(text: string) {
     </section>
     <p v-if="briefError" class="alert danger">{{ briefError }}</p>
 
-    <div class="chat-workspace" :class="{ 'context-closed': !showContextPanel }">
+    <div
+      class="chat-workspace"
+      :class="{
+        'context-closed': !showContextPanel && !showMemoryExplanation,
+        'memory-explanation-open': showMemoryExplanation
+      }"
+    >
     <div
       ref="chatListRef"
       class="panel chat-list"
@@ -1902,7 +1985,14 @@ function escapeHtml(text: string) {
           />
         </div>
       </section>
-      <div v-for="(message, index) in messages" :key="index" class="message" :class="message.role">
+      <div
+        v-for="(message, index) in messages"
+        :key="message.id || index"
+        class="message"
+        :class="[message.role, { 'source-message-highlight': highlightedMessageId === message.id }]"
+        :data-message-id="message.id || undefined"
+        :tabindex="highlightedMessageId === message.id ? -1 : undefined"
+      >
         <template v-if="message.role === 'user'">
           <MessageAttachments v-if="message.attachments?.length" :attachments="message.attachments" />
           <div v-else-if="userImages(message).length" class="uploaded-image-grid">
@@ -1963,6 +2053,15 @@ function escapeHtml(text: string) {
               <span>{{ measurementLabel(message.usage.measurementSource) }}</span>
             </div>
           </details>
+          <button
+            v-if="message.usedMemories?.length"
+            class="memory-explanation-trigger"
+            type="button"
+            @click="openMemoryExplanation(message)"
+          >
+            <span><BrainCircuit :size="17" aria-hidden="true" />使用了 {{ message.usedMemories.length }} 条记忆</span>
+            <span>查看 <ChevronRight :size="16" aria-hidden="true" /></span>
+          </button>
         </template>
 
         <div
@@ -2468,10 +2567,15 @@ function escapeHtml(text: string) {
       </section>
     </ContextPanel>
 
+    <MemoryExplanationPanel
+      :open="showMemoryExplanation"
+      :memories="explainedMemories"
+      @close="showMemoryExplanation = false"
+    />
+
     <button v-if="hasMessagesBelow" class="scroll-bottom" type="button" @click="scrollToBottom()">
       <ArrowDown :size="15" aria-hidden="true" /> 新消息
     </button>
-    </div>
 
     <ChatComposer
       ref="composerRef"
@@ -2491,6 +2595,7 @@ function escapeHtml(text: string) {
       @retry="retryAttachment"
       @dismiss-hint="dismissAttachmentHint"
     />
+    </div>
   </section>
 </template>
 
@@ -2501,12 +2606,16 @@ function escapeHtml(text: string) {
   min-height: 0;
   flex: 1;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: var(--space-4);
 }
 
 .chat-workspace.context-closed { grid-template-columns: minmax(0, 1fr); }
+.chat-workspace.memory-explanation-open { grid-template-columns: minmax(0, 1fr) minmax(380px, 420px); }
 
 .chat-list {
+  grid-column: 1;
+  grid-row: 1;
   min-height: min(620px, calc(100dvh - 250px));
   max-height: calc(100dvh - 250px);
   border-color: var(--border);
@@ -2516,6 +2625,29 @@ function escapeHtml(text: string) {
 }
 
 .chat-list--empty { overflow: hidden; }
+
+.source-replay-notice {
+  margin: 0;
+  border: 1px solid var(--primary-border);
+  border-radius: var(--radius-md);
+  background: var(--primary-soft);
+  color: var(--foreground);
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.source-message-highlight {
+  border-radius: var(--radius-lg);
+  outline: 3px solid color-mix(in srgb, var(--primary) 44%, transparent);
+  outline-offset: 6px;
+  animation: source-message-pulse 1.2s ease-out 2;
+}
+
+@keyframes source-message-pulse {
+  0% { outline-color: var(--primary); }
+  100% { outline-color: color-mix(in srgb, var(--primary) 20%, transparent); }
+}
 
 .chat-starter {
   display: grid;
@@ -2558,6 +2690,7 @@ function escapeHtml(text: string) {
   box-shadow: var(--shadow-popover);
 }
 .context-closed .scroll-bottom { right: var(--space-4); }
+.memory-explanation-open .scroll-bottom { right: calc(min(420px, 31vw) + var(--space-7)); }
 
 .chat-input {
   position: sticky;
@@ -2572,6 +2705,8 @@ function escapeHtml(text: string) {
   padding: 0;
   box-shadow: var(--shadow-popover);
   backdrop-filter: blur(12px);
+  grid-column: 1;
+  grid-row: 2;
 }
 .chat-input textarea { min-height: 48px; resize: vertical; border: 0; background: transparent; box-shadow: none; }
 .chat-input textarea:focus { outline: 0; }
@@ -2613,6 +2748,26 @@ function escapeHtml(text: string) {
 }
 .turn-usage summary { cursor: pointer; list-style-position: inside; }
 .turn-usage div { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; border-left: 2px solid var(--primary-border); padding-left: 10px; }
+.memory-explanation-trigger {
+  display: flex;
+  width: min(100%, 620px);
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border: 1px solid var(--primary-border);
+  border-radius: var(--radius-md);
+  background: var(--primary-soft);
+  color: var(--foreground);
+  padding: 0 var(--space-3);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+}
+.memory-explanation-trigger > span { display: inline-flex; align-items: center; gap: 7px; }
+.memory-explanation-trigger > span:first-child svg { color: var(--primary); }
+.memory-explanation-trigger > span:last-child { color: var(--primary); white-space: nowrap; }
+.memory-explanation-trigger:hover { border-color: var(--primary); background: color-mix(in srgb, var(--primary-soft) 82%, var(--surface)); }
 .phase-failed .turn-status-dot { background: var(--danger); animation: none; }
 .image-batch-grid {
   width: min(100%, 760px);
@@ -2726,6 +2881,7 @@ function escapeHtml(text: string) {
     flex-direction: row;
   }
   .chat-workspace { grid-template-columns: minmax(0, 1fr); }
+  .chat-workspace.memory-explanation-open { grid-template-columns: minmax(0, 1fr); }
   .scroll-bottom { right: var(--space-4); }
 }
 
@@ -2765,6 +2921,6 @@ function escapeHtml(text: string) {
 
 @media (prefers-reduced-motion: reduce) {
   .chat-list { scroll-behavior: auto; }
-  .turn-status-dot, .image-skeleton::after, .image-skeleton span { animation: none; }
+  .turn-status-dot, .image-skeleton::after, .image-skeleton span, .source-message-highlight { animation: none; }
 }
 </style>

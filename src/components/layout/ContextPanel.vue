@@ -2,7 +2,11 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { X } from '@lucide/vue'
 
-const props = withDefaults(defineProps<{ title?: string; open?: boolean }>(), { title: '上下文', open: true })
+const props = withDefaults(defineProps<{
+  title?: string
+  open?: boolean
+  variant?: 'default' | 'memory'
+}>(), { title: '上下文', open: true, variant: 'default' })
 const emit = defineEmits<{ close: [] }>()
 const panel = ref<HTMLElement | null>(null)
 const isOverlay = ref(false)
@@ -109,13 +113,17 @@ onBeforeUnmount(() => {
     <div
       v-if="open"
       class="context-panel-layer"
-      :class="{ 'context-panel-layer--overlay': isOverlay }"
+      :class="[
+        { 'context-panel-layer--overlay': isOverlay },
+        `context-panel-layer--${variant}`
+      ]"
       :data-testid="isOverlay ? 'context-panel-backdrop' : undefined"
       @click.self="$emit('close')"
     >
       <aside
         ref="panel"
         class="context-panel"
+        :class="`context-panel--${variant}`"
         :aria-label="title"
         :aria-modal="isOverlay ? 'true' : undefined"
         :role="isOverlay ? 'dialog' : undefined"
@@ -146,4 +154,28 @@ header { display: flex; align-items: center; justify-content: space-between; bor
 header button { display: grid; width: 30px; height: 30px; place-items: center; border-radius: var(--radius-md); background: transparent; color: var(--muted-foreground); padding: 0; }
 header button:hover { background: var(--surface-muted); }
 .content { display: grid; gap: var(--space-4); padding: var(--space-4); }
+
+@media (max-width: 640px) {
+  .context-panel-layer--overlay.context-panel-layer--memory {
+    align-items: flex-end;
+    justify-content: stretch;
+    padding: 0;
+  }
+  .context-panel-layer--memory .context-panel--memory {
+    width: 100%;
+    max-height: min(62dvh, 560px);
+    border-width: 1px 0 0;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .context-panel-layer--memory .context-panel--memory::before {
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--border-strong);
+    content: '';
+    margin: 8px auto 0;
+  }
+}
 </style>

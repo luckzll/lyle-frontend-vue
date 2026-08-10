@@ -89,4 +89,31 @@ describe('persisted chat turn recovery', () => {
     expect(message.content).toBe('请总结附件')
     expect(message.attachments).toEqual([expect.objectContaining({ id: 'attachment-1', name: '需求.pdf' })])
   })
+
+  it('restores only valid V6.6 memory explanations from assistant metadata', () => {
+    const message = historyMessage({
+      id: '4',
+      conversationId: '10',
+      role: 'assistant',
+      content: '已根据你的偏好调整。',
+      createdAt: '2026-08-10T00:00:00',
+      metadata: {
+        usedMemories: [{
+          memoryId: 'profile:12',
+          title: '视觉偏好',
+          valueSummary: '不喜欢人物戴帽子',
+          reasonCode: 'QUESTION_RELEVANT',
+          reliability: 'RELIABLE',
+          sourceCount: 2
+        }, { memoryId: '', title: '伪造记忆' }],
+        memoryExclusions: { conflicted: 1, sensitive: 2, governed: 3 },
+        memoryExplanationVersion: 'v1'
+      }
+    })
+
+    expect(message.usedMemories).toEqual([expect.objectContaining({ memoryId: 'profile:12', sourceCount: 2 })])
+    expect(message.id).toBe('4')
+    expect(message.memoryExclusions).toEqual({ conflicted: 1, sensitive: 2, governed: 3 })
+    expect(message.memoryExplanationVersion).toBe('v1')
+  })
 })

@@ -17,7 +17,7 @@ const corePages: CorePage[] = [
   { path: '/execution-center', heading: '执行中心', readyText: '没有等待确认的操作' },
   { path: '/connections', heading: '连接', readyText: '暂无推荐连接' },
   { path: '/knowledge-bases', heading: '知识库', readyText: '暂无知识库' },
-  { path: '/memory', heading: '记忆', readyText: '暂无用户画像' },
+  { path: '/memory', heading: '记忆', readyText: 'Lyle 还没有保存长期记忆' },
   { path: '/settings', heading: '设置', readyText: '保存偏好' }
 ]
 
@@ -99,6 +99,9 @@ async function mockCoreApis(page: Page) {
       return fulfillJson(route, [])
     }
     if (pathname === '/api/memory/current') return fulfillJson(route, emptyMemory)
+    if (pathname === '/api/memory/records') return fulfillJson(route, { items: [], nextCursor: null })
+    if (pathname === '/api/memory/inbox') return fulfillJson(route, { items: [], count: 0 })
+    if (pathname === '/api/memory/governance-events') return fulfillJson(route, { items: [], nextCursor: null })
     if (pathname === '/api/users/me') return fulfillJson(route, { id: 'v42-accessibility-user', username: 'V4.2 无障碍验收用户', role: 'USER' })
     if (pathname === '/api/projects') return fulfillJson(route, { items: [] })
     if (pathname === '/api/experience/templates') return fulfillJson(route, { items: [] })

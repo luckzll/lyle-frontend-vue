@@ -39,6 +39,7 @@ test('register changes autocomplete, clears password, and unsafe redirect falls 
 
 test('login entry has no serious or critical accessibility violations', async ({ page }) => {
   await page.goto('/login')
+  await expect(page.locator('.auth-page')).toBeVisible()
 
   const result = await new AxeBuilder({ page }).include('.auth-page').analyze()
 
