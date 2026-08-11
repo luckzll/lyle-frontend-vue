@@ -135,15 +135,17 @@ test('390px memory, conflict and chat explanation flows stay usable', async ({ p
   await page.setViewportSize({ width: 390, height: 844 })
   await mockApis(page)
   await page.goto('/memory')
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await expectNoHorizontalOverflow(page)
   await page.getByRole('option', { name: /视觉负向偏好/ }).click()
   await expect(page.getByRole('button', { name: '纠正这条记忆' })).toBeVisible()
+  await expectNoHorizontalOverflow(page)
 
   await page.goto('/memory')
   await page.getByRole('button', { name: /待我处理/ }).click()
   await page.getByRole('button', { name: /当前角色需要核对/ }).click()
   await page.getByRole('radio', { name: /使用新的表达/ }).click()
   await expect(page.getByRole('button', { name: '确认并更新记忆' })).toBeEnabled()
+  await expectNoHorizontalOverflow(page)
 
   await page.goto('/')
   await page.getByRole('button', { name: /使用了 1 条记忆/ }).click()
@@ -152,6 +154,13 @@ test('390px memory, conflict and chat explanation flows stay usable', async ({ p
   await expect(drawer).toHaveAttribute('aria-modal', 'true')
   expect((await drawer.boundingBox())?.y || 0).toBeGreaterThan(200)
 })
+
+async function expectNoHorizontalOverflow(page: Page) {
+  await expect(page.locator('.memory-workspace')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => (
+    document.documentElement.scrollWidth - document.documentElement.clientWidth
+  ))).toBeLessThanOrEqual(0)
+}
 
 async function installAuthenticatedSession(page: Page) {
   const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')
