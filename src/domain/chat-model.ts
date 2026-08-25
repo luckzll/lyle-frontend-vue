@@ -1,4 +1,4 @@
-export type ChatModelId = 'qwen3.7-flash' | 'qwen3.7-plus' | 'qwen3.8-max' | 'deepseek-v4-flash' | 'deepseek-v4-pro'
+export type ChatModelId = 'qwen3.7-flash' | 'qwen3.7-plus' | 'qwen3.8-max' | 'deepseek-v4-flash' | 'deepseek-v4-pro' | 'kimi-k3'
 
 export interface ChatModelOption {
   id: ChatModelId
@@ -40,6 +40,12 @@ export const CHAT_MODEL_OPTIONS: readonly ChatModelOption[] = [
     name: 'Qwen 3.8 Max',
     usage: '¥12 / ¥36',
     description: '每百万输入 / 输出 Token，旗舰能力，消耗最高'
+  },
+  {
+    id: 'kimi-k3',
+    name: 'Kimi K3',
+    usage: '¥20 / ¥100',
+    description: '每百万输入 / 输出 Token，长上下文与复杂推理旗舰'
   }
 ]
 
