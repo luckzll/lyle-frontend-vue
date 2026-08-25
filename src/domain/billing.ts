@@ -1,3 +1,5 @@
+import { parseServerDateTime } from './date-time'
+
 export function formatCredits(value: number) {
   const credits = Math.max(0, Number(value || 0)) / 1_000_000
   return new Intl.NumberFormat('zh-CN', {
@@ -7,9 +9,10 @@ export function formatCredits(value: number) {
 
 export function formatBillingTime(value?: string | null) {
   if (!value) return '—'
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return value
+  const parsed = parseServerDateTime(value)
+  if (!parsed) return value
   return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',

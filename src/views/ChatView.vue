@@ -145,6 +145,8 @@ const titleDraft = ref('')
 const titleSaving = ref(false)
 const conversations = ref<Conversation[]>([])
 const knowledgeBases = ref<KnowledgeBase[]>([])
+const knowledgeBasesLoading = ref(false)
+const knowledgeBasesError = ref('')
 const selectedKnowledgeBaseId = ref('')
 const memoryActionLoading = ref<Record<string, boolean>>({})
 const taskActionLoading = ref<Record<string, boolean>>({})
@@ -314,8 +316,12 @@ onMounted(async () => {
     input.value = handoff.draft
     handoffProject.value = handoff.project
   }
+  // Knowledge bases and the brief are optional context. Load them in the
+  // background so a slow auxiliary request never blocks the chat surface.
+  void refreshKnowledgeBases()
+  void refreshBrief()
   try {
-    await Promise.all([refreshKnowledgeBases(), refreshConversations(), refreshBrief()])
+    await refreshConversations()
     const requestedConversationId = routeQueryText(route.query.conversationId) || undefined
     const initialConversationId = resolveConversationToRestore({
       requestedId: requestedConversationId,
@@ -328,7 +334,7 @@ onMounted(async () => {
     }
     syncPendingMemoriesToLatestAssistant()
   } catch {
-    error.value = '页面初始化失败，请确认后端服务已经启动。'
+    error.value = '会话列表暂时无法加载，你仍然可以开始新会话。'
   } finally {
     initializing.value = false
     await nextTick()
@@ -374,8 +380,16 @@ onBeforeUnmount(() => {
 })
 
 async function refreshKnowledgeBases() {
-  const response = await listKnowledgeBases()
-  knowledgeBases.value = response.data
+  knowledgeBasesLoading.value = true
+  knowledgeBasesError.value = ''
+  try {
+    const response = await listKnowledgeBases()
+    knowledgeBases.value = response.data
+  } catch {
+    knowledgeBasesError.value = '知识库列表暂时无法加载。'
+  } finally {
+    knowledgeBasesLoading.value = false
+  }
 }
 
 async function exitDebugMode() {
@@ -1964,11 +1978,7 @@ function escapeHtml(text: string) {
       :aria-live="hasUserMessages ? 'polite' : undefined"
       @scroll="onChatScroll"
     >
-      <div v-if="initializing" class="empty-state">
-        <strong>正在加载会话和知识库</strong>
-        <span>请稍候。</span>
-      </div>
-      <section v-else-if="!hasUserMessages" class="chat-starter" aria-labelledby="chat-starter-title">
+      <section v-if="!hasUserMessages" class="chat-starter" aria-labelledby="chat-starter-title">
         <div>
           <p class="eyebrow">从一项具体工作开始</p>
           <h2 id="chat-starter-title">今天想推进什么？</h2>
@@ -2529,13 +2539,15 @@ function escapeHtml(text: string) {
             v-model="selectedKnowledgeBaseId"
             data-testid="chat-knowledge-select"
             aria-label="选择知识库"
-            :disabled="loading"
+            :disabled="loading || knowledgeBasesLoading"
           >
             <option value="">不使用知识库</option>
             <option v-for="item in knowledgeBases" :key="item.id" :value="String(item.id)">
               {{ item.name }}
             </option>
           </select>
+          <small v-if="knowledgeBasesLoading" class="context-load-note">知识库正在后台加载…</small>
+          <small v-else-if="knowledgeBasesError" class="context-load-note danger">{{ knowledgeBasesError }}</small>
         </label>
       </section>
       <section class="context-section">
@@ -2616,12 +2628,30 @@ function escapeHtml(text: string) {
 .chat-list {
   grid-column: 1;
   grid-row: 1;
-  min-height: min(620px, calc(100dvh - 250px));
-  max-height: calc(100dvh - 250px);
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-color: var(--border);
   border-radius: var(--radius-xl);
   background: var(--surface);
   scroll-behavior: smooth;
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 42%, transparent) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.chat-list::-webkit-scrollbar { width: 8px; }
+.chat-list::-webkit-scrollbar-track { background: transparent; }
+.chat-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted-foreground) 38%, transparent);
+  background-clip: padding-box;
+}
+.chat-list:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted-foreground) 58%, transparent);
+  background-clip: padding-box;
 }
 
 .chat-list--empty { overflow: hidden; }
@@ -2665,6 +2695,8 @@ function escapeHtml(text: string) {
 .context-section { display: grid; gap: var(--space-2); }
 .context-controls label { display: grid; gap: 6px; color: var(--muted-foreground); font-size: 12px; font-weight: 700; }
 .context-controls select { width: 100%; min-width: 0; min-height: 44px; }
+.context-load-note { color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+.context-load-note.danger { color: var(--danger); }
 .context-section + .context-section { border-top: 1px solid var(--border); padding-top: var(--space-4); }
 .context-section > small { color: var(--muted-foreground); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .context-section > span, .context-section > p { margin: 0; color: var(--muted-foreground); font-size: 13px; line-height: 1.5; }
@@ -2901,7 +2933,7 @@ function escapeHtml(text: string) {
     padding: 10px;
   }
   .starter-grid :deep(.suggestion-card.compact .action) { grid-column: auto; }
-  .chat-list { min-height: calc(100dvh - 300px); max-height: calc(100dvh - 300px); padding: var(--space-3); }
+  .chat-list { min-height: 0; max-height: none; padding: var(--space-3); }
   .toolbar-controls {
     display: flex;
     width: auto;

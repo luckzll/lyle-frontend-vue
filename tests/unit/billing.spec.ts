@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatCredits,
+  formatBillingTime,
   ledgerLabel,
   orderStatusLabel,
   paymentProviderLabel,
@@ -13,6 +14,11 @@ describe('V6.5 billing presentation rules', () => {
   it('formats integer credit micros without treating them as money', () => {
     expect(formatCredits(1_500_000)).toBe('1.5')
     expect(formatCredits(100_000_000)).toBe('100')
+  })
+
+  it('renders UTC ledger timestamps in Beijing time', () => {
+    expect(formatBillingTime('2026-08-25T02:52:00')).toContain('10:52')
+    expect(formatBillingTime('2026-08-25T02:52:00')).not.toContain('02:52')
   })
 
   it('keeps payment and commercial ledger language separate', () => {

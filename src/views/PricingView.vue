@@ -73,7 +73,7 @@ async function choose(product: CatalogProduct) {
 </script>
 
 <template>
-  <main class="pricing-page" aria-labelledby="pricing-title">
+  <section class="pricing-page" aria-labelledby="pricing-title">
     <header class="pricing-hero">
       <p class="eyebrow">Lyle 套餐</p>
       <h1 id="pricing-title">选择适合你的 Lyle</h1>
@@ -162,7 +162,7 @@ async function choose(product: CatalogProduct) {
       <div><ShieldCheck :size="18" aria-hidden="true" /><span><strong>服务端计价</strong>订单金额与权益以已发布价格快照为准。</span></div>
       <div><CreditCard :size="18" aria-hidden="true" /><span><strong>支付可恢复</strong>页面关闭后可从套餐与账单继续待支付订单。</span></div>
     </footer>
-  </main>
+  </section>
 </template>
 
 <style scoped>

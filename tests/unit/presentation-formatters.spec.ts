@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { formatAutomationSchedule, formatAutomationTemplateCategory, formatAutomationTrigger } from '@/domain/automation-schedule'
-import { humanizeIsoDateTimes } from '@/domain/date-time'
+import { formatBeijingTimeShort, humanizeIsoDateTimes, parseServerDateTime } from '@/domain/date-time'
 import { formatSourceReference } from '@/domain/source-reference'
 
 describe('presentation formatters', () => {
@@ -27,5 +27,10 @@ describe('presentation formatters', () => {
     const result = humanizeIsoDateTimes('计划于 2026-07-05T01:00:00+00:00 执行')
     expect(result).toContain('北京时间')
     expect(result).not.toContain('2026-07-05T01:00:00+00:00')
+  })
+
+  it('treats offset-less server timestamps as UTC', () => {
+    expect(parseServerDateTime('2026-08-25T02:34:03')?.toISOString()).toBe('2026-08-25T02:34:03.000Z')
+    expect(formatBeijingTimeShort('2026-08-25T02:34:03')).toBe('08/25 10:34')
   })
 })

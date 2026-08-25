@@ -213,7 +213,7 @@ test('V6.5 order detail localizes purchase intent and payment provider', async (
         status: 'REFUNDED',
         paymentProvider: 'MOCK',
         refundStatus: 'SUCCEEDED',
-        refundSucceededAt: '2026-07-30T10:02:00'
+        refundSucceededAt: '2026-07-30T02:02:00Z'
       })
     }
     return false

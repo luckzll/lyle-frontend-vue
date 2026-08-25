@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { createConversation, deleteConversation, listConversations } from '@/api/app'
 import type { Conversation } from '@/api/types'
 import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
+import { formatBeijingTimeShort, parseServerDateTime } from '@/domain/date-time'
 
 const title = ref('默认会话')
 const conversations = ref<Conversation[]>([])
@@ -46,16 +47,11 @@ async function remove(id: string) {
 onMounted(refresh)
 
 function dateTime(value?: string | null) {
-  if (!value) return 0
-  const time = new Date(value).getTime()
-  return Number.isNaN(time) ? 0 : time
+  return parseServerDateTime(value)?.getTime() || 0
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) return '暂无时间'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString()
+  return formatBeijingTimeShort(value, value || '暂无时间')
 }
 
 function shortId(value: string) {

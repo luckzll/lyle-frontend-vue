@@ -38,6 +38,7 @@ const pageContext = computed(() => (
 const isSettingsRoute = computed(() => (
   ['settings', 'usage', 'billing', 'billing-order'].includes(String(route.name || ''))
 ))
+const isChatRoute = computed(() => route.name === 'chat')
 
 const {
   reminders,
@@ -99,7 +100,13 @@ watch(
 </script>
 
 <template>
-  <div class="lyle-shell" :class="{ 'lyle-shell--collapsed': sidebarCollapsed }">
+  <div
+    class="lyle-shell"
+    :class="{
+      'lyle-shell--collapsed': sidebarCollapsed,
+      'lyle-shell--chat': isChatRoute
+    }"
+  >
     <div class="lyle-shell__sidebar-frame">
       <AppSidebar
         :collapsed="sidebarCollapsed"
@@ -110,7 +117,7 @@ watch(
       />
     </div>
 
-    <div class="lyle-shell__workspace">
+    <div class="lyle-shell__workspace" :class="{ 'lyle-shell__workspace--chat': isChatRoute }">
       <AppHeader
         :title="pageTitle"
         :context-label="pageContext"
@@ -122,7 +129,13 @@ watch(
         @logout="logout"
       />
 
-      <main class="lyle-shell__main" :class="{ 'lyle-shell__main--settings': isSettingsRoute }">
+      <main
+        class="lyle-shell__main"
+        :class="{
+          'lyle-shell__main--settings': isSettingsRoute,
+          'lyle-shell__main--chat': isChatRoute
+        }"
+      >
         <section v-if="reminders.length > 0" class="lyle-reminder" aria-live="polite">
           <div class="lyle-reminder__message">
             <span class="lyle-reminder__icon" aria-hidden="true">
@@ -187,6 +200,12 @@ watch(
   grid-template-columns: var(--lyle-sidebar-width-collapsed) minmax(0, 1fr);
 }
 
+.lyle-shell--chat {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .lyle-shell__sidebar-frame {
   position: sticky;
   top: 0;
@@ -201,6 +220,14 @@ watch(
   min-width: 0;
 }
 
+.lyle-shell__workspace--chat {
+  display: grid;
+  height: 100dvh;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
 .lyle-shell__main {
   display: flex;
   min-width: 0;
@@ -213,9 +240,18 @@ watch(
   padding: 0;
 }
 
+.lyle-shell__main--chat {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .lyle-shell__main :deep(.page) {
   min-height: 0;
   flex: 1;
+}
+
+.lyle-shell__main--chat :deep(.page) {
+  overflow: hidden;
 }
 
 .lyle-reminder {

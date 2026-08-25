@@ -10,6 +10,7 @@ import {
 import type { User } from '@/api/types'
 import { logoutAllDevices, logoutCurrentDevice, setAuth } from '@/auth'
 import { useToast } from '@/composables/useToast'
+import { formatBeijingTimeShort } from '@/domain/date-time'
 import {
   loadUserPreferences,
   saveUserPreferences,
@@ -106,15 +107,7 @@ function savePreferences() {
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) return '暂无记录'
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return value
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(parsed)
+  return formatBeijingTimeShort(value, value || '暂无记录')
 }
 </script>
 

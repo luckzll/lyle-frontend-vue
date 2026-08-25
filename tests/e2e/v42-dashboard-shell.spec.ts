@@ -282,6 +282,59 @@ test('new chat keeps one empty state and a compact composer across breakpoints',
   expect(mobileLayout.overflow).toBe(false)
 })
 
+test('chat uses one contained message scrollbar and keeps the composer in view', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.addInitScript(() => {
+    localStorage.setItem('lyle.chat.active-conversation', 'scroll-layout')
+  })
+  await page.route('**/api/conversations', (route) => fulfillJson(route, [
+    { id: 'scroll-layout', title: '长对话滚动验收' }
+  ]))
+  await page.route('**/api/chat/messages/scroll-layout', (route) => fulfillJson(route, [
+    {
+      id: 'scroll-user',
+      conversationId: 'scroll-layout',
+      role: 'user',
+      content: '请整理这份长内容',
+      createdAt: NOW
+    },
+    {
+      id: 'scroll-assistant',
+      conversationId: 'scroll-layout',
+      role: 'assistant',
+      content: Array.from({ length: 80 }, (_, index) => `### 第 ${index + 1} 项\n\n这是用于验证聊天滚动区域的内容。`).join('\n\n'),
+      createdAt: NOW
+    }
+  ]))
+
+  await page.goto('/')
+  await expect(page.getByRole('log', { name: '对话消息' })).toBeVisible()
+
+  const layout = await page.evaluate(() => {
+    const list = document.querySelector('.chat-list') as HTMLElement | null
+    const composer = document.querySelector('.chat-input') as HTMLElement | null
+    const listRect = list?.getBoundingClientRect()
+    const composerRect = composer?.getBoundingClientRect()
+    return {
+      documentClientHeight: document.documentElement.clientHeight,
+      documentScrollHeight: document.documentElement.scrollHeight,
+      listClientHeight: list?.clientHeight || 0,
+      listScrollHeight: list?.scrollHeight || 0,
+      listOverflowY: list ? getComputedStyle(list).overflowY : '',
+      listBottom: listRect?.bottom || 0,
+      composerTop: composerRect?.top || 0,
+      composerBottom: composerRect?.bottom || 0,
+      viewportHeight: window.innerHeight
+    }
+  })
+
+  expect(layout.documentScrollHeight).toBeLessThanOrEqual(layout.documentClientHeight)
+  expect(layout.listScrollHeight).toBeGreaterThan(layout.listClientHeight)
+  expect(layout.listOverflowY).toBe('auto')
+  expect(layout.composerTop).toBeGreaterThanOrEqual(layout.listBottom)
+  expect(layout.composerBottom).toBeLessThanOrEqual(layout.viewportHeight)
+})
+
 test('V4.2 dashboard presents work and hands a project draft to chat once', async ({ page }) => {
   await page.goto('/dashboard')
 

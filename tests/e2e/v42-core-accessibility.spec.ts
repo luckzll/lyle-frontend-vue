@@ -75,6 +75,36 @@ for (const corePage of corePages) {
   })
 }
 
+test('renders the chat surface while knowledge bases load in the background', async ({ page }) => {
+  let releaseKnowledgeBases: (() => void) | undefined
+  const knowledgeBasesReady = new Promise<void>((resolve) => {
+    releaseKnowledgeBases = resolve
+  })
+
+  await page.route('**/api/knowledge-bases', async (route) => {
+    await knowledgeBasesReady
+    await fulfillJson(route, [])
+  })
+
+  try {
+    await page.goto('/')
+
+    await expect(page.getByRole('heading', { level: 2, name: '今天想推进什么？' })).toBeVisible()
+    await expect(page.getByTestId('chat-input')).toBeVisible()
+    await expect(page.getByText('正在加载会话和知识库')).toHaveCount(0)
+
+    await page.getByRole('button', { name: '上下文' }).click()
+    await expect(page.getByText('知识库正在后台加载…')).toBeVisible()
+    await expect(page.getByTestId('chat-knowledge-select')).toBeDisabled()
+
+    releaseKnowledgeBases?.()
+    await expect(page.getByTestId('chat-knowledge-select')).toBeEnabled()
+    await expect(page.getByText('知识库正在后台加载…')).toHaveCount(0)
+  } finally {
+    releaseKnowledgeBases?.()
+  }
+})
+
 async function installAuthenticatedSession(page: Page) {
   const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 }))
     .toString('base64url')
