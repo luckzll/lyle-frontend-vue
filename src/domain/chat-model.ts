@@ -4,10 +4,18 @@ export interface ChatModelOption {
   id: ChatModelId
   name: string
   description: string
+  disabledReason?: string
 }
 
 export const CHAT_MODEL_STORAGE_KEY = 'lyle.chat.model'
 export const DEFAULT_CHAT_MODEL_ID: ChatModelId = 'qwen3.7-flash'
+
+const MODEL_CONNECTION_ERROR_MARKERS = [
+  '当前模型暂时无法连接',
+  '模型服务暂时不可用',
+  'network is unreachable',
+  'connection error'
+]
 
 export const CHAT_MODEL_OPTIONS: readonly ChatModelOption[] = [
   {
@@ -18,17 +26,20 @@ export const CHAT_MODEL_OPTIONS: readonly ChatModelOption[] = [
   {
     id: 'gpt-5.5',
     name: 'GPT-5.5',
-    description: '高质量推理与复杂专业任务'
+    description: '高质量推理与复杂专业任务',
+    disabledReason: '生产服务器暂时无法连接 ZenMux'
   },
   {
     id: 'claude-opus-4.6',
     name: 'Claude Opus 4.6',
-    description: '长文写作、分析与代码任务'
+    description: '长文写作、分析与代码任务',
+    disabledReason: '生产服务器暂时无法连接 ZenMux'
   },
   {
     id: 'gemini-3.5-flash',
     name: 'Gemini 3.5 Flash',
-    description: '多模态理解与快速回答'
+    description: '多模态理解与快速回答',
+    disabledReason: '生产服务器暂时无法连接 ZenMux'
   },
   {
     id: 'deepseek-v4-flash',
@@ -58,7 +69,15 @@ export const CHAT_MODEL_OPTIONS: readonly ChatModelOption[] = [
 ]
 
 export function resolveChatModelId(value: string | null | undefined): ChatModelId {
-  return CHAT_MODEL_OPTIONS.some((option) => option.id === value)
-    ? value as ChatModelId
-    : DEFAULT_CHAT_MODEL_ID
+  const selected = CHAT_MODEL_OPTIONS.find((option) => option.id === value)
+  return selected && !selected.disabledReason ? selected.id : DEFAULT_CHAT_MODEL_ID
+}
+
+export function isChatModelAvailable(modelId: ChatModelId) {
+  return !CHAT_MODEL_OPTIONS.find((option) => option.id === modelId)?.disabledReason
+}
+
+export function isChatModelConnectionError(message: string | null | undefined) {
+  const normalized = String(message || '').trim().toLowerCase()
+  return MODEL_CONNECTION_ERROR_MARKERS.some((marker) => normalized.includes(marker.toLowerCase()))
 }

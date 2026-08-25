@@ -148,8 +148,8 @@ defineExpose({ focus: () => textarea.value?.focus() })
           <Sparkles :size="14" aria-hidden="true" />
           <span class="visually-hidden">对话模型</span>
           <select data-testid="chat-model-select" :value="chatModelId" aria-label="对话模型" :disabled="loading" @change="selectModel">
-            <option v-for="option in modelOptions" :key="option.id" :value="option.id">
-              {{ option.name }}
+            <option v-for="option in modelOptions" :key="option.id" :value="option.id" :disabled="Boolean(option.disabledReason)">
+              {{ option.name }}{{ option.disabledReason ? '（暂不可用）' : '' }}
             </option>
           </select>
           <ChevronDown :size="13" aria-hidden="true" />

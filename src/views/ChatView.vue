@@ -55,6 +55,8 @@ import { formatEstimatedCost, formatTokens, measurementLabel } from '@/domain/us
 import {
   CHAT_MODEL_OPTIONS,
   CHAT_MODEL_STORAGE_KEY,
+  DEFAULT_CHAT_MODEL_ID,
+  isChatModelConnectionError,
   resolveChatModelId,
   type ChatModelId
 } from '@/domain/chat-model'
@@ -839,7 +841,7 @@ async function submit(retryContext?: RetryTurnContext) {
   }
 }
 
-function retryFailedMessage(index: number) {
+function retryFailedMessage(index: number, useQwenFallback = false) {
   if (loading.value) return
   const failed = messages.value[index]
   if (!failed?.turnId) {
@@ -848,6 +850,7 @@ function retryFailedMessage(index: number) {
   }
   for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
     if (messages.value[cursor].role !== 'user') continue
+    if (useQwenFallback) chatModelId.value = DEFAULT_CHAT_MODEL_ID
     void submit({ userIndex: cursor, assistantIndex: index, turnId: failed.turnId })
     return
   }
@@ -1040,7 +1043,9 @@ function userImages(message: Message) {
 }
 
 function assistantTextContent(message: Message) {
-  return message.content.replace(/!\[[^\]]*]\(https?:\/\/[^)\s]+\)/g, '').trim()
+  const content = message.content.replace(/!\[[^\]]*]\(https?:\/\/[^)\s]+\)/g, '').trim()
+  if (message.phase === 'FAILED' && content && content === message.statusText?.trim()) return ''
+  return content
 }
 
 function assistantImages(message: Message) {
@@ -1054,8 +1059,22 @@ function assistantImages(message: Message) {
 
 function showAssistantStatus(message: Message) {
   return message.role === 'assistant'
+    && message.phase !== 'FAILED'
     && message.phase !== 'COMPLETED'
     && Boolean(message.statusText)
+}
+
+function failureMessage(message: Message) {
+  return message.statusText?.trim() || assistantTextContent(message) || '本次回答未能完成，请稍后重试。'
+}
+
+function isConnectionFailure(message: Message) {
+  return isChatModelConnectionError(message.statusText || message.content)
+}
+
+function failureRetryLabel(message: Message) {
+  if (!isConnectionFailure(message)) return '重试'
+  return chatModelId.value === DEFAULT_CHAT_MODEL_ID ? '使用 Qwen 重试' : '切换到 Qwen 并重试'
 }
 
 async function copyDebugPayload(message: Message, index: number) {
@@ -2060,7 +2079,13 @@ function escapeHtml(text: string) {
           <div v-if="!message.content && !message.statusText" class="message-bubble message-content">
             <span class="typing-cursor">正在生成回答</span>
           </div>
-          <MessageFailureActions v-if="message.phase === 'FAILED' && !loading" @retry="retryFailedMessage(index)" />
+          <MessageFailureActions
+            v-if="message.phase === 'FAILED' && !loading"
+            :message="failureMessage(message)"
+            :label="failureRetryLabel(message)"
+            :connection-failure="isConnectionFailure(message)"
+            @retry="retryFailedMessage(index, isConnectionFailure(message))"
+          />
           <details v-if="message.usage?.callCount" class="turn-usage">
             <summary>
               本轮 {{ formatTokens((message.usage.promptTokens || 0) + (message.usage.completionTokens || 0)) }} Token
@@ -2624,8 +2649,14 @@ function escapeHtml(text: string) {
 </template>
 
 <style scoped>
+.page { --chat-reading-width: 920px; }
+
+.toolbar {
+  width: min(100%, var(--chat-reading-width));
+  margin-inline: auto;
+}
+
 .chat-workspace {
-  --chat-reading-width: 860px;
   position: relative;
   display: grid;
   min-height: 0;
@@ -2645,18 +2676,21 @@ function escapeHtml(text: string) {
   max-height: none;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-color: var(--border);
-  border-radius: var(--radius-xl);
-  background: var(--surface);
+  width: min(100%, var(--chat-reading-width));
+  justify-self: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   scroll-behavior: smooth;
   scrollbar-color: color-mix(in srgb, var(--muted-foreground) 42%, transparent) transparent;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  padding-inline: clamp(var(--space-4), 4vw, 48px);
+  padding: var(--space-3) 0 var(--space-5);
 }
 
 .message {
-  width: min(100%, var(--chat-reading-width));
+  width: 100%;
   max-width: none;
   margin-inline: auto;
 }
@@ -2702,7 +2736,7 @@ function escapeHtml(text: string) {
 .chat-starter {
   display: grid;
   gap: var(--space-5);
-  width: min(760px, 100%);
+  width: min(780px, 100%);
   align-self: center;
   margin: auto;
   padding: clamp(16px, 4vw, 42px) 0;
