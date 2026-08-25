@@ -3,6 +3,7 @@ import { nextTick, onMounted, ref } from 'vue'
 import { Eye, EyeOff } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import { login, register, trackProductEvent, trackPublicProductEvent } from '@/api/app'
+import { toAppError } from '@/api/errors'
 import { setAuth } from '@/auth'
 import { resolveAuthRedirect } from '@/domain/auth-redirect'
 import { useRuntimeFeatures } from '@/composables/useRuntimeFeatures'
@@ -77,6 +78,20 @@ async function submit() {
     return
   }
 
+  if (mode.value === 'register' && (username.value.trim().length < 3 || username.value.trim().length > 64)) {
+    errorMessage.value = '用户名需要 3～64 个字符。'
+    await nextTick()
+    errorSummary.value?.focus()
+    return
+  }
+
+  if (mode.value === 'register' && (password.value.length < 8 || password.value.length > 128)) {
+    errorMessage.value = '密码需要 8～128 个字符。'
+    await nextTick()
+    errorSummary.value?.focus()
+    return
+  }
+
   loading.value = true
   errorMessage.value = ''
   try {
@@ -102,9 +117,11 @@ async function submit() {
     await router.replace(redirect.target)
   } catch (error: unknown) {
     const hasResponse = Boolean((error as { response?: unknown })?.response)
-    errorMessage.value = hasResponse
-      ? '用户名或密码不正确，请重试。'
-      : '暂时无法连接服务，请稍后重试。'
+    errorMessage.value = !hasResponse
+      ? '暂时无法连接服务，请稍后重试。'
+      : mode.value === 'register'
+        ? toAppError(error, '注册失败，请检查输入。').message
+        : '用户名或密码不正确，请重试。'
     password.value = ''
     void trackPublicProductEvent({
       eventType: 'auth_submit_total', page: 'login', actionType: mode.value, status: 'failed',
@@ -210,6 +227,8 @@ async function submit() {
               data-testid="password-input"
               name="password"
               :type="passwordVisible ? 'text' : 'password'"
+              :minlength="mode === 'register' ? 8 : 6"
+              maxlength="128"
               :aria-invalid="Boolean(errorMessage)"
               required
             />

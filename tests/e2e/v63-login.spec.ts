@@ -37,6 +37,26 @@ test('register changes autocomplete, clears password, and unsafe redirect falls 
   await expect(page).toHaveURL('/dashboard')
 })
 
+test('register explains invalid fields and an existing username', async ({ page }) => {
+  await page.goto('/login')
+  await page.getByTestId('register-tab').click()
+
+  await page.getByTestId('username-input').fill('ab')
+  await page.getByTestId('password-input').fill('safe-password')
+  await page.getByTestId('auth-submit').click()
+  await expect(page.getByRole('alert')).toHaveText('用户名需要 3～64 个字符。')
+
+  await page.getByTestId('username-input').fill('new-user')
+  await page.getByTestId('password-input').fill('1234567')
+  await page.getByTestId('auth-submit').click()
+  await expect(page.getByRole('alert')).toHaveText('密码需要 8～128 个字符。')
+
+  await page.getByTestId('username-input').fill('existing-user')
+  await page.getByTestId('password-input').fill('safe-password')
+  await page.getByTestId('auth-submit').click()
+  await expect(page.getByRole('alert')).toHaveText('该用户名已被注册，请直接登录。')
+})
+
 test('login entry has no serious or critical accessibility violations', async ({ page }) => {
   await page.goto('/login')
   await expect(page.locator('.auth-page')).toBeVisible()
@@ -111,6 +131,14 @@ test('login ambient uses production TOS and falls back to the local asset', asyn
 async function mockApi(route: Route) {
   const pathname = new URL(route.request().url()).pathname
   if (pathname === '/api/auth/login' || pathname === '/api/auth/register') {
+    const body = route.request().postDataJSON() as { username?: string }
+    if (pathname === '/api/auth/register' && body.username === 'existing-user') {
+      return route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: '该用户名已被注册，请直接登录。' })
+      })
+    }
     const tokenPayload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')
     return route.fulfill({
       status: 200,
