@@ -1,4 +1,4 @@
-export type ChatModelId = 'qwen3.7-flash' | 'qwen3.7-plus' | 'qwen3.8-max' | 'deepseek-v4-flash' | 'deepseek-v4-pro' | 'kimi-k3'
+export type ChatModelId = 'qwen3.7-flash' | 'gpt-5.5' | 'claude-opus-4.6' | 'gemini-3.5-flash' | 'qwen3.7-plus' | 'qwen3.8-max' | 'deepseek-v4-flash' | 'deepseek-v4-pro' | 'kimi-k3'
 
 export interface ChatModelOption {
   id: ChatModelId
@@ -14,6 +14,21 @@ export const CHAT_MODEL_OPTIONS: readonly ChatModelOption[] = [
     id: 'qwen3.7-flash',
     name: 'Qwen 3.7 Flash',
     description: '速度优先，适合日常问答'
+  },
+  {
+    id: 'gpt-5.5',
+    name: 'GPT-5.5',
+    description: '高质量推理与复杂专业任务'
+  },
+  {
+    id: 'claude-opus-4.6',
+    name: 'Claude Opus 4.6',
+    description: '长文写作、分析与代码任务'
+  },
+  {
+    id: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
+    description: '多模态理解与快速回答'
   },
   {
     id: 'deepseek-v4-flash',
