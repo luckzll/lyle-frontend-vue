@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowUp, Square, X } from '@lucide/vue'
+import { ArrowUp, ChevronDown, Sparkles, Square, X } from '@lucide/vue'
 import AttachmentCommandMenu from './AttachmentCommandMenu.vue'
 import AttachmentSkipSummary from './AttachmentSkipSummary.vue'
 import AttachmentTray from './AttachmentTray.vue'
 import type { ChatAttachmentDraft } from '@/domain/chat-attachment'
 import type { DirectorySkip } from '@/domain/directory-entry'
+import type { ChatModelId, ChatModelOption } from '@/domain/chat-model'
 
 const props = defineProps<{
   modelValue: string
@@ -16,6 +17,8 @@ const props = defineProps<{
   announcement?: string
   showAttachmentHint?: boolean
   folderAttachmentsEnabled?: boolean
+  chatModelId: ChatModelId
+  modelOptions: readonly ChatModelOption[]
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
@@ -25,6 +28,7 @@ const emit = defineEmits<{
   remove: [localId: string]
   retry: [localId: string]
   dismissHint: []
+  'update:chatModelId': [value: ChatModelId]
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -38,6 +42,9 @@ const folderSupported = computed(() => browserFolderSupported.value && props.fol
 const mobile = ref(false)
 let mobileQuery: MediaQueryList | undefined
 const commandOpen = computed(() => /^\s*\/[\p{L}]*$/u.test(props.modelValue))
+const selectedModel = computed(() => (
+  props.modelOptions.find((option) => option.id === props.chatModelId) || props.modelOptions[0]
+))
 
 function resize() {
   const element = textarea.value
@@ -72,6 +79,10 @@ function selected(event: Event, source: 'picker' | 'folder_picker') {
   if (files.length) emit('files', files, source)
   input.value = ''
   void nextTick(() => textarea.value?.focus())
+}
+
+function selectModel(event: Event) {
+  emit('update:chatModelId', (event.target as HTMLSelectElement).value as ChatModelId)
 }
 
 function shortcut(event: KeyboardEvent) {
@@ -133,6 +144,17 @@ defineExpose({ focus: () => textarea.value?.focus() })
           <span>可拖入图片、文件或文件夹</span>
           <button type="button" aria-label="关闭附件提示" @click="$emit('dismissHint')"><X :size="14" aria-hidden="true" /></button>
         </div>
+        <label class="model-picker" :title="selectedModel?.description">
+          <Sparkles :size="14" aria-hidden="true" />
+          <span class="visually-hidden">对话模型</span>
+          <select :value="chatModelId" aria-label="对话模型" :disabled="loading" @change="selectModel">
+            <option v-for="option in modelOptions" :key="option.id" :value="option.id">
+              {{ option.name }} · {{ option.usage }}
+            </option>
+          </select>
+          <ChevronDown :size="13" aria-hidden="true" />
+        </label>
+        <span class="model-description">{{ selectedModel?.description }}</span>
         <span class="composer-context">当前项目 / 知识库</span>
       </div>
       <button v-if="loading" class="primary-action stop" type="button" aria-label="停止生成" @click="$emit('stop')">
@@ -152,6 +174,13 @@ defineExpose({ focus: () => textarea.value?.focus() })
 textarea { display: block; width: 100%; min-height: 48px; max-height: 240px; resize: none; overflow-y: auto; border: 0; outline: 0; background: transparent; padding: 13px 16px 5px; color: var(--foreground); font: inherit; line-height: 1.55; }
 footer { display: flex; min-height: 48px; align-items: center; gap: 10px; padding: 4px 8px 8px 16px; }
 .composer-meta { display: flex; min-width: 0; flex: 1; align-items: center; gap: 12px; }
+.model-picker { display: inline-flex; min-width: 0; flex: 0 1 auto; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 999px; background: var(--muted); padding: 5px 8px; color: var(--foreground); }
+.model-picker:focus-within { border-color: var(--primary-border); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 10%, transparent); }
+.model-picker svg:first-child { flex: 0 0 auto; color: var(--primary); }
+.model-picker select { min-width: 0; max-width: 190px; appearance: none; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.model-picker select:disabled { cursor: not-allowed; opacity: .65; }
+.model-picker svg:last-child { flex: 0 0 auto; color: var(--muted-foreground); pointer-events: none; }
+.model-description { min-width: 0; max-width: 260px; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .composer-context { min-width: 0; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .primary-action { display: inline-grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 50%; padding: 0; }
 .primary-action.stop { background: var(--foreground); }
@@ -163,5 +192,7 @@ footer { display: flex; min-height: 48px; align-items: center; gap: 10px; paddin
   textarea { max-height: 180px; padding-inline: 14px; }
   footer { padding-left: 14px; }
   .composer-context { display: none; }
+  .model-description { display: none; }
+  .model-picker select { max-width: 145px; }
 }
 </style>

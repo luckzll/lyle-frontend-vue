@@ -52,6 +52,12 @@ import { useWorkspaceDrop } from '@/composables/useWorkspaceDrop'
 import { useRuntimeFeatures } from '@/composables/useRuntimeFeatures'
 import type { DirectorySkip } from '@/domain/directory-entry'
 import { formatEstimatedCost, formatTokens, measurementLabel } from '@/domain/usage'
+import {
+  CHAT_MODEL_OPTIONS,
+  CHAT_MODEL_STORAGE_KEY,
+  resolveChatModelId,
+  type ChatModelId
+} from '@/domain/chat-model'
 import ChatComposer from '@/components/chat/ChatComposer.vue'
 import MessageAttachments from '@/components/chat/MessageAttachments.vue'
 import WorkspaceDropOverlay from '@/components/chat/WorkspaceDropOverlay.vue'
@@ -113,6 +119,7 @@ interface RetryTurnContext {
 }
 
 const input = ref('')
+const chatModelId = ref<ChatModelId>(resolveChatModelId(window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY)))
 const route = useRoute()
 const router = useRouter()
 const runtimeFeatures = useRuntimeFeatures()
@@ -139,6 +146,8 @@ const error = ref('')
 const commercialQuotaError = ref(false)
 const conversationId = ref('')
 const ACTIVE_CONVERSATION_STORAGE_KEY = 'lyle.chat.active-conversation'
+
+watch(chatModelId, (value) => window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, value))
 const editingTitle = ref(false)
 const editingConversationId = ref('')
 const titleDraft = ref('')
@@ -718,7 +727,8 @@ async function submit(retryContext?: RetryTurnContext) {
       message,
       knowledgeBaseIds: selectedKnowledgeBaseId.value ? [selectedKnowledgeBaseId.value] : [],
       attachmentIds,
-      retry: Boolean(retryContext)
+      retry: Boolean(retryContext),
+      modelId: chatModelId.value
     }, {
       onOpen: () => {
         if (!retryContext) {
@@ -2600,6 +2610,8 @@ function escapeHtml(text: string) {
       :announcement="attachmentAnnouncement"
       :show-attachment-hint="showAttachmentHint"
       :folder-attachments-enabled="runtimeFeatures.chatFolderAttachmentsEnabled"
+      :model-options="CHAT_MODEL_OPTIONS"
+      v-model:chat-model-id="chatModelId"
       @submit="submit"
       @stop="cancelStreaming"
       @files="handleAttachmentFiles"

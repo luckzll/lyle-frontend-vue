@@ -433,6 +433,7 @@ export function sendMessage(payload: {
   projectId?: number
   message: string
   knowledgeBaseIds: string[]
+  modelId?: string
 }) {
   return http.post<ChatResponse>('/chat/send', payload)
 }
@@ -782,6 +783,7 @@ export async function streamMessage(
     knowledgeBaseIds: string[]
     attachmentIds?: string[]
     retry?: boolean
+    modelId?: string
   },
   handlers: SseHandlers,
   options: { signal?: AbortSignal } = {}
