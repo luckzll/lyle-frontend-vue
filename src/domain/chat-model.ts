@@ -3,7 +3,6 @@ export type ChatModelId = 'qwen3.7-flash' | 'qwen3.7-plus' | 'qwen3.8-max' | 'de
 export interface ChatModelOption {
   id: ChatModelId
   name: string
-  usage: string
   description: string
 }
 
@@ -14,38 +13,32 @@ export const CHAT_MODEL_OPTIONS: readonly ChatModelOption[] = [
   {
     id: 'qwen3.7-flash',
     name: 'Qwen 3.7 Flash',
-    usage: '¥0.2 / ¥0.8',
-    description: '每百万输入 / 输出 Token（32K 内），日常问答首选'
+    description: '速度优先，适合日常问答'
   },
   {
     id: 'deepseek-v4-flash',
     name: 'DeepSeek V4 Flash',
-    usage: '¥1 / ¥2',
-    description: '每百万输入 / 输出 Token，推理速度与成本均衡'
+    description: '响应迅速，适合轻量推理'
   },
   {
     id: 'qwen3.7-plus',
     name: 'Qwen 3.7 Plus',
-    usage: '¥2 / ¥8',
-    description: '每百万输入 / 输出 Token（256K 内），适合复杂通用任务'
+    description: '能力均衡，适合复杂通用任务'
   },
   {
     id: 'deepseek-v4-pro',
     name: 'DeepSeek V4 Pro',
-    usage: '¥12 / ¥24',
-    description: '每百万输入 / 输出 Token，适合复杂推理和专业任务'
+    description: '擅长复杂推理与专业分析'
   },
   {
     id: 'qwen3.8-max',
     name: 'Qwen 3.8 Max',
-    usage: '¥12 / ¥36',
-    description: '每百万输入 / 输出 Token，旗舰能力，消耗最高'
+    description: '旗舰能力，适合高质量回答'
   },
   {
     id: 'kimi-k3',
     name: 'Kimi K3',
-    usage: '¥20 / ¥100',
-    description: '每百万输入 / 输出 Token，长上下文与复杂推理旗舰'
+    description: '长上下文与复杂推理'
   }
 ]
 
