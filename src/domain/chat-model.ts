@@ -1,4 +1,4 @@
-export type ChatModelId = 'qwen-fast' | 'gpt-5.4' | 'gpt-5.5' | 'claude-sonnet-4.6' | 'gemini-3.1-pro'
+export type ChatModelId = 'qwen3.7-flash' | 'qwen3.7-plus' | 'qwen3.8-max' | 'deepseek-v4-flash' | 'deepseek-v4-pro'
 
 export interface ChatModelOption {
   id: ChatModelId
@@ -8,38 +8,38 @@ export interface ChatModelOption {
 }
 
 export const CHAT_MODEL_STORAGE_KEY = 'lyle.chat.model'
-export const DEFAULT_CHAT_MODEL_ID: ChatModelId = 'qwen-fast'
+export const DEFAULT_CHAT_MODEL_ID: ChatModelId = 'qwen3.7-flash'
 
 export const CHAT_MODEL_OPTIONS: readonly ChatModelOption[] = [
   {
-    id: 'qwen-fast',
-    name: 'Qwen 3.5 Flash',
-    usage: '省 Token',
-    description: '响应快，适合日常问答和简单整理'
+    id: 'qwen3.7-flash',
+    name: 'Qwen 3.7 Flash',
+    usage: '¥0.2 / ¥0.8',
+    description: '每百万输入 / 输出 Token（32K 内），日常问答首选'
   },
   {
-    id: 'gpt-5.4',
-    name: 'GPT-5.4',
-    usage: '中等消耗',
-    description: '能力与成本均衡，适合大多数复杂任务'
+    id: 'deepseek-v4-flash',
+    name: 'DeepSeek V4 Flash',
+    usage: '¥1 / ¥2',
+    description: '每百万输入 / 输出 Token，推理速度与成本均衡'
   },
   {
-    id: 'gpt-5.5',
-    name: 'GPT-5.5',
-    usage: '较高消耗',
-    description: '复杂推理和专业任务更强，速度与费用更高'
+    id: 'qwen3.7-plus',
+    name: 'Qwen 3.7 Plus',
+    usage: '¥2 / ¥8',
+    description: '每百万输入 / 输出 Token（256K 内），适合复杂通用任务'
   },
   {
-    id: 'claude-sonnet-4.6',
-    name: 'Claude Sonnet 4.6',
-    usage: '中高消耗',
-    description: '擅长长文、代码和多步骤任务'
+    id: 'deepseek-v4-pro',
+    name: 'DeepSeek V4 Pro',
+    usage: '¥12 / ¥24',
+    description: '每百万输入 / 输出 Token，适合复杂推理和专业任务'
   },
   {
-    id: 'gemini-3.1-pro',
-    name: 'Gemini 3.1 Pro',
-    usage: '中高消耗',
-    description: '适合长上下文理解和综合分析'
+    id: 'qwen3.8-max',
+    name: 'Qwen 3.8 Max',
+    usage: '¥12 / ¥36',
+    description: '每百万输入 / 输出 Token，旗舰能力，消耗最高'
   }
 ]
 
