@@ -2625,6 +2625,7 @@ function escapeHtml(text: string) {
 
 <style scoped>
 .chat-workspace {
+  --chat-reading-width: 860px;
   position: relative;
   display: grid;
   min-height: 0;
@@ -2651,6 +2652,13 @@ function escapeHtml(text: string) {
   scrollbar-color: color-mix(in srgb, var(--muted-foreground) 42%, transparent) transparent;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
+  padding-inline: clamp(var(--space-4), 4vw, 48px);
+}
+
+.message {
+  width: min(100%, var(--chat-reading-width));
+  max-width: none;
+  margin-inline: auto;
 }
 
 .chat-list::-webkit-scrollbar { width: 8px; }
@@ -2751,6 +2759,8 @@ function escapeHtml(text: string) {
   backdrop-filter: blur(12px);
   grid-column: 1;
   grid-row: 2;
+  width: min(100%, var(--chat-reading-width));
+  justify-self: center;
 }
 .chat-input textarea { min-height: 48px; resize: vertical; border: 0; background: transparent; box-shadow: none; }
 .chat-input textarea:focus { outline: 0; }
@@ -2946,6 +2956,8 @@ function escapeHtml(text: string) {
   }
   .starter-grid :deep(.suggestion-card.compact .action) { grid-column: auto; }
   .chat-list { min-height: 0; max-height: none; padding: var(--space-3); }
+  .message,
+  .chat-input { width: 100%; }
   .toolbar-controls {
     display: flex;
     width: auto;

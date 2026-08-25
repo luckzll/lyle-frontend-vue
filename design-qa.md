@@ -1,40 +1,38 @@
 **Evidence**
-- Source visual truth: `C:/Temp/codex-clipboard-b921be81-e475-4d87-8830-6451dd917972.png`
-- Rendered implementation: `D:/vit/文档/Lyle/.worktrees/model-switcher-frontend/artifacts/design-qa/model-picker-composer.png`
-- Full desktop view: `D:/vit/文档/Lyle/.worktrees/model-switcher-frontend/artifacts/design-qa/model-picker-desktop.png`
-- Responsive view: `D:/vit/文档/Lyle/.worktrees/model-switcher-frontend/artifacts/design-qa/model-picker-mobile.png`
-- Combined comparison: `D:/vit/文档/Lyle/.worktrees/model-switcher-frontend/artifacts/design-qa/model-picker-comparison.png`
-- Viewport: desktop 1280 × 720 CSS px; mobile 390 × 844 CSS px; device scale factor 1.
-- Source pixels: 2124 × 153. The focused source region was normalized to 984 × 71 for the combined comparison.
-- Implementation pixels: focused composer 984 × 101; full desktop 1280 × 720; mobile 390 × 844.
-- State: authenticated local QA fixture, new conversation, Qwen 3.7 Flash selected for the final capture.
+- Source visual truth: `C:/Temp/codex-clipboard-cb24c3de-89d4-426f-9187-cbd3d5dfaccb.png`.
+- Supporting source error state: `C:/Temp/codex-clipboard-cf2cf7ec-d37f-4762-aa36-e5ccc150b66a.png`.
+- Browser-rendered desktop implementation: `D:/vit/文档/Lyle/.worktrees/model-switcher-frontend/test-results/design-qa-chat-centered-desktop.png`.
+- Browser-rendered mobile implementation: `D:/vit/文档/Lyle/.worktrees/model-switcher-frontend/test-results/design-qa-chat-centered-mobile.png`.
+- Source pixels: 2549 × 1403 at desktop density. Implementation pixels/CSS viewport: 1280 × 720 desktop and 390 × 844 mobile, device scale factor 1. The source and implementation were compared at their full-view aspect ratios; exact content length differs because the QA account uses a shorter fixture conversation.
+- State: authenticated test account, populated two-message conversation, context panel closed for captures, Qwen 3.7 Flash selected.
+- Full-view comparison evidence: the source and desktop implementation were opened together in one comparison input. The source exposed the original full-width message alignment; the implementation showed the requested centered reading column.
+- Focused comparison: a separate crop was unnecessary because the changed surface is the full message/composer column. Browser measurements provide the focused evidence: assistant and user tracks are both 860 CSS px wide and share the same horizontal origin; the composer is 860 CSS px wide and centered on the same axis.
 
 **Findings**
-- No actionable P0, P1, or P2 findings.
-- Fonts and typography: existing application font stack and small-control weight remain consistent; labels are readable and do not wrap or truncate at the tested widths.
-- Spacing and layout rhythm: the picker is reduced to a 34 px compact control; icon, label, chevron, divider, context text, and send action align on one baseline.
-- Colors and visual tokens: the picker uses the existing primary-soft, primary-border, foreground, muted-foreground, and border tokens with sufficient visual separation.
-- Image quality and asset fidelity: no raster imagery is required; the existing Lucide Sparkles and ChevronDown icons are preserved and render sharply.
-- Copy and content: all price strings and the adjacent pricing description are removed. Model options contain names only. “当前项目 / 知识库” remains as secondary context.
-- Responsive behavior: at 390 px the context label and divider are hidden, the picker stays visible, and the document has no horizontal overflow.
-- Accessibility and interaction: the native select keeps its “对话模型” accessible label, focus treatment, disabled state, and keyboard-native behavior.
+- No actionable P0, P1, or P2 findings remain.
+- Fonts and typography: the existing application font stack, weights, line heights, Markdown hierarchy, and wrapping are preserved. The narrower measure improves long-form scanability without truncation.
+- Spacing and layout rhythm: desktop messages and composer now share one 860 px centered reading track. The outer conversation canvas remains full width, preserving the product shell and context-panel behavior.
+- Colors and visual tokens: no palette drift was introduced; surface, border, primary-soft, foreground, and muted tokens remain unchanged.
+- Image quality and asset fidelity: no raster or custom image assets are required for this layout change. Existing product icons are preserved.
+- Copy and content: application copy is unchanged by the layout work. The separate provider-network fix changes only the actionable failure message.
+- Responsive behavior: at 390 × 844, messages and composer use the available width, the document has no horizontal overflow, and the internal message list remains scrollable.
+- Accessibility and interaction: model selection was changed from Qwen to GPT-5.5 and back successfully; the context dialog opened and closed correctly; the composer remains focusable; browser console warnings/errors were empty.
 
 **Open Questions**
-- None.
+- None for the centered-layout scope.
 
 **Implementation Checklist**
-- [x] Remove prices from the model data and option labels.
-- [x] Remove the long inline model description from the composer footer.
-- [x] Restyle the model picker with existing product tokens.
-- [x] Preserve a visible model name, icon, chevron, and accessible native select.
-- [x] Verify selection by switching from Qwen 3.7 Flash to Kimi K3 and back.
-- [x] Verify desktop and 390 px mobile layouts.
-- [x] Check browser console warnings/errors (none found).
+- [x] Center user and assistant messages in a shared desktop reading track.
+- [x] Center the composer on the same axis and width.
+- [x] Preserve full-width outer canvas and context panel.
+- [x] Preserve mobile full-width behavior without horizontal overflow.
+- [x] Verify model switching and context-panel interactions.
+- [x] Check browser console warnings/errors.
 
 **Follow-up Polish**
-- No P3 follow-up is required for this scoped change.
+- P3: a later visual pass could tune the reading width between 820 and 880 px from real-user preference, but 860 px currently balances tables, Markdown, and chat readability.
 
 **Comparison History**
-- Pass 1: source and implementation were combined in `model-picker-comparison.png`. No P0/P1/P2 mismatch remained; no additional visual iteration was required.
+- Pass 1: the original screenshot and browser-rendered implementation were compared together. The requested intentional difference—moving the message/composer content into a centered reading track—was present, with no new P0/P1/P2 regression. No corrective visual iteration was required.
 
 final result: passed
