@@ -2,22 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   CHAT_MODEL_OPTIONS,
   DEFAULT_CHAT_MODEL_ID,
-  isChatModelAvailable,
   isChatModelConnectionError,
   resolveChatModelId
 } from '../../src/domain/chat-model'
 
 describe('chat model selection', () => {
-  it('keeps every currently available model id', () => {
-    for (const option of CHAT_MODEL_OPTIONS.filter((item) => !item.disabledReason)) {
+  it('keeps every supported model id', () => {
+    for (const option of CHAT_MODEL_OPTIONS) {
       expect(resolveChatModelId(option.id)).toBe(option.id)
-      expect(isChatModelAvailable(option.id)).toBe(true)
     }
-  })
-
-  it('falls back when a persisted model is currently unavailable', () => {
-    expect(resolveChatModelId('gpt-5.5')).toBe(DEFAULT_CHAT_MODEL_ID)
-    expect(isChatModelAvailable('gpt-5.5')).toBe(false)
   })
 
   it('falls back to the token-saving default for unknown persisted values', () => {
