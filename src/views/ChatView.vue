@@ -2683,9 +2683,8 @@ function escapeHtml(text: string) {
   background: transparent;
   box-shadow: none;
   scroll-behavior: smooth;
-  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 42%, transparent) transparent;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   padding: var(--space-3) 0 var(--space-5);
 }
 
@@ -2695,18 +2694,7 @@ function escapeHtml(text: string) {
   margin-inline: auto;
 }
 
-.chat-list::-webkit-scrollbar { width: 8px; }
-.chat-list::-webkit-scrollbar-track { background: transparent; }
-.chat-list::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--muted-foreground) 38%, transparent);
-  background-clip: padding-box;
-}
-.chat-list:hover::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--muted-foreground) 58%, transparent);
-  background-clip: padding-box;
-}
+.chat-list::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 .chat-list--empty { overflow: hidden; }
 

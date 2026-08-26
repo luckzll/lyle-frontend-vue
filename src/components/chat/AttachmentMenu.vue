@@ -73,7 +73,7 @@ onBeforeUnmount(() => {
         <input
           type="file"
           aria-label="上传文件"
-          accept=".pdf,.docx,.txt,.md,.csv,.json,.log,.xlsx"
+          accept=".pdf,.docx,.txt,.md,.csv,.json,.log,.xlsx,.xlsm,.xls,.pptx"
           multiple
           @change="selected"
         />

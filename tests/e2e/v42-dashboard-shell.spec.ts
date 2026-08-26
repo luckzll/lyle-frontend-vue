@@ -321,6 +321,7 @@ test('chat uses one contained message scrollbar and keeps the composer in view',
       listClientHeight: list?.clientHeight || 0,
       listScrollHeight: list?.scrollHeight || 0,
       listOverflowY: list ? getComputedStyle(list).overflowY : '',
+      listScrollbarWidth: list ? getComputedStyle(list).scrollbarWidth : '',
       listBottom: listRect?.bottom || 0,
       composerTop: composerRect?.top || 0,
       composerBottom: composerRect?.bottom || 0,
@@ -331,6 +332,7 @@ test('chat uses one contained message scrollbar and keeps the composer in view',
   expect(layout.documentScrollHeight).toBeLessThanOrEqual(layout.documentClientHeight)
   expect(layout.listScrollHeight).toBeGreaterThan(layout.listClientHeight)
   expect(layout.listOverflowY).toBe('auto')
+  expect(layout.listScrollbarWidth).toBe('none')
   expect(layout.composerTop).toBeGreaterThanOrEqual(layout.listBottom)
   expect(layout.composerBottom).toBeLessThanOrEqual(layout.viewportHeight)
 })

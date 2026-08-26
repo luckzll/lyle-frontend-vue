@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import axios from 'axios'
+import { FileText, FileUp, Presentation, Table2 } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import {
   createKnowledgeBase,
@@ -14,6 +16,7 @@ import {
 } from '@/api/app'
 import type { KnowledgeBase, KnowledgeFile, RagChunkResponse, RagDebugResponse } from '@/api/types'
 import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
+import { isKnowledgeFileSupported, KNOWLEDGE_FILE_ACCEPT } from '@/domain/knowledge-file'
 
 const name = ref('默认知识库')
 const loading = ref(false)
@@ -33,6 +36,7 @@ const pendingFileDelete = ref<KnowledgeFile | null>(null)
 const pendingRebuildAll = ref(false)
 const showRetrievalTest = ref(false)
 const showTechnicalDetails = ref(false)
+const dragActive = ref(false)
 const selectedKnowledgeBase = computed(() =>
   knowledgeBases.value.find((item) => item.id === selectedKnowledgeBaseId.value)
 )
@@ -128,24 +132,69 @@ async function removeFile(fileId: string) {
 
 async function upload(event: Event) {
   const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file || !selectedKnowledgeBaseId.value) return
+  const selectedFiles = Array.from(input.files || [])
+  await uploadFiles(selectedFiles)
+  input.value = ''
+}
+
+async function dropFiles(event: DragEvent) {
+  dragActive.value = false
+  await uploadFiles(Array.from(event.dataTransfer?.files || []))
+}
+
+async function uploadFiles(selectedFiles: File[]) {
+  if (!selectedFiles.length || !selectedKnowledgeBaseId.value || loading.value) return
+
+  const unsupported = selectedFiles.filter((file) => !isKnowledgeFileSupported(file.name))
+  if (unsupported.length) {
+    error.value = `暂不支持：${unsupported.map((file) => file.name).join('、')}。请上传 PDF、DOCX、XLS/XLSX、PPTX 或文本文件。`
+    return
+  }
 
   loading.value = true
   error.value = ''
   notice.value = ''
   memoryNotice.value = ''
-  try {
-    const response = await uploadKnowledgeFile(selectedKnowledgeBaseId.value, file)
-    notice.value = '文件已上传并完成入库。'
-    setMemoryNotice(response.data.candidateMemories?.length || 0)
-    await refreshFiles()
-  } catch {
-    error.value = '文件上传或入库失败。'
-  } finally {
-    loading.value = false
-    input.value = ''
+  let completed = 0
+  let candidateMemoryCount = 0
+  const failures: string[] = []
+  for (const file of selectedFiles) {
+    try {
+      const response = await uploadKnowledgeFile(selectedKnowledgeBaseId.value, file)
+      completed += 1
+      candidateMemoryCount += response.data.candidateMemories?.length || 0
+    } catch (exception) {
+      failures.push(`${file.name}：${uploadFailureMessage(exception)}`)
+    }
   }
+  if (completed) {
+    notice.value = completed === 1 ? '文件已上传并完成入库。' : `${completed} 个文件已上传并完成入库。`
+    setMemoryNotice(candidateMemoryCount)
+    await refreshFiles()
+  }
+  if (failures.length) {
+    error.value = failures.join('；')
+  }
+  loading.value = false
+}
+
+function uploadFailureMessage(exception: unknown) {
+  if (axios.isAxiosError(exception)) {
+    const data = exception.response?.data as { message?: string; detail?: string } | undefined
+    const detail = String(data?.message || data?.detail || '').trim()
+    if (detail) return detail
+    if (exception.response?.status === 413) return '文件超过服务器允许的大小。'
+  }
+  return '上传或解析失败，请稍后重试。'
+}
+
+function leaveDropZone(event: DragEvent) {
+  if (event.currentTarget === event.target) dragActive.value = false
+}
+
+function preventDropDefaults(event: DragEvent) {
+  event.preventDefault()
+  if (!loading.value) dragActive.value = true
 }
 
 async function rebuildFile(fileId: string) {
@@ -323,14 +372,36 @@ onMounted(refreshKnowledgeBases)
               删除知识库
             </button>
           </div>
-          <div class="upload-zone">
-            <input
-              type="file"
-              accept=".txt,.md,.csv,.json,.log,.pdf,.docx"
-              data-testid="knowledge-file-input"
-              :disabled="loading"
-              @change="upload"
-            />
+          <div
+            class="upload-zone"
+            :class="{ 'is-dragging': dragActive, 'is-busy': loading }"
+            @dragenter="preventDropDefaults"
+            @dragover="preventDropDefaults"
+            @dragleave="leaveDropZone"
+            @drop.prevent="dropFiles"
+          >
+            <div class="upload-zone__icon"><FileUp :size="22" aria-hidden="true" /></div>
+            <div class="upload-zone__copy">
+              <strong>{{ loading ? '正在解析并建立索引…' : '拖入资料，或选择文件' }}</strong>
+              <span>支持文本型 PDF、Word、Excel、PowerPoint 和常见文本文件，可一次选择多个。</span>
+            </div>
+            <label class="upload-zone__button" :class="{ disabled: loading }">
+              <input
+                class="visually-hidden"
+                type="file"
+                :accept="KNOWLEDGE_FILE_ACCEPT"
+                data-testid="knowledge-file-input"
+                :disabled="loading"
+                multiple
+                @change="upload"
+              />
+              {{ loading ? '处理中' : '选择文件' }}
+            </label>
+            <div class="upload-formats" aria-label="支持的文件格式">
+              <span><FileText :size="14" />PDF / DOCX</span>
+              <span><Table2 :size="14" />XLS / XLSX</span>
+              <span><Presentation :size="14" />PPTX</span>
+            </div>
           </div>
         </section>
 
@@ -352,7 +423,7 @@ onMounted(refreshKnowledgeBases)
           </div>
           <div v-if="files.length === 0" class="empty-state compact">
             <strong>这个知识库还是空的</strong>
-            <span>上传 txt、md、pdf 或 docx 文件后会自动入库。</span>
+            <span>上传 PDF、DOCX、XLS/XLSX、PPTX 或文本文件后会自动入库。</span>
           </div>
           <article v-for="file in files" :key="file.id" class="file-row">
             <div>
@@ -470,8 +541,76 @@ onMounted(refreshKnowledgeBases)
 </template>
 
 <style scoped>
+.upload-zone {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px dashed color-mix(in srgb, var(--primary) 38%, var(--border));
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, var(--surface)) 0%, var(--surface) 72%);
+  padding: 16px;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+.upload-zone.is-dragging {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 11%, var(--surface));
+  transform: translateY(-1px);
+}
+.upload-zone.is-busy { opacity: .72; }
+.upload-zone__icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 13px;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.upload-zone__copy { display: grid; gap: 3px; min-width: 0; }
+.upload-zone__copy span { color: var(--muted-foreground); font-size: 13px; line-height: 1.45; }
+.upload-zone__button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--primary-border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--primary);
+  cursor: pointer;
+  padding: 0 15px;
+  font-size: 13px;
+  font-weight: 750;
+  box-shadow: var(--shadow-sm);
+}
+.upload-zone__button:hover { background: var(--primary-soft); }
+.upload-zone__button.disabled { cursor: wait; opacity: .7; }
+.upload-formats {
+  display: flex;
+  grid-column: 2 / -1;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.upload-formats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  color: var(--muted-foreground);
+  padding: 4px 9px;
+  font-size: 12px;
+}
 .technical-details { margin-top: 4px; color: var(--muted-foreground); font-size: 12px; }.technical-details summary { width: fit-content; cursor: pointer; }
 .retrieval-question input { min-width: 0; flex: 1; }.technical-toggle { width: fit-content; border: 0; background: transparent; color: var(--muted-foreground); padding: 4px 0; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
 .technical-panel { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-muted); padding: var(--space-4); }.technical-panel pre { max-height: 220px; overflow: auto; white-space: pre-wrap; }
-@media (max-width: 680px) { .retrieval-question { flex-direction: column; }.retrieval-question button { width: 100%; } }
+@media (max-width: 680px) {
+  .upload-zone { grid-template-columns: auto minmax(0, 1fr); }
+  .upload-zone__button { grid-column: 1 / -1; width: 100%; }
+  .upload-formats { grid-column: 1 / -1; }
+  .retrieval-question { flex-direction: column; }
+  .retrieval-question button { width: 100%; }
+}
 </style>

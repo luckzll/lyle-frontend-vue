@@ -136,7 +136,7 @@ defineExpose({ focus: () => textarea.value?.focus() })
     />
     <span id="attachment-input-help" class="visually-hidden">输入斜杠可选择图片、文件或文件夹。按 Command 或 Control 加 O 选择文件，加 Shift 选择文件夹。</span>
     <input ref="imageInput" class="native-picker" type="file" aria-label="选择图片" accept="image/jpeg,image/png,image/webp,image/gif" multiple @change="selected($event, 'picker')" />
-    <input ref="fileInput" class="native-picker" type="file" aria-label="选择文件" accept="image/jpeg,image/png,image/webp,image/gif,.pdf,.docx,.txt,.md,.csv,.json,.log,.xlsx" multiple @change="selected($event, 'picker')" />
+    <input ref="fileInput" class="native-picker" type="file" aria-label="选择文件" accept="image/jpeg,image/png,image/webp,image/gif,.pdf,.docx,.txt,.md,.csv,.json,.log,.xlsx,.xlsm,.xls,.pptx" multiple @change="selected($event, 'picker')" />
     <input ref="folderInput" class="native-picker" type="file" aria-label="选择文件夹" webkitdirectory multiple @change="selected($event, 'folder_picker')" />
     <footer>
       <div class="composer-meta">
