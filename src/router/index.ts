@@ -410,7 +410,7 @@ const router = createRouter({
         icon: 'credit-card',
         requiresAuth: false,
         requiresAdmin: false,
-        layout: 'auth'
+        layout: 'default'
       }
     },
     {

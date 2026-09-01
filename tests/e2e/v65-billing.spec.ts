@@ -221,7 +221,7 @@ test('V6.5 core commercial pages remain usable at 390px', async ({ page }) => {
   })
 
   const pages = [
-    { path: '/pricing', selector: '.pricing-page', shellSelector: '.pricing-nav', heading: '选择适合你的 Lyle' },
+    { path: '/pricing', selector: '.pricing-page', shellSelector: '.lyle-shell', heading: '选择适合你的 Lyle' },
     { path: `/checkout/${order.orderNo}`, selector: '.checkout-page', heading: 'Pro' },
     { path: `/billing/result/${order.orderNo}`, selector: '.result-card', heading: '权益已到账' },
     { path: '/settings/billing', selector: '.billing-page', heading: '套餐与账单' },
@@ -234,6 +234,17 @@ test('V6.5 core commercial pages remain usable at 390px', async ({ page }) => {
     await expectUsableWidth(page, target.selector, 340)
     await expectUsableWidth(page, target.shellSelector ?? '.app-header', 340)
   }
+})
+
+test('套餐页保留工作台导航框架', async ({ page }) => {
+  await mockBillingApi(page)
+  await page.goto('/pricing')
+
+  await expect(page.locator('.lyle-shell')).toBeVisible()
+  await expect(page.locator('.app-sidebar')).toBeVisible()
+  await expect(page.getByRole('link', { name: '设置', exact: true })).toHaveClass(/app-sidebar__link--active/)
+  await expect(page.locator('.pricing-nav')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '选择适合你的 Lyle' })).toBeVisible()
 })
 
 test('V6.5 pay later keeps the order open and returns to billing', async ({ page }) => {

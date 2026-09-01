@@ -98,11 +98,6 @@ async function choose(product: CatalogProduct) {
 
 <template>
   <section class="pricing-page" aria-labelledby="pricing-title">
-    <nav class="pricing-nav" aria-label="套餐页导航">
-      <RouterLink class="pricing-brand" to="/pricing"><span>L</span>Lyle AI</RouterLink>
-      <RouterLink v-if="authenticated" to="/dashboard">返回工作台</RouterLink>
-      <RouterLink v-else :to="{ name: 'login', query: { redirect: route.fullPath } }">登录</RouterLink>
-    </nav>
     <header class="pricing-hero">
       <p class="eyebrow">Lyle 套餐</p>
       <h1 id="pricing-title">选择适合你的 Lyle</h1>
@@ -195,11 +190,7 @@ async function choose(product: CatalogProduct) {
 </template>
 
 <style scoped>
-.pricing-page { width: 100%; min-width: 0; max-width: 1120px; margin: 0 auto; padding: 48px 20px 64px; }
-.pricing-nav { display: flex; align-items: center; justify-content: space-between; margin: -22px 0 40px; }
-.pricing-nav > a:last-child { border: 1px solid var(--border); border-radius: 8px; color: var(--foreground); padding: 8px 13px; font-size: 12px; font-weight: 700; }
-.pricing-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--foreground); font-size: 17px; font-weight: 850; letter-spacing: -.03em; }
-.pricing-brand span { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; background: var(--primary); color: white; font-size: 14px; }
+.pricing-page { width: 100%; min-width: 0; max-width: 1120px; margin: 0 auto; padding: 28px 20px 64px; }
 .pricing-hero { max-width: 720px; margin: 0 auto 30px; text-align: center; }
 .eyebrow { margin: 0 0 8px; color: var(--primary); font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .pricing-hero h1 { margin: 0; color: var(--foreground); font-size: clamp(32px, 5vw, 48px); letter-spacing: -.045em; }
@@ -243,7 +234,6 @@ async function choose(product: CatalogProduct) {
 .pricing-notes strong { display: block; color: var(--foreground); }
 @media (max-width: 720px) {
   .pricing-page { width: 100%; max-width: 520px; padding: 28px 12px 48px; }
-  .pricing-nav { margin: -8px 0 30px; }
   .pricing-hero { margin-bottom: 22px; }
   .pricing-hero h1 { font-size: clamp(28px, 9vw, 36px); }
   .plan-grid { grid-template-columns: minmax(0, 1fr); }
