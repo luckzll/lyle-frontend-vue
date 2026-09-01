@@ -408,9 +408,9 @@ const router = createRouter({
         title: '套餐与定价',
         navGroup: 'system',
         icon: 'credit-card',
-        requiresAuth: true,
+        requiresAuth: false,
         requiresAdmin: false,
-        layout: 'default'
+        layout: 'auth'
       }
     },
     {

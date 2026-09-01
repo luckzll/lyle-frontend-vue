@@ -94,7 +94,7 @@ test('V6.5 uses server price snapshots and only completes after FULFILLED', asyn
   await page.goto('/pricing?returnTo=/tasks')
   await expect(page.getByText('¥29.00', { exact: true })).toBeVisible()
   await expect(page.getByText('50 AI 额度', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '升级到 Pro' }).click()
+  await page.getByRole('button', { name: '选择Pro' }).click()
   await expect(page).toHaveURL(new RegExp(`/checkout/${order.orderNo}`))
   expect(createdPayload).toMatchObject({
     priceVersionCode: 'PRO_30D_V1',
@@ -106,6 +106,67 @@ test('V6.5 uses server price snapshots and only completes after FULFILLED', asyn
   await expect(page).toHaveURL(new RegExp(`/billing/result/${order.orderNo}`))
   await expect(page.getByRole('heading', { name: '权益已到账' })).toBeVisible()
   await expect(page.getByRole('link', { name: '返回刚才的任务' })).toHaveAttribute('href', '/tasks')
+})
+
+test('支付宝 HTML form is rendered and submitted instead of treated as a URL', async ({ page }) => {
+  await page.route('**/alipay-sandbox', async (route) => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().postData()).toContain('out_trade_no=P202607300001')
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/html;charset=UTF-8',
+      body: '<!doctype html><html><body><h1>支付宝沙箱收银台</h1></body></html>'
+    })
+  })
+  await mockBillingApi(page, async (route, path) => {
+    if (path === `/billing/orders/${order.orderNo}/checkout`) {
+      return fulfill(route, {
+        orderNo: order.orderNo,
+        orderStatus: 'PENDING_PAYMENT',
+        paymentNo: 'P202607300001',
+        paymentStatus: 'PENDING',
+        provider: 'ALIPAY',
+        checkoutType: 'HTML_FORM',
+        action: '<form method="post" action="/alipay-sandbox"><input type="hidden" name="out_trade_no" value="P202607300001"></form>',
+        expiresAt: order.expiresAt,
+        sandbox: false
+      })
+    }
+    if (path === `/billing/orders/${order.orderNo}/status`) return fulfill(route, order)
+    return false
+  })
+
+  await page.goto(`/checkout/${order.orderNo}`)
+  await page.getByRole('button', { name: '前往支付宝付款' }).click()
+  await expect(page).toHaveURL(/\/alipay-sandbox$/)
+  await expect(page.getByRole('heading', { name: '支付宝沙箱收银台' })).toBeVisible()
+})
+
+test('微信 Native 支付在收银台生成可扫码二维码', async ({ page }) => {
+  await mockBillingApi(page, async (route, path) => {
+    if (path === `/billing/orders/${order.orderNo}/checkout`) {
+      return fulfill(route, {
+        orderNo: order.orderNo,
+        orderStatus: 'PENDING_PAYMENT',
+        paymentNo: 'P202607300002',
+        paymentStatus: 'PENDING',
+        provider: 'WECHAT_PAY',
+        checkoutType: 'QR_CODE',
+        action: 'weixin://wxpay/bizpayurl?pr=lyleAiWechatNativeTest',
+        expiresAt: order.expiresAt,
+        sandbox: false
+      })
+    }
+    if (path === `/billing/orders/${order.orderNo}/status`) return fulfill(route, order)
+    return false
+  })
+
+  await page.goto(`/checkout/${order.orderNo}`)
+  await expect(page.getByText('请使用微信扫码支付', { exact: true })).toBeVisible()
+  const qrCode = page.getByRole('img', { name: '微信支付二维码' })
+  await expect(qrCode).toBeVisible()
+  await expect(qrCode).toHaveAttribute('src', /^data:image\/png;base64,/)
+  await expect(page.getByRole('button', { name: '前往支付宝付款' })).toHaveCount(0)
 })
 
 test('V6.5 billing dashboard keeps credit, order and money language separate on mobile', async ({ page }) => {
@@ -160,7 +221,7 @@ test('V6.5 core commercial pages remain usable at 390px', async ({ page }) => {
   })
 
   const pages = [
-    { path: '/pricing', selector: '.pricing-page', heading: '选择适合你的 Lyle' },
+    { path: '/pricing', selector: '.pricing-page', shellSelector: '.pricing-nav', heading: '选择适合你的 Lyle' },
     { path: `/checkout/${order.orderNo}`, selector: '.checkout-page', heading: 'Pro' },
     { path: `/billing/result/${order.orderNo}`, selector: '.result-card', heading: '权益已到账' },
     { path: '/settings/billing', selector: '.billing-page', heading: '套餐与账单' },
@@ -171,7 +232,7 @@ test('V6.5 core commercial pages remain usable at 390px', async ({ page }) => {
     await page.goto(target.path)
     await expect(page.getByRole('heading', { name: target.heading, exact: true }).first()).toBeVisible()
     await expectUsableWidth(page, target.selector, 340)
-    await expectUsableWidth(page, '.app-header', 388)
+    await expectUsableWidth(page, target.shellSelector ?? '.app-header', 340)
   }
 })
 

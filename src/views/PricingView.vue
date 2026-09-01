@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Check, CreditCard, ShieldCheck } from '@lucide/vue'
 import type { CatalogProduct } from '@/api/billing'
+import { hasAuth } from '@/auth'
 import { formatCredits, safeReturnTo } from '@/domain/billing'
 import { useBillingStore } from '@/stores/billing'
 
@@ -16,10 +17,12 @@ const error = ref('')
 const plans = computed(() => store.catalog.filter((item) => item.productType === 'PLAN'))
 const creditPacks = computed(() => store.catalog.filter((item) => item.productType === 'CREDIT_PACK'))
 const returnTo = computed(() => safeReturnTo(route.query.returnTo, '/settings/billing'))
+const authenticated = computed(() => hasAuth())
 
 onMounted(async () => {
   try {
-    await Promise.all([store.loadCatalog(), store.loadDashboard()])
+    await store.loadCatalog()
+    if (authenticated.value) await store.loadDashboard()
   } catch {
     error.value = '套餐暂时无法加载，请稍后重试。'
   } finally {
@@ -38,17 +41,38 @@ function isCurrent(product: CatalogProduct) {
   return product.productType === 'PLAN' && store.account?.plan.code === product.productCode
 }
 
+function isFreeProduct(product: CatalogProduct) {
+  return product.productCode === 'FREE' || product.amount.payableMinor === 0
+}
+
+function isRecommended(product: CatalogProduct) {
+  return product.productCode === 'LYLE_PLUS'
+}
+
+function canPurchase(product: CatalogProduct) {
+  if (isFreeProduct(product) || !authenticated.value || !store.account?.checkoutEnabled) return false
+  if (product.productType === 'PLAN'
+    && store.account?.plan.code !== 'FREE'
+    && !isCurrent(product)) return false
+  return true
+}
+
 function cta(product: CatalogProduct) {
-  if (isCurrent(product) && store.account?.plan.code === 'FREE') return '当前套餐'
+  if (isFreeProduct(product)) return isCurrent(product) ? '当前套餐' : '免费版'
+  if (!authenticated.value) return '登录后购买'
   if (!store.account?.checkoutEnabled) return '支付暂未开放'
   if (pendingOrder(product)) return '继续支付'
   if (isCurrent(product)) return '续期套餐'
   if (product.productType === 'CREDIT_PACK') return '购买额度包'
-  return store.account?.plan.code === 'FREE' ? '升级到 Pro' : '续期套餐'
+  return store.account?.plan.code === 'FREE' ? `选择${product.name}` : '暂不支持切换'
 }
 
 async function choose(product: CatalogProduct) {
-  if ((isCurrent(product) && store.account?.plan.code === 'FREE') || !store.account?.checkoutEnabled) return
+  if (!authenticated.value) {
+    await router.push({ name: 'login', query: { redirect: route.fullPath } })
+    return
+  }
+  if (!canPurchase(product)) return
   const existing = pendingOrder(product)
   if (existing) {
     await router.push({ path: `/checkout/${existing.orderNo}`, query: { returnTo: returnTo.value } })
@@ -74,6 +98,11 @@ async function choose(product: CatalogProduct) {
 
 <template>
   <section class="pricing-page" aria-labelledby="pricing-title">
+    <nav class="pricing-nav" aria-label="套餐页导航">
+      <RouterLink class="pricing-brand" to="/pricing"><span>L</span>Lyle AI</RouterLink>
+      <RouterLink v-if="authenticated" to="/dashboard">返回工作台</RouterLink>
+      <RouterLink v-else :to="{ name: 'login', query: { redirect: route.fullPath } }">登录</RouterLink>
+    </nav>
     <header class="pricing-hero">
       <p class="eyebrow">Lyle 套餐</p>
       <h1 id="pricing-title">选择适合你的 Lyle</h1>
@@ -109,13 +138,13 @@ async function choose(product: CatalogProduct) {
     <template v-else>
       <section class="plan-grid" aria-label="主套餐">
         <article
-          v-for="(product, index) in plans"
+          v-for="product in plans"
           :key="product.priceVersionCode"
           class="plan-card"
-          :class="{ featured: index === 1 && !isCurrent(product), current: isCurrent(product) }"
+          :class="{ featured: isRecommended(product) && !isCurrent(product), current: isCurrent(product) }"
         >
           <span v-if="isCurrent(product)" class="plan-tag">当前套餐</span>
-          <span v-else-if="index === 1" class="plan-tag">推荐</span>
+          <span v-else-if="isRecommended(product)" class="plan-tag">推荐</span>
           <h2>{{ product.name }}</h2>
           <p class="plan-description">{{ product.description }}</p>
           <p class="plan-price">{{ product.amount.formatted }}</p>
@@ -128,7 +157,7 @@ async function choose(product: CatalogProduct) {
           </ul>
           <button
             type="button"
-            :disabled="(isCurrent(product) && store.account?.plan.code === 'FREE') || buying === product.priceVersionCode || !store.account?.checkoutEnabled"
+            :disabled="isFreeProduct(product) || (authenticated && !canPurchase(product)) || buying === product.priceVersionCode"
             @click="choose(product)"
           >{{ buying === product.priceVersionCode ? '正在创建订单…' : cta(product) }}</button>
         </article>
@@ -150,7 +179,7 @@ async function choose(product: CatalogProduct) {
             <strong>{{ product.amount.formatted }}</strong>
             <button
               type="button"
-              :disabled="buying === product.priceVersionCode || !store.account?.checkoutEnabled"
+              :disabled="authenticated && !canPurchase(product) || buying === product.priceVersionCode"
               @click="choose(product)"
             >{{ buying === product.priceVersionCode ? '创建中…' : cta(product) }}</button>
           </article>
@@ -167,6 +196,10 @@ async function choose(product: CatalogProduct) {
 
 <style scoped>
 .pricing-page { width: 100%; min-width: 0; max-width: 1120px; margin: 0 auto; padding: 48px 20px 64px; }
+.pricing-nav { display: flex; align-items: center; justify-content: space-between; margin: -22px 0 40px; }
+.pricing-nav > a:last-child { border: 1px solid var(--border); border-radius: 8px; color: var(--foreground); padding: 8px 13px; font-size: 12px; font-weight: 700; }
+.pricing-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--foreground); font-size: 17px; font-weight: 850; letter-spacing: -.03em; }
+.pricing-brand span { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; background: var(--primary); color: white; font-size: 14px; }
 .pricing-hero { max-width: 720px; margin: 0 auto 30px; text-align: center; }
 .eyebrow { margin: 0 0 8px; color: var(--primary); font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .pricing-hero h1 { margin: 0; color: var(--foreground); font-size: clamp(32px, 5vw, 48px); letter-spacing: -.045em; }
@@ -181,7 +214,7 @@ async function choose(product: CatalogProduct) {
 .checkout-notice strong { color: var(--foreground); font-size: 13px; }
 .pricing-empty { display: grid; justify-items: center; gap: 8px; color: var(--muted-foreground); }
 .pricing-empty h2, .pricing-empty p { margin: 0; }
-.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; align-items: stretch; }
+.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; align-items: stretch; }
 .plan-card { position: relative; display: flex; flex-direction: column; min-height: 470px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 25px; box-shadow: var(--shadow-sm); }
 .plan-card.featured { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary), var(--shadow-md); }
 .plan-card.current { background: var(--surface-muted); }
@@ -210,6 +243,7 @@ async function choose(product: CatalogProduct) {
 .pricing-notes strong { display: block; color: var(--foreground); }
 @media (max-width: 720px) {
   .pricing-page { width: 100%; max-width: 520px; padding: 28px 12px 48px; }
+  .pricing-nav { margin: -8px 0 30px; }
   .pricing-hero { margin-bottom: 22px; }
   .pricing-hero h1 { font-size: clamp(28px, 9vw, 36px); }
   .plan-grid { grid-template-columns: minmax(0, 1fr); }

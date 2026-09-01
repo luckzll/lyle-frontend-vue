@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Check, Clock3, Copy, CreditCard, Info, ShieldCheck } from '@lucide/vue'
+import QRCode from 'qrcode'
 import {
   createCheckout,
   getBillingOrder,
@@ -20,6 +21,7 @@ const loading = ref(true)
 const actionLoading = ref(false)
 const error = ref('')
 const copied = ref(false)
+const qrCodeDataUrl = ref('')
 const now = ref(Date.now())
 let pollTimer: number | undefined
 let clockTimer: number | undefined
@@ -37,6 +39,7 @@ const remainingText = computed(() => {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 })
 const terminal = computed(() => ['FULFILLED', 'CLOSED', 'CANCELLED', 'REFUNDED'].includes(order.value?.status || ''))
+const paymentActionLabel = computed(() => checkout.value?.provider === 'ALIPAY' ? '前往支付宝付款' : '前往支付')
 const statusTitle = computed(() => {
   if (!order.value) return '正在准备收银台'
   if (order.value.status === 'PAID' || order.value.status === 'FULFILLING') return '付款已确认'
@@ -76,6 +79,7 @@ async function prepare() {
     }
     if (['CREATED', 'PENDING_PAYMENT'].includes(order.value.status)) {
       checkout.value = (await createCheckout(orderNo.value)).data
+      await renderQrCode()
       startPolling()
     } else if (['PAID', 'FULFILLING'].includes(order.value.status)) {
       startPolling()
@@ -113,6 +117,54 @@ async function checkPayment() {
     await refreshStatus()
   } finally {
     actionLoading.value = false
+  }
+}
+
+async function renderQrCode() {
+  qrCodeDataUrl.value = ''
+  const session = checkout.value
+  if (session?.checkoutType !== 'QR_CODE' || !session.action) return
+  try {
+    qrCodeDataUrl.value = await QRCode.toDataURL(session.action, {
+      width: 224,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#101828', light: '#ffffff' }
+    })
+  } catch {
+    error.value = '微信支付二维码生成失败，请刷新页面后重试。'
+  }
+}
+
+function openPayment() {
+  error.value = ''
+  const session = checkout.value
+  if (!session?.action) {
+    error.value = '支付凭据尚未生成，请刷新页面后重试。'
+    return
+  }
+  if (session.checkoutType === 'HTML_FORM') {
+    const host = document.createElement('div')
+    host.hidden = true
+    host.setAttribute('aria-hidden', 'true')
+    host.innerHTML = session.action
+    document.body.appendChild(host)
+    const form = host.querySelector<HTMLFormElement>('form')
+    if (!form) {
+      host.remove()
+      error.value = '支付宝支付表单无效，请刷新页面后重试。'
+      return
+    }
+    form.submit()
+    window.setTimeout(() => host.remove(), 5000)
+    return
+  }
+  try {
+    const target = new URL(session.action, window.location.origin)
+    if (!['http:', 'https:'].includes(target.protocol)) throw new Error('unsupported protocol')
+    window.location.assign(target.toString())
+  } catch {
+    error.value = '支付跳转地址无效，请刷新页面后重试。'
   }
 }
 
@@ -198,7 +250,13 @@ function goToResult() {
             <strong>开发沙箱</strong>
             <p>此页面不提供绕过权限的“模拟成功”按钮。管理员可通过受保护的 Mock 完成接口确认支付。</p>
           </div>
-          <a v-else-if="checkout?.action" :href="checkout.action" rel="noreferrer" class="pay-action">打开支付方式</a>
+          <div v-else-if="checkout?.checkoutType === 'QR_CODE' && checkout.action" class="wechat-qr">
+            <img v-if="qrCodeDataUrl" :src="qrCodeDataUrl" alt="微信支付二维码" width="224" height="224" />
+            <div v-else class="credential-placeholder">正在生成微信支付二维码…</div>
+            <strong>请使用微信扫码支付</strong>
+            <span>支付完成后本页会自动确认并发放权益</span>
+          </div>
+          <button v-else-if="checkout?.action" type="button" class="pay-action" @click="openPayment">{{ paymentActionLabel }}</button>
           <div v-else class="credential-placeholder">等待支付渠道返回凭据</div>
         </div>
 
@@ -266,8 +324,12 @@ function goToResult() {
 .sandbox-box { text-align: center; }
 .sandbox-box strong { color: var(--warning-strong); }
 .sandbox-box p { margin: 6px 0 0; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; }
+.wechat-qr { display: grid; justify-items: center; gap: 8px; text-align: center; }
+.wechat-qr img { width: 224px; height: 224px; border: 8px solid white; border-radius: 8px; background: white; box-shadow: 0 1px 2px rgb(16 24 40 / 8%); }
+.wechat-qr strong { color: var(--foreground); font-size: 13px; }
+.wechat-qr span { color: var(--muted-foreground); font-size: 10px; line-height: 1.5; }
 .credential-placeholder { color: var(--muted-foreground); font-size: 12px; }
-.pay-action { display: grid; min-height: 42px; place-items: center; border-radius: 8px; background: var(--primary); color: white; padding: 0 18px; font-weight: 700; }
+.pay-action { display: grid; min-height: 42px; place-items: center; border: 0; border-radius: 8px; background: var(--primary); color: white; padding: 0 18px; font-weight: 700; cursor: pointer; }
 .countdown { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 12px; color: var(--muted-foreground); font-size: 11px; }
 .checkout-error { border-radius: 8px; background: var(--danger-soft); color: var(--danger-strong); padding: 10px; font-size: 11px; }
 .payment-actions { display: grid; gap: 8px; margin-top: auto; padding-top: 20px; }
