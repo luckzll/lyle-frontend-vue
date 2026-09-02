@@ -9,6 +9,7 @@ import { useReminderPolling } from '@/composables/useReminderPolling'
 import AppHeader from './AppHeader.vue'
 import AppSidebar from './AppSidebar.vue'
 import MobileNavigation from './MobileNavigation.vue'
+import AuthRequiredDialog from '@/components/auth/AuthRequiredDialog.vue'
 
 const SIDEBAR_PREFERENCE_KEY = 'lyle-ui:v4.2:sidebar-collapsed'
 
@@ -181,6 +182,7 @@ watch(
       @update:open="mobileNavigationOpen = $event"
       @logout="logout"
     />
+    <AuthRequiredDialog />
   </div>
 </template>
 

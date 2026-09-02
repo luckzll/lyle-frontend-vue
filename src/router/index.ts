@@ -33,12 +33,12 @@ const router = createRouter({
     {
       path: '/',
       name: 'chat',
-      component: () => import('@/views/ChatView.vue'),
+      component: () => import('@/views/HomeView.vue'),
       meta: {
         title: '聊天',
         navGroup: 'start',
         icon: 'message-square',
-        requiresAuth: true,
+        requiresAuth: false,
         requiresAdmin: false,
         layout: 'default'
       }

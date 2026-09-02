@@ -6,6 +6,7 @@ import type { CatalogProduct } from '@/api/billing'
 import { hasAuth } from '@/auth'
 import { formatCredits, safeReturnTo } from '@/domain/billing'
 import { useBillingStore } from '@/stores/billing'
+import { requestAuth } from '@/composables/useAuthGate'
 
 const store = useBillingStore()
 const route = useRoute()
@@ -69,7 +70,7 @@ function cta(product: CatalogProduct) {
 
 async function choose(product: CatalogProduct) {
   if (!authenticated.value) {
-    await router.push({ name: 'login', query: { redirect: route.fullPath } })
+    requestAuth(route.fullPath, `购买“${product.name}”套餐`)
     return
   }
   if (!canPurchase(product)) return

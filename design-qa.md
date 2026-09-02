@@ -1,3 +1,53 @@
+## 访客聊天首页与登录提示设计验收（2026-09-02）
+
+**Evidence**
+
+- Source visual truth: `C:/Temp/codex-clipboard-ef25a35f-6778-474e-9894-62e4a8ea95fa.png`.
+- Browser-rendered desktop implementation: `D:/vit/文档/Lyle/ai-app/frontend-vue/design-qa-guest-home-implementation.png`.
+- Same-input comparison image: `D:/vit/文档/Lyle/ai-app/frontend-vue/design-qa-guest-home-comparison.png`（左侧为参考，右侧为实现）.
+- Responsive implementation: `D:/vit/文档/Lyle/ai-app/frontend-vue/design-qa-guest-home-mobile-v2.png`.
+- Mobile auth prompt: `D:/vit/文档/Lyle/ai-app/frontend-vue/design-qa-auth-gate-mobile.png`.
+- Source pixels: 2232 × 1350，包括约 63 px 浏览器工具栏；对照时裁出 2232 × 1287 应用区域并归一化为 1440 × 831。实现截图为 1439 × 831，对照时归一化为 1440 × 831。浏览器 CSS 视口为 1440 × 831，设备缩放系数 1。
+- State: 未登录访客，根路由 `/`，登录提示关闭；登录提示另在桌面与 390 × 844 移动视口单独验证。
+
+**Findings**
+
+- No actionable P0, P1, or P2 findings remain.
+- Fonts and typography: 沿用现有 Inter / 系统字体栈、标题权重和正文行高；参考中的“AI 聊天”“今天想推进什么？”以及卡片信息层级均保持。
+- Spacing and layout rhythm: 侧栏、顶栏、主内容阅读宽度、2 × 2 快捷卡片和底部输入区与参考同轴；访客标识和登录入口是必要的状态差异，没有挤压主任务区。
+- Colors and visual tokens: 全部使用现有 primary、primary-soft、surface、border、foreground 与 muted token，未引入新的孤立视觉体系。
+- Image quality and asset fidelity: 参考界面没有需要复刻的位图或装饰图片；Logo、导航与功能图标继续使用项目既有组件和图标库，没有占位资产。
+- Copy and content: 保留参考页的核心标题、四个快捷入口、上下文和输入提示；新增文案仅用于解释访客状态及登录后返回原目标。
+- Accessibility and interaction: 桌面和移动端均可通过可访问名称找到登录入口；功能卡片、输入区、通知和侧栏项目会打开统一登录提示；取消后留在原页，确认后进入 `/login?redirect=<原目标>`。
+- Responsive behavior: 390 × 844 下无横向溢出；快捷卡片改为单列并在输入区上方独立滚动，登录提示完整显示且按钮保持可触达。
+- Browser console errors: 0。
+
+**Open Questions**
+
+- None for the guest-preview scope.
+
+**Implementation Checklist**
+
+- [x] 根地址对未登录访客公开展示聊天工作台预览。
+- [x] 已登录用户继续使用原完整 ChatView，不改变现有能力。
+- [x] 侧栏、提醒、快捷入口和输入区统一弹出登录提示。
+- [x] 登录跳转保留原目标路径，登录成功后可以返回。
+- [x] 套餐页保持公开，并复用相同登录提示。
+- [x] 桌面、移动端、构建、E2E 与浏览器控制台验证通过。
+
+**Follow-up Polish**
+
+- P3: 可以在后续线上数据分析中比较“立即弹登录”与“允许先输入草稿、发送时弹登录”的转化率；当前版本选择更明确且不会让访客误以为草稿已经保存。
+
+**Comparison History**
+
+- Pass 1: 桌面实现与参考图同图对照，整体框架与主内容匹配；发现移动端“当前上下文”按钮文字折行、最后一张快捷卡片被输入区覆盖，并且图标式登录入口缺少独立可访问名称（P2）。
+- Pass 2: 将移动端上下文按钮固定为 40 × 40 图标按钮，主内容改为独立滚动区域，为登录入口补充明确 `aria-label`。390 × 844 复查无横向溢出，四张卡片和输入区均可触达，P2 已关闭。
+
+final result: passed
+
+---
+
 **Evidence**
 - Source visual truth: `C:/Temp/codex-clipboard-cb24c3de-89d4-426f-9187-cbd3d5dfaccb.png`.
 - Supporting source error state: `C:/Temp/codex-clipboard-cf2cf7ec-d37f-4762-aa36-e5ccc150b66a.png`.

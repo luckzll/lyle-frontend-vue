@@ -2,6 +2,7 @@
 import { Bell, Menu, PanelLeftClose, PanelLeftOpen } from '@lucide/vue'
 import type { User } from '@/api/types'
 import AccountMenu from '@/components/layout/AccountMenu.vue'
+import { requestAuth } from '@/composables/useAuthGate'
 
 const props = defineProps<{
   title: string
@@ -47,7 +48,18 @@ const emit = defineEmits<{
     </div>
 
     <div class="app-header__actions">
+      <button
+        v-if="!user"
+        class="app-header__notification"
+        type="button"
+        aria-label="登录后查看提醒"
+        title="提醒"
+        @click="requestAuth('/tasks', '查看提醒')"
+      >
+        <Bell :size="19" :stroke-width="1.8" aria-hidden="true" />
+      </button>
       <RouterLink
+        v-else
         class="app-header__notification"
         to="/tasks"
         :aria-label="reminderCount > 0 ? `${reminderCount} 条未读提醒` : '暂无未读提醒'"

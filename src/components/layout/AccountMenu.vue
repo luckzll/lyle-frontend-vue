@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
-import { LogOut, Settings } from '@lucide/vue'
+import { LogIn, LogOut, Settings } from '@lucide/vue'
 import { useRoute } from 'vue-router'
 import type { User } from '@/api/types'
 
@@ -30,6 +30,7 @@ const menuId = `account-menu-${useId()}`
 const username = computed(() => props.user?.username || '未登录')
 const accountType = computed(() => props.user?.role === 'ADMIN' ? '管理员' : '个人账号')
 const userInitial = computed(() => username.value.trim().charAt(0).toUpperCase() || 'L')
+const loginTarget = computed(() => route.path === '/login' ? '/dashboard' : route.fullPath)
 
 function menuItems(): HTMLElement[] {
   if (!menu.value) return []
@@ -111,7 +112,20 @@ onBeforeUnmount(() => {
       { 'account-menu--compact': compact }
     ]"
   >
+    <RouterLink
+      v-if="!user"
+      class="account-menu__guest-login"
+      :to="{ name: 'login', query: { redirect: loginTarget } }"
+      aria-label="登录或注册，解锁完整工作台"
+    >
+      <span class="account-menu__guest-icon" aria-hidden="true"><LogIn :size="17" :stroke-width="1.9" /></span>
+      <span v-if="!compact" class="account-menu__guest-copy">
+        <strong>登录 / 注册</strong>
+        <small>解锁完整工作台</small>
+      </span>
+    </RouterLink>
     <button
+      v-else
       ref="trigger"
       class="account-menu__trigger"
       type="button"
@@ -133,7 +147,7 @@ onBeforeUnmount(() => {
 
     <Transition name="account-menu-popover">
       <div
-        v-if="open"
+        v-if="open && user"
         :id="menuId"
         ref="menu"
         class="account-menu__popover"
@@ -193,6 +207,47 @@ onBeforeUnmount(() => {
     background-color var(--lyle-duration-fast) var(--lyle-ease-standard),
     border-color var(--lyle-duration-fast) var(--lyle-ease-standard);
 }
+
+.account-menu__guest-login {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--lyle-space-3);
+  border: 1px solid var(--primary-border);
+  border-radius: var(--lyle-radius-lg);
+  background: var(--primary-soft);
+  color: var(--foreground);
+  padding: 0.4rem;
+  transition: border-color var(--lyle-duration-fast) var(--lyle-ease-standard), background-color var(--lyle-duration-fast) var(--lyle-ease-standard);
+}
+
+.account-menu__guest-login:hover { border-color: var(--primary); background: color-mix(in srgb, var(--primary-soft) 74%, var(--surface)); }
+.account-menu__guest-login:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.account-menu__guest-icon {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 2rem;
+  place-items: center;
+  border-radius: var(--lyle-radius-full);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.account-menu__guest-copy { display: grid; min-width: 0; gap: 0.08rem; }
+.account-menu__guest-copy strong { color: var(--foreground); font-size: 0.78rem; }
+.account-menu__guest-copy small { color: var(--muted-foreground); font-size: 0.68rem; }
+
+.account-menu--header .account-menu__guest-login {
+  width: auto;
+  min-height: 2.5rem;
+  gap: var(--lyle-space-2);
+  padding: 0.25rem 0.65rem 0.25rem 0.3rem;
+}
+
+.account-menu--compact .account-menu__guest-login { justify-content: center; }
 
 .account-menu__trigger:hover,
 .account-menu__trigger[aria-expanded='true'] {
@@ -342,5 +397,8 @@ onBeforeUnmount(() => {
     justify-content: center;
     padding-inline: 0.25rem;
   }
+
+  .account-menu--header .account-menu__guest-copy { display: none; }
+  .account-menu--header .account-menu__guest-login { padding: 0.25rem; }
 }
 </style>
