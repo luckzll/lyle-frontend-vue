@@ -11,6 +11,7 @@ import {
   type NavigationItem
 } from './navigation'
 import { useRoute } from 'vue-router'
+import { requestAuth } from '@/composables/useAuthGate'
 
 const props = defineProps<{
   open: boolean
@@ -46,6 +47,12 @@ function isActive(item: NavigationItem) {
 
 function badgeFor(item: NavigationItem) {
   return getNavigationBadge(item, { reminders: props.reminderCount, execution: props.executionCount })
+}
+
+function openGuestItem(item: NavigationItem) {
+  const target = typeof item.to === 'string' ? item.to : '/'
+  close()
+  requestAuth(target, `打开“${item.label}”`)
 }
 
 function focusableElements(): HTMLElement[] {
@@ -131,7 +138,7 @@ onBeforeUnmount(() => {
           tabindex="-1"
         >
           <header class="mobile-navigation__header">
-            <RouterLink class="mobile-navigation__brand" to="/dashboard" @click="close">
+            <RouterLink class="mobile-navigation__brand" :to="user ? '/dashboard' : '/'" @click="close">
               <span class="mobile-navigation__brand-mark" aria-hidden="true">L</span>
               <span>
                 <strong id="mobile-navigation-title">Lyle AI</strong>
@@ -148,7 +155,17 @@ onBeforeUnmount(() => {
               <h2>{{ group.label }}</h2>
               <ul>
                 <li v-for="item in group.items" :key="item.id">
+                  <button
+                    v-if="!user && item.id !== 'chat'"
+                    class="mobile-navigation__link mobile-navigation__link--button"
+                    type="button"
+                    @click="openGuestItem(item)"
+                  >
+                    <component :is="item.icon" :size="19" :stroke-width="1.8" aria-hidden="true" />
+                    <span>{{ item.label }}</span>
+                  </button>
                   <RouterLink
+                    v-else
                     class="mobile-navigation__link"
                     :class="{ 'mobile-navigation__link--active': isActive(item) }"
                     :to="item.to"
@@ -313,6 +330,13 @@ onBeforeUnmount(() => {
   color: var(--sidebar-foreground);
   font-size: 0.9rem;
   font-weight: 550;
+}
+
+.mobile-navigation__link--button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
 }
 
 .mobile-navigation__link:hover {

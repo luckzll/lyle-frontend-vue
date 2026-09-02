@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { ChevronDown } from '@lucide/vue'
 import type { User } from '@/api/types'
 import AccountMenu from '@/components/layout/AccountMenu.vue'
+import { requestAuth } from '@/composables/useAuthGate'
 import {
   getNavigationBadge,
   getNavigationBadgeLabel,
@@ -58,6 +59,11 @@ function toggleGroup(groupId: NavigationGroupId) {
   else next.add(groupId)
   expandedOptionalGroups.value = next
 }
+
+function openGuestItem(item: NavigationItem) {
+  const target = typeof item.to === 'string' ? item.to : '/'
+  requestAuth(target, `打开“${item.label}”`)
+}
 </script>
 
 <template>
@@ -66,7 +72,7 @@ function toggleGroup(groupId: NavigationGroupId) {
     :class="{ 'app-sidebar--collapsed': collapsed }"
     :aria-label="collapsed ? '主导航（已折叠）' : '主导航'"
   >
-    <RouterLink class="app-sidebar__brand" to="/dashboard" aria-label="Lyle AI 工作台">
+    <RouterLink class="app-sidebar__brand" :to="user ? '/dashboard' : '/'" aria-label="Lyle AI 工作台">
       <span class="app-sidebar__brand-mark" aria-hidden="true">L</span>
       <span v-if="!collapsed" class="app-sidebar__brand-copy">
         <strong>Lyle AI</strong>
@@ -101,7 +107,19 @@ function toggleGroup(groupId: NavigationGroupId) {
         >{{ group.label }}</p>
         <ul v-if="isGroupExpanded(group)" class="app-sidebar__list">
           <li v-for="item in group.items" :key="item.id">
+            <button
+              v-if="!user && item.id !== 'chat'"
+              class="app-sidebar__link app-sidebar__link--button"
+              type="button"
+              :title="collapsed ? `${item.label} · ${item.description}` : undefined"
+              :aria-label="collapsed ? item.label : undefined"
+              @click="openGuestItem(item)"
+            >
+              <component :is="item.icon" class="app-sidebar__icon" :size="19" :stroke-width="1.8" aria-hidden="true" />
+              <span v-if="!collapsed" class="app-sidebar__label">{{ item.label }}</span>
+            </button>
             <RouterLink
+              v-else
               class="app-sidebar__link"
               :class="{ 'app-sidebar__link--active': isActive(item) }"
               :to="item.to"
@@ -265,6 +283,13 @@ function toggleGroup(groupId: NavigationGroupId) {
   transition:
     background-color var(--lyle-duration-fast) var(--lyle-ease-standard),
     color var(--lyle-duration-fast) var(--lyle-ease-standard);
+}
+
+.app-sidebar__link--button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
 }
 
 .app-sidebar__link:hover {
