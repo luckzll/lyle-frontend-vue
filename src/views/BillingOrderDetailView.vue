@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
-import { ArrowLeft, Copy, Headphones, ShieldCheck } from '@lucide/vue'
-import { getBillingOrder, type BillingOrder } from '@/api/billing'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowLeft, Copy, Headphones, ShieldCheck, Trash2, XCircle } from '@lucide/vue'
+import { closeBillingOrder, deleteBillingOrder, getBillingOrder, type BillingOrder } from '@/api/billing'
 import BillingStatusBadge from '@/components/billing/BillingStatusBadge.vue'
 import SettingsFrame from '@/components/settings/SettingsFrame.vue'
 import {
@@ -14,9 +14,11 @@ import {
 } from '@/domain/billing'
 
 const route = useRoute()
+const router = useRouter()
 const order = ref<BillingOrder | null>(null)
 const error = ref('')
 const copied = ref(false)
+const actionLoading = ref(false)
 const orderNo = computed(() => String(route.params.orderNo || ''))
 
 const timeline = computed(() => {
@@ -55,6 +57,33 @@ async function copyOrderNo() {
     copied.value = false
   }
 }
+
+async function cancelOrder() {
+  if (!order.value || !window.confirm('确认取消这个待支付订单？取消后将不能继续付款。')) return
+  actionLoading.value = true
+  error.value = ''
+  try {
+    order.value = (await closeBillingOrder(order.value.orderNo)).data
+  } catch (exception: any) {
+    error.value = exception?.response?.data?.message || '订单暂时无法取消，请稍后重试。'
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function deleteOrder() {
+  if (!order.value || !window.confirm('确认从账单列表删除这条记录？后台仍会保留必要的支付审计信息。')) return
+  actionLoading.value = true
+  error.value = ''
+  try {
+    await deleteBillingOrder(order.value.orderNo)
+    await router.replace('/settings/billing')
+  } catch (exception: any) {
+    error.value = exception?.response?.data?.message || '订单记录暂时无法删除，请稍后重试。'
+  } finally {
+    actionLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -62,7 +91,7 @@ async function copyOrderNo() {
     <section class="order-page" aria-labelledby="order-title">
       <RouterLink class="back-link" to="/settings/billing"><ArrowLeft :size="15" aria-hidden="true" />返回套餐与账单</RouterLink>
       <p v-if="error" class="order-error">{{ error }}</p>
-      <template v-else-if="order">
+      <template v-if="order">
         <header>
           <div>
             <p>订单详情</p>
@@ -74,6 +103,20 @@ async function copyOrderNo() {
               class="continue-pay"
               :to="`/checkout/${order.orderNo}`"
             >继续支付</RouterLink>
+            <button
+              v-if="['CREATED', 'PENDING_PAYMENT'].includes(order.status)"
+              type="button"
+              class="order-secondary-action"
+              :disabled="actionLoading"
+              @click="cancelOrder"
+            ><XCircle :size="14" aria-hidden="true" />{{ actionLoading ? '取消中…' : '取消订单' }}</button>
+            <button
+              v-else-if="['CLOSED', 'CANCELLED'].includes(order.status)"
+              type="button"
+              class="order-secondary-action"
+              :disabled="actionLoading"
+              @click="deleteOrder"
+            ><Trash2 :size="14" aria-hidden="true" />{{ actionLoading ? '删除中…' : '删除记录' }}</button>
             <BillingStatusBadge :status="order.status" />
           </div>
         </header>
@@ -131,6 +174,9 @@ async function copyOrderNo() {
 .order-page > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .order-header-actions { display: flex; align-items: center; gap: 9px; }
 .continue-pay { display: inline-grid; min-height: 34px; place-items: center; border-radius: 7px; background: var(--primary); color: white; padding: 0 12px; font-size: 11px; font-weight: 750; }
+.order-secondary-action { display: inline-flex; min-height: 34px; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--muted-foreground); padding: 0 10px; font-size: 11px; font-weight: 700; }
+.order-secondary-action:hover { border-color: var(--danger-border); color: var(--danger-strong); }
+.order-secondary-action:disabled { cursor: wait; opacity: .6; }
 .order-page header p { margin: 0 0 3px; color: var(--muted-foreground); font-size: 10px; }
 .order-page h2 { margin: 0; font-size: 25px; letter-spacing: -.03em; }
 .order-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
