@@ -177,6 +177,40 @@ test('微信 Native 支付在收银台生成可扫码二维码', async ({ page }
   await expect(page.getByRole('button', { name: '新标签页打开支付宝' })).toHaveCount(0)
 })
 
+test('收银台可在支付宝和微信支付之间切换', async ({ page }) => {
+  await mockBillingApi(page, async (route, path) => {
+    if (path === `/billing/orders/${order.orderNo}/checkout`) {
+      const provider = new URL(route.request().url()).searchParams.get('provider') || 'ALIPAY'
+      const wechat = provider === 'WECHAT_PAY'
+      return fulfill(route, {
+        orderNo: order.orderNo,
+        orderStatus: 'PENDING_PAYMENT',
+        paymentNo: wechat ? 'P-WECHAT' : 'P-ALIPAY',
+        paymentStatus: 'PENDING',
+        provider,
+        checkoutType: wechat ? 'QR_CODE' : 'HTML_FORM',
+        action: wechat
+          ? 'weixin://wxpay/bizpayurl?pr=dualProviderTest'
+          : '<form method="post" action="/alipay-sandbox"></form>',
+        expiresAt: order.expiresAt,
+        sandbox: false,
+        availableProviders: ['ALIPAY', 'WECHAT_PAY']
+      })
+    }
+    if (path === `/billing/orders/${order.orderNo}/status`) return fulfill(route, order)
+    return false
+  })
+
+  await page.goto(`/checkout/${order.orderNo}`)
+  await page.getByRole('button', { name: /微信支付/ }).click()
+  await expect(page.getByText('请使用微信扫码支付', { exact: true })).toBeVisible()
+  await expect(page.getByRole('img', { name: '微信支付二维码' })).toBeVisible()
+
+  await page.getByRole('button', { name: /支付宝/ }).click()
+  await expect(page.getByRole('button', { name: '新标签页打开支付宝' })).toBeVisible()
+  await expect(page.getByRole('img', { name: '微信支付二维码' })).toHaveCount(0)
+})
+
 test('V6.5 billing dashboard keeps credit, order and money language separate on mobile', async ({ page }) => {
   await mockBillingApi(page)
   await page.setViewportSize({ width: 390, height: 844 })

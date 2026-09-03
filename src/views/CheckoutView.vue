@@ -45,6 +45,7 @@ const remainingText = computed(() => {
 })
 const terminal = computed(() => ['FULFILLED', 'CLOSED', 'CANCELLED', 'REFUNDED'].includes(order.value?.status || ''))
 const activeProvider = computed(() => String(checkout.value?.provider || 'ALIPAY').toUpperCase())
+const availableProviders = computed(() => checkout.value?.availableProviders || [activeProvider.value])
 const paymentActionLabel = computed(() => activeProvider.value === 'ALIPAY' ? '前往支付宝支付' : '前往微信支付')
 const paymentSecurityLabel = computed(() => activeProvider.value === 'ALIPAY' ? '支付宝安全支付' : '微信安全支付')
 const paymentMethods = computed(() => [
@@ -54,15 +55,15 @@ const paymentMethods = computed(() => [
     description: '新标签页安全支付',
     icon: alipayIcon,
     brandClass: 'alipay',
-    available: activeProvider.value === 'ALIPAY'
+    available: availableProviders.value.includes('ALIPAY')
   },
   {
-    id: 'WECHAT',
+    id: 'WECHAT_PAY',
     label: '微信支付',
-    description: activeProvider.value === 'WECHAT' ? '扫码完成支付' : '即将支持',
+    description: '扫码完成支付',
     icon: wechatIcon,
     brandClass: 'wechat',
-    available: activeProvider.value === 'WECHAT'
+    available: availableProviders.value.includes('WECHAT_PAY')
   }
 ])
 const statusTitle = computed(() => {
@@ -79,7 +80,7 @@ const statusDescription = computed(() => {
   if (order.value.status === 'CLOSED') return '订单未产生扣款。'
   if (checkout.value?.sandbox) return '这是开发沙箱支付单，请由管理员确认支付结果。'
   if (activeProvider.value === 'ALIPAY' && checkout.value?.action) return '点击下方按钮，将在新标签页完成支付。'
-  if (activeProvider.value === 'WECHAT' && checkout.value?.action) return '请使用微信扫码完成支付。'
+  if (activeProvider.value === 'WECHAT_PAY' && checkout.value?.action) return '请使用微信扫码完成支付。'
   return '请使用已配置的支付方式完成付款。'
 })
 
@@ -128,7 +129,8 @@ async function prepare() {
       checkoutType: 'HTML_FORM',
       action: '<form action="about:blank" method="get"></form>',
       expiresAt,
-      sandbox: false
+      sandbox: false,
+      availableProviders: ['ALIPAY', 'WECHAT_PAY']
     }
     loading.value = false
     return
@@ -236,6 +238,31 @@ function openPayment() {
 async function payLater() {
   if (pollTimer) window.clearInterval(pollTimer)
   await router.push('/settings/billing')
+}
+
+async function selectPaymentMethod(provider: string) {
+  if (!order.value || provider === activeProvider.value || actionLoading.value) return
+  actionLoading.value = true
+  error.value = ''
+  try {
+    if (designPreview.value) {
+      checkout.value = {
+        ...checkout.value!,
+        provider,
+        checkoutType: provider === 'ALIPAY' ? 'HTML_FORM' : 'QR_CODE',
+        action: provider === 'ALIPAY'
+          ? '<form action="about:blank" method="get"></form>'
+          : 'weixin://wxpay/bizpayurl?pr=preview'
+      }
+    } else {
+      checkout.value = (await createCheckout(orderNo.value, provider)).data
+    }
+    await renderQrCode()
+  } catch (exception: any) {
+    error.value = exception?.response?.data?.message || '切换支付方式失败，请稍后重试。'
+  } finally {
+    actionLoading.value = false
+  }
 }
 
 async function cancelOrder() {
@@ -352,13 +379,7 @@ function goToResult() {
             <strong>开发沙箱</strong>
             <p>此页面不提供绕过权限的“模拟成功”按钮。管理员可通过受保护的 Mock 完成接口确认支付。</p>
           </div>
-          <div v-else-if="checkout?.checkoutType === 'QR_CODE' && checkout.action" class="wechat-qr">
-            <img v-if="qrCodeDataUrl" :src="qrCodeDataUrl" alt="微信支付二维码" width="224" height="224" />
-            <div v-else class="credential-placeholder">正在生成微信支付二维码…</div>
-            <strong>请使用微信扫码支付</strong>
-            <span>支付完成后本页会自动确认并发放权益</span>
-          </div>
-          <template v-else-if="checkout?.action">
+          <template v-else>
             <section class="payment-methods" aria-labelledby="payment-method-title">
               <div class="section-label">
                 <span id="payment-method-title">支付方式</span>
@@ -371,8 +392,9 @@ function goToResult() {
                   type="button"
                   class="method-option"
                   :class="{ selected: method.id === activeProvider, unavailable: !method.available }"
-                  :disabled="!method.available"
+                  :disabled="!method.available || actionLoading"
                   :aria-pressed="method.id === activeProvider"
+                  @click="selectPaymentMethod(method.id)"
                 >
                   <span class="method-logo" :class="method.brandClass"><Icon :icon="method.icon" aria-hidden="true" /></span>
                   <span class="method-copy"><strong>{{ method.label }}</strong><small>{{ method.description }}</small></span>
@@ -380,12 +402,25 @@ function goToResult() {
                 </button>
               </div>
             </section>
+            <div v-if="checkout?.checkoutType === 'QR_CODE' && checkout.action" class="wechat-qr">
+              <img v-if="qrCodeDataUrl" :src="qrCodeDataUrl" alt="微信支付二维码" width="224" height="224" />
+              <div v-else class="credential-placeholder">正在生成微信支付二维码…</div>
+              <strong>请使用微信扫码支付</strong>
+              <span>支付完成后本页会自动确认并发放权益</span>
+            </div>
             <div class="trust-strip"><ShieldCheck :size="18" aria-hidden="true" />支付结果由服务端安全确认</div>
-            <button type="button" class="pay-action" @click="openPayment">
+            <button
+              v-if="checkout?.action && checkout.checkoutType !== 'QR_CODE'"
+              type="button"
+              class="pay-action"
+              :disabled="actionLoading"
+              aria-label="新标签页打开支付宝"
+              @click="openPayment"
+            >
               {{ paymentActionLabel }}<ExternalLink :size="17" aria-hidden="true" />
             </button>
+            <div v-if="!checkout?.action" class="credential-placeholder">等待支付渠道返回凭据</div>
           </template>
-          <div v-else class="credential-placeholder">等待支付渠道返回凭据</div>
         </div>
 
         <p
@@ -414,6 +449,7 @@ function goToResult() {
             class="secondary"
             type="button"
             :disabled="actionLoading"
+            aria-label="稍后支付"
             @click="payLater"
           >暂不支付，返回账单</button>
           <button

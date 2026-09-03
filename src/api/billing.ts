@@ -105,6 +105,7 @@ export type CheckoutSession = {
   action?: string | null
   expiresAt: string
   sandbox: boolean
+  availableProviders: string[]
 }
 
 export type BillingRefund = {
@@ -149,8 +150,12 @@ export function createBillingOrder(payload: {
   return http.post<BillingOrder>('/billing/orders', payload)
 }
 
-export function createCheckout(orderNo: string) {
-  return http.post<CheckoutSession>(`/billing/orders/${encodeURIComponent(orderNo)}/checkout`)
+export function createCheckout(orderNo: string, provider?: string) {
+  return http.post<CheckoutSession>(
+    `/billing/orders/${encodeURIComponent(orderNo)}/checkout`,
+    undefined,
+    { params: provider ? { provider } : undefined }
+  )
 }
 
 export function getBillingOrderStatus(orderNo: string) {
