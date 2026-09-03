@@ -5,6 +5,7 @@ import { Check, Clock3, Copy, CreditCard, Info, ShieldCheck } from '@lucide/vue'
 import QRCode from 'qrcode'
 import {
   createCheckout,
+  closeBillingOrder,
   getBillingOrder,
   getBillingOrderStatus,
   type BillingOrder,
@@ -173,6 +174,21 @@ async function payLater() {
   await router.push('/settings/billing')
 }
 
+async function cancelOrder() {
+  if (!order.value || !window.confirm('确认取消这个待支付订单？取消后将不能继续付款。')) return
+  actionLoading.value = true
+  error.value = ''
+  try {
+    order.value = (await closeBillingOrder(order.value.orderNo)).data
+    checkout.value = null
+    if (pollTimer) window.clearInterval(pollTimer)
+  } catch (exception: any) {
+    error.value = exception?.response?.data?.message || '订单暂时无法取消，请稍后重试。'
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 async function copyOrderNo() {
   try {
     await navigator.clipboard.writeText(orderNo.value)
@@ -282,6 +298,13 @@ function goToResult() {
             :disabled="actionLoading"
             @click="payLater"
           >稍后支付</button>
+          <button
+            v-if="['CREATED', 'PENDING_PAYMENT'].includes(order.status)"
+            class="secondary cancel-order"
+            type="button"
+            :disabled="actionLoading"
+            @click="cancelOrder"
+          >取消订单</button>
         </div>
 
         <footer><ShieldCheck :size="14" aria-hidden="true" />前端不会根据跳转参数判断支付成功。</footer>
@@ -335,6 +358,7 @@ function goToResult() {
 .payment-actions { display: grid; gap: 8px; margin-top: auto; padding-top: 20px; }
 .payment-actions button, .payment-actions a { display: grid; min-height: 42px; place-items: center; border: 0; border-radius: 8px; background: var(--primary); color: white; font-size: 12px; font-weight: 750; }
 .payment-actions .secondary { border: 1px solid var(--border); background: var(--surface); color: var(--foreground); }
+.payment-actions .cancel-order { color: var(--danger-strong); }
 .payment-panel footer { display: flex; justify-content: center; gap: 5px; margin-top: 14px; color: var(--muted-foreground); font-size: 9px; }
 @media (max-width: 800px) {
   .checkout-page { width: 100%; max-width: 560px; padding: 16px 12px 40px; }

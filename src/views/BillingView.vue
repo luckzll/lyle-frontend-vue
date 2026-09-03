@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ArrowRight, CreditCard, Info, ReceiptText, Sparkles } from '@lucide/vue'
-import { getBillingRefunds, type BillingRefund } from '@/api/billing'
+import { ArrowRight, CreditCard, Info, ReceiptText, Sparkles, Trash2, XCircle } from '@lucide/vue'
+import {
+  closeBillingOrder,
+  deleteBillingOrder,
+  getBillingRefunds,
+  type BillingOrder,
+  type BillingRefund
+} from '@/api/billing'
 import BillingStatusBadge from '@/components/billing/BillingStatusBadge.vue'
 import SettingsFrame from '@/components/settings/SettingsFrame.vue'
 import { formatBillingTime, formatCredits, ledgerLabel, refundStatusLabel } from '@/domain/billing'
@@ -11,6 +17,7 @@ const store = useBillingStore()
 const refunds = ref<BillingRefund[]>([])
 const error = ref('')
 const ledgerFilter = ref('')
+const busyOrderNo = ref('')
 
 const visibleLedger = computed(() => ledgerFilter.value
   ? store.ledger.filter((entry) => {
@@ -32,6 +39,38 @@ async function load() {
     refunds.value = refundResponse.data
   } catch {
     error.value = '当前无法加载套餐与账单，不影响已购权益使用。'
+  }
+}
+
+function requestErrorMessage(exception: any, fallback: string) {
+  return exception?.response?.data?.message || fallback
+}
+
+async function cancelOrder(order: BillingOrder) {
+  if (!window.confirm(`确认取消“${order.product.name}”订单？取消后该支付单将不能继续付款。`)) return
+  busyOrderNo.value = order.orderNo
+  error.value = ''
+  try {
+    const updated = (await closeBillingOrder(order.orderNo)).data
+    store.orders = store.orders.map((item) => item.orderNo === updated.orderNo ? updated : item)
+  } catch (exception: any) {
+    error.value = requestErrorMessage(exception, '订单暂时无法取消，请稍后重试。')
+  } finally {
+    busyOrderNo.value = ''
+  }
+}
+
+async function deleteOrder(order: BillingOrder) {
+  if (!window.confirm(`确认删除“${order.product.name}”订单记录？后台仍会保留必要的支付审计信息。`)) return
+  busyOrderNo.value = order.orderNo
+  error.value = ''
+  try {
+    await deleteBillingOrder(order.orderNo)
+    store.orders = store.orders.filter((item) => item.orderNo !== order.orderNo)
+  } catch (exception: any) {
+    error.value = requestErrorMessage(exception, '订单记录暂时无法删除，请稍后重试。')
+  } finally {
+    busyOrderNo.value = ''
   }
 }
 </script>
@@ -124,16 +163,32 @@ async function load() {
             </div>
           </header>
           <div v-if="store.orders.length" class="order-list">
-            <RouterLink v-for="order in store.orders" :key="order.orderNo" :to="`/settings/billing/orders/${order.orderNo}`">
-              <span><ReceiptText :size="18" aria-hidden="true" /></span>
-              <div>
-                <strong>{{ order.product.name }}</strong>
-                <small>{{ formatBillingTime(order.createdAt) }} · {{ order.orderNo }}</small>
+            <article v-for="order in store.orders" :key="order.orderNo" class="order-row">
+              <RouterLink class="order-main" :to="`/settings/billing/orders/${order.orderNo}`">
+                <span><ReceiptText :size="18" aria-hidden="true" /></span>
+                <div>
+                  <strong>{{ order.product.name }}</strong>
+                  <small>{{ formatBillingTime(order.createdAt) }} · {{ order.orderNo }}</small>
+                </div>
+                <strong class="order-amount">{{ order.amount.formatted }}</strong>
+                <BillingStatusBadge :status="order.status" />
+                <ArrowRight :size="16" aria-hidden="true" />
+              </RouterLink>
+              <div class="order-actions">
+                <button
+                  v-if="['CREATED', 'PENDING_PAYMENT'].includes(order.status)"
+                  type="button"
+                  :disabled="busyOrderNo === order.orderNo"
+                  @click="cancelOrder(order)"
+                ><XCircle :size="14" aria-hidden="true" />{{ busyOrderNo === order.orderNo ? '取消中…' : '取消订单' }}</button>
+                <button
+                  v-else-if="['CLOSED', 'CANCELLED'].includes(order.status)"
+                  type="button"
+                  :disabled="busyOrderNo === order.orderNo"
+                  @click="deleteOrder(order)"
+                ><Trash2 :size="14" aria-hidden="true" />{{ busyOrderNo === order.orderNo ? '删除中…' : '删除记录' }}</button>
               </div>
-              <strong class="order-amount">{{ order.amount.formatted }}</strong>
-              <BillingStatusBadge :status="order.status" />
-              <ArrowRight :size="16" aria-hidden="true" />
-            </RouterLink>
+            </article>
           </div>
           <div v-else class="section-empty">还没有购买记录。<RouterLink to="/pricing">查看套餐</RouterLink></div>
         </section>
@@ -182,16 +237,21 @@ async function load() {
 .filter-group button:first-child { border-left: 0; }
 .filter-group button[aria-pressed='true'] { background: var(--primary-soft); color: var(--primary); font-weight: 700; }
 .ledger-list, .order-list { display: grid; }
-.ledger-list article, .order-list a { display: grid; align-items: center; border-top: 1px solid var(--border); padding: 12px 2px; }
+.ledger-list article, .order-row { border-top: 1px solid var(--border); }
+.ledger-list article { display: grid; align-items: center; padding: 12px 2px; }
 .ledger-list article { grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; }
-.ledger-list article:first-child, .order-list a:first-child { border-top: 0; }
-.ledger-icon, .order-list a > span:first-child { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 8px; background: var(--primary-soft); color: var(--primary); }
+.ledger-list article:first-child, .order-row:first-child { border-top: 0; }
+.ledger-icon, .order-main > span:first-child { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 8px; background: var(--primary-soft); color: var(--primary); }
 .ledger-icon.debit { background: var(--surface-muted); color: var(--muted-foreground); }
-.ledger-list article > div, .ledger-list article > p, .order-list a > div { display: grid; gap: 2px; margin: 0; }
-.ledger-list span, .order-list small { color: var(--muted-foreground); font-size: 10px; }
+.ledger-list article > div, .ledger-list article > p, .order-main > div { display: grid; gap: 2px; margin: 0; }
+.ledger-list span, .order-main small { color: var(--muted-foreground); font-size: 10px; }
 .ledger-list article > p { text-align: right; color: var(--success-strong); font-size: 13px; font-weight: 750; }
 .ledger-list article > p.debit { color: var(--foreground); }
-.order-list a { grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 12px; color: var(--foreground); }
+.order-row { display: flex; align-items: center; gap: 10px; padding: 4px 2px; }
+.order-main { display: grid; min-width: 0; flex: 1; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 12px; color: var(--foreground); padding: 8px 0; }
+.order-actions button { display: inline-flex; min-height: 32px; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--muted-foreground); padding: 0 9px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.order-actions button:hover { border-color: var(--danger-border); color: var(--danger-strong); }
+.order-actions button:disabled { cursor: wait; opacity: .6; }
 .order-amount { font-size: 13px; }
 .section-empty { border-radius: 8px; background: var(--surface-muted); padding: 18px; color: var(--muted-foreground); text-align: center; font-size: 12px; }
 .billing-help { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-muted); padding: 15px; }
@@ -204,10 +264,12 @@ async function load() {
   .billing-section > header { display: grid; }
   .filter-group { width: 100%; }
   .filter-group button { flex: 1; }
-  .order-list a { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .order-row { align-items: stretch; flex-direction: column; gap: 0; }
+  .order-main { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .order-actions { display: flex; justify-content: flex-end; padding: 0 0 8px 44px; }
   .order-list .order-amount { grid-column: 2; }
   .order-list :deep(.billing-status) { grid-column: 3; grid-row: 1 / span 2; }
-  .order-list a > svg { display: none; }
+  .order-main > svg { display: none; }
   .billing-help { grid-template-columns: auto 1fr; }
   .billing-help a { grid-column: 2; }
 }
@@ -217,7 +279,7 @@ async function load() {
   .credit-stats { grid-template-columns: 1fr; }
   .ledger-list article { align-items: start; grid-template-columns: auto minmax(0, 1fr); }
   .ledger-list article > p { grid-column: 2; text-align: left; }
-  .order-list a { align-items: start; grid-template-columns: auto minmax(0, 1fr); }
+  .order-main { align-items: start; grid-template-columns: auto minmax(0, 1fr); }
   .order-list .order-amount,
   .order-list :deep(.billing-status) { grid-column: 2; grid-row: auto; justify-self: start; }
   .billing-help { grid-template-columns: 1fr; }

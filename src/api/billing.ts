@@ -161,6 +161,10 @@ export function closeBillingOrder(orderNo: string) {
   return http.post<BillingOrder>(`/billing/orders/${encodeURIComponent(orderNo)}/close`)
 }
 
+export function deleteBillingOrder(orderNo: string) {
+  return http.delete<void>(`/billing/orders/${encodeURIComponent(orderNo)}`)
+}
+
 export function getBillingRefunds() {
   return http.get<BillingRefund[]>('/billing/refunds')
 }
