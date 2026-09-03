@@ -1,4 +1,4 @@
-## 访客聊天首页与登录提示设计验收（2026-09-02）
++## 访客聊天首页与登录提示设计验收（2026-09-02）
 
 **Evidence**
 
@@ -142,3 +142,57 @@ final result: passed
 ## 最终结果
 
 passed
+
+---
+
+# Checkout Design QA
+
+- Source visual truth: `C:\Users\zhl20\.codex\generated_images\01a05cfb-c385-7592-be02-18e73e4addcf\exec-0b6b3655-ba88-4f2c-a6a3-769934dc7341.png`
+- Implementation screenshot: `C:\Users\zhl20\.codex\visualizations\2026\09\01\01a05cfb-c385-7592-be02-18e73e4addcf\checkout-design-qa\implementation-checkout-final.png`
+- Full-view comparison: `C:\Users\zhl20\.codex\visualizations\2026\09\01\01a05cfb-c385-7592-be02-18e73e4addcf\checkout-design-qa\design-qa-comparison-final.png`
+- Focused payment comparison: `C:\Users\zhl20\.codex\visualizations\2026\09\01\01a05cfb-c385-7592-be02-18e73e4addcf\checkout-design-qa\design-qa-payment-focus-final.png`
+- Viewport: 1440 × 1024 CSS px, desktop, light theme
+- Source pixels: 1487 × 1058
+- Implementation pixels: 1425 × 1013
+- Density normalization: browser capture at device scale 1; implementation was proportionally normalized to 1487 × 1058 only inside the comparison composite
+- State: authenticated-style checkout content, `PENDING_PAYMENT`, Alipay selected, WeChat Pay reserved and unavailable
+
+## Findings
+
+No actionable P0, P1, or P2 mismatch remains.
+
+- Fonts and typography: the implementation uses the product's existing sans-serif stack and reproduces the selected visual's dark-slate hierarchy, strong plan title, compact metadata, and prominent price. Line lengths and wrapping remain readable.
+- Spacing and layout rhythm: the two-column structure, summary hierarchy, payment emphasis, divider rhythm, and responsive stacking match the selected direction. The outer contained surface is an intentional adaptation to the existing Lyle application shell.
+- Colors and visual tokens: the implementation keeps Lyle's indigo primary, slate neutrals, amber waiting status, green confirmations, and red cancellation semantics. Contrast remains clear in the inspected desktop and 768 px states.
+- Image quality and asset fidelity: no raster illustration is required. Alipay and WeChat use the Simple Icons library through Iconify; standard interface icons use the project's existing icon system. No placeholder, emoji, CSS drawing, or handcrafted SVG replaces a visible source asset.
+- Copy and content: plan, amount, credit allowance, duration, renewal intent, new-tab explanation, status query, deferred payment, cancellation, and server-confirmed payment copy are all represented. The payment-method selector is an intentional addition requested for future WeChat Pay support.
+
+## Comparison History
+
+### Iteration 1
+
+- Earlier evidence: `C:\Users\zhl20\.codex\visualizations\2026\09\01\01a05cfb-c385-7592-be02-18e73e4addcf\checkout-design-qa\implementation-checkout-v1.png` and `C:\Users\zhl20\.codex\visualizations\2026\09\01\01a05cfb-c385-7592-be02-18e73e4addcf\checkout-design-qa\design-qa-comparison-v1.png`.
+- P2: the preview fixture rendered the allowance as `1` instead of `1,000` because it supplied the wrong micros value.
+- P2: the main surface was slightly narrower and shorter than the selected direction, reducing the intended calm two-column emphasis.
+- Fixes: corrected the fixture to 1,000 credit units, widened the checkout surface, and increased its minimum vertical space.
+
+### Iteration 2
+
+- Post-fix evidence: `C:\Users\zhl20\.codex\visualizations\2026\09\01\01a05cfb-c385-7592-be02-18e73e4addcf\checkout-design-qa\implementation-checkout-v2.png`, `C:\Users\zhl20\.codex\visualizations\2026\09\01\01a05cfb-c385-7592-be02-18e73e4addcf\checkout-design-qa\design-qa-comparison-v2.png`, and `C:\Users\zhl20\.codex\visualizations\2026\09\01\01a05cfb-c385-7592-be02-18e73e4addcf\checkout-design-qa\design-qa-payment-focus-v2.png`.
+- Earlier P2 findings were resolved.
+- P3: payment guidance was still generic rather than explicitly describing the Alipay new-tab behavior.
+- Fix: added provider-aware security labeling and new-tab/scanning guidance.
+
+### Final
+
+- Post-fix evidence: `C:\Users\zhl20\.codex\visualizations\2026\09\01\01a05cfb-c385-7592-be02-18e73e4addcf\checkout-design-qa\implementation-checkout-final.png`, `C:\Users\zhl20\.codex\visualizations\2026\09\01\01a05cfb-c385-7592-be02-18e73e4addcf\checkout-design-qa\design-qa-comparison-final.png`, and `C:\Users\zhl20\.codex\visualizations\2026\09\01\01a05cfb-c385-7592-be02-18e73e4addcf\checkout-design-qa\design-qa-payment-focus-final.png`.
+- Desktop and 768 px layouts were inspected. No clipping or hidden persistent checkout controls were found.
+- Browser-rendered controls checked: Alipay method enabled, WeChat Pay disabled as `即将支持`, payment CTA enabled, status query enabled, return enabled, and cancellation enabled.
+- The browser declined to follow the preview fixture's synthetic payment target. This did not change page state; the production Alipay submission implementation was preserved unchanged.
+- Console errors and warnings: none.
+
+## Follow-up Polish
+
+- P3: when the backend exposes multiple selectable providers, wire the existing payment-method selector to a provider-specific checkout request instead of only reflecting the provider returned by the server.
+
+final result: passed

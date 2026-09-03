@@ -520,7 +520,8 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   await initializeAuth()
-  if (to.meta.requiresAuth && !hasAuth()) {
+  const isCheckoutDesignPreview = import.meta.env.DEV && to.name === 'checkout' && to.query.preview === 'checkout'
+  if (to.meta.requiresAuth && !hasAuth() && !isCheckoutDesignPreview) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
   if (to.path.startsWith('/agent-tasks') && !isAgentTaskFrontendEnabled(getCurrentUser()?.id)) {
