@@ -108,8 +108,8 @@ test('V6.5 uses server price snapshots and only completes after FULFILLED', asyn
   await expect(page.getByRole('link', { name: '返回刚才的任务' })).toHaveAttribute('href', '/tasks')
 })
 
-test('支付宝 HTML form is rendered and submitted instead of treated as a URL', async ({ page }) => {
-  await page.route('**/alipay-sandbox', async (route) => {
+test('支付宝 HTML form opens in a new tab and keeps the Lyle checkout available', async ({ page, context }) => {
+  await context.route('**/alipay-sandbox', async (route) => {
     expect(route.request().method()).toBe('POST')
     expect(route.request().postData()).toContain('out_trade_no=P202607300001')
     await route.fulfill({
@@ -137,9 +137,17 @@ test('支付宝 HTML form is rendered and submitted instead of treated as a URL'
   })
 
   await page.goto(`/checkout/${order.orderNo}`)
-  await page.getByRole('button', { name: '前往支付宝付款' }).click()
-  await expect(page).toHaveURL(/\/alipay-sandbox$/)
-  await expect(page.getByRole('heading', { name: '支付宝沙箱收银台' })).toBeVisible()
+  await expect(page.getByText('支付宝将在新标签页打开', { exact: false })).toBeVisible()
+  const [alipayPage] = await Promise.all([
+    context.waitForEvent('page'),
+    page.getByRole('button', { name: '新标签页打开支付宝' }).click()
+  ])
+  await expect(page).toHaveURL(new RegExp(`/checkout/${order.orderNo}`))
+  await expect(page.getByRole('button', { name: '稍后支付' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '取消订单' })).toBeVisible()
+  await alipayPage.waitForLoadState()
+  await expect(alipayPage).toHaveURL(/\/alipay-sandbox$/)
+  await expect(alipayPage.getByRole('heading', { name: '支付宝沙箱收银台' })).toBeVisible()
 })
 
 test('微信 Native 支付在收银台生成可扫码二维码', async ({ page }) => {
@@ -166,7 +174,7 @@ test('微信 Native 支付在收银台生成可扫码二维码', async ({ page }
   const qrCode = page.getByRole('img', { name: '微信支付二维码' })
   await expect(qrCode).toBeVisible()
   await expect(qrCode).toHaveAttribute('src', /^data:image\/png;base64,/)
-  await expect(page.getByRole('button', { name: '前往支付宝付款' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '新标签页打开支付宝' })).toHaveCount(0)
 })
 
 test('V6.5 billing dashboard keeps credit, order and money language separate on mobile', async ({ page }) => {
