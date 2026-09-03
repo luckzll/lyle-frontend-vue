@@ -21,6 +21,8 @@
     "test:e2e:v64-real:spec": "V64_REAL_E2E=1 VITE_E2E_LEGACY_AUTH=false PLAYWRIGHT_PORT=4176 PLAYWRIGHT_BASE_URL=http://127.0.0.1:4176 LYLE_BACKEND_PROXY=${V64_REAL_BACKEND_URL:-http://127.0.0.1:8084} playwright test tests/e2e/v64-account-usage.real.spec.ts --project=chromium"
   },
   "dependencies": {
+    "@iconify-icons/simple-icons": "^2.0.1",
+    "@iconify/vue": "^5.0.1",
     "@lucide/vue": "^1.24.0",
     "@vitejs/plugin-vue": "^5.2.4",
     "axios": "^1.7.9",
@@ -38,8 +40,8 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "^1.57.0",
-    "@types/qrcode": "^1.5.5",
     "@tailwindcss/vite": "^4.3.2",
+    "@types/qrcode": "^1.5.5",
     "lighthouse": "^13.4.1",
     "postcss": "^8.5.26",
     "typescript": "^5.7.2",
