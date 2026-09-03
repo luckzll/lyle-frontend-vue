@@ -40,7 +40,7 @@ const remainingText = computed(() => {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 })
 const terminal = computed(() => ['FULFILLED', 'CLOSED', 'CANCELLED', 'REFUNDED'].includes(order.value?.status || ''))
-const paymentActionLabel = computed(() => checkout.value?.provider === 'ALIPAY' ? '前往支付宝付款' : '前往支付')
+const paymentActionLabel = computed(() => checkout.value?.provider === 'ALIPAY' ? '新标签页打开支付宝' : '前往支付')
 const statusTitle = computed(() => {
   if (!order.value) return '正在准备收银台'
   if (order.value.status === 'PAID' || order.value.status === 'FULFILLING') return '付款已确认'
@@ -156,6 +156,8 @@ function openPayment() {
       error.value = '支付宝支付表单无效，请刷新页面后重试。'
       return
     }
+    form.target = '_blank'
+    form.rel = 'noopener noreferrer'
     form.submit()
     window.setTimeout(() => host.remove(), 5000)
     return
@@ -276,6 +278,11 @@ function goToResult() {
           <div v-else class="credential-placeholder">等待支付渠道返回凭据</div>
         </div>
 
+        <p
+          v-if="checkout?.provider === 'ALIPAY' && checkout.checkoutType === 'HTML_FORM' && checkout.action"
+          class="payment-exit-hint"
+        ><Info :size="14" aria-hidden="true" />支付宝将在新标签页打开；不想付款时关闭支付宝标签页，返回此页选择“稍后支付”或“取消订单”。</p>
+
         <div v-if="remainingSeconds > 0 && !terminal" class="countdown">
           <Clock3 :size="15" aria-hidden="true" />支付凭据剩余 {{ remainingText }}
         </div>
@@ -353,6 +360,8 @@ function goToResult() {
 .wechat-qr span { color: var(--muted-foreground); font-size: 10px; line-height: 1.5; }
 .credential-placeholder { color: var(--muted-foreground); font-size: 12px; }
 .pay-action { display: grid; min-height: 42px; place-items: center; border: 0; border-radius: 8px; background: var(--primary); color: white; padding: 0 18px; font-weight: 700; cursor: pointer; }
+.payment-exit-hint { display: flex; align-items: flex-start; gap: 6px; margin: 10px 0 0; border-radius: 8px; background: var(--primary-soft); color: var(--muted-foreground); padding: 9px 10px; font-size: 10px; line-height: 1.5; }
+.payment-exit-hint svg { flex: 0 0 auto; margin-top: 1px; color: var(--primary); }
 .countdown { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 12px; color: var(--muted-foreground); font-size: 11px; }
 .checkout-error { border-radius: 8px; background: var(--danger-soft); color: var(--danger-strong); padding: 10px; font-size: 11px; }
 .payment-actions { display: grid; gap: 8px; margin-top: auto; padding-top: 20px; }
