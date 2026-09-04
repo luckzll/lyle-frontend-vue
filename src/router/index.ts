@@ -518,6 +518,23 @@ const router = createRouter({
   ]
 })
 
+const routeChunkReloadKey = 'lyle:route-chunk-reload'
+const routeChunkLoadErrorPattern = /Failed to fetch dynamically imported module|Importing a module script failed|Load failed/i
+
+router.onError((error, to) => {
+  if (!routeChunkLoadErrorPattern.test(String(error))) {
+    return
+  }
+
+  const target = to.fullPath || window.location.href
+  if (window.sessionStorage.getItem(routeChunkReloadKey) === target) {
+    return
+  }
+
+  window.sessionStorage.setItem(routeChunkReloadKey, target)
+  window.location.assign(target)
+})
+
 router.beforeEach(async (to) => {
   await initializeAuth()
   const isCheckoutDesignPreview = import.meta.env.DEV && to.name === 'checkout' && to.query.preview === 'checkout'
@@ -542,6 +559,9 @@ router.beforeEach(async (to) => {
 
 router.afterEach((to) => {
   document.title = to.meta.title ? `${to.meta.title} · Lyle AI` : 'Lyle AI'
+  if (window.sessionStorage.getItem(routeChunkReloadKey) === to.fullPath) {
+    window.sessionStorage.removeItem(routeChunkReloadKey)
+  }
 })
 
 export default router
