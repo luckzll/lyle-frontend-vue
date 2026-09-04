@@ -325,3 +325,40 @@ No actionable P0, P1, or P2 findings remain.
 - P3: 选定稿是脱离应用外壳的纯内容构图；实现保留 Lyle 现有侧栏、顶部栏和固定输入器，因此全页留白与垂直起点不同，但调试账本本体的布局、层级和交互已按选定方向还原。
 
 final result: passed
+
+---
+
+# 聊天内容中轴与调试缺失态修订（2026-09-05）
+
+## Evidence
+
+- Source visual truth: `C:/Temp/codex-clipboard-d0a9957f-7f18-4ce1-a792-ddcbd67e72e9.png` (2559 × 1314 pixels).
+- Browser-rendered implementation: authenticated Chrome local preview, `?debug=1`, context panel closed, complete `chat-debug-v1` turn, inspected at 1707 × 932 CSS pixels.
+- Comparison input: the user-provided source screenshot and the live Chrome implementation screenshot were reviewed together in the same design QA session, with measured DOM boxes used to verify the highlighted axes.
+
+## Implemented changes
+
+- Replaced the competing 1160 / 980 / 920 px chat widths with a 920 px shared content track for toolbar, normal user/assistant content, and composer.
+- Kept the debug ledger as a centered 1160 px breakout so desktop evidence tables retain their usable width without changing the answer/composer axis.
+- Removed the debug answer's 980 px left-aligned override; the assistant Markdown surface now shares the composer's horizontal origin and width.
+- Added explicit `available`, `legacy`, `unsupported`, and `unavailable` DOM state evidence plus stable section-summary test IDs.
+- Legacy, unsupported, unavailable, and pending ledgers no longer render false zero counts. The long explanation appears only once; section bodies use short placeholders.
+- Live metadata without a debug version resolves to unavailable. Completed historical turns without a version remain legacy; failed historical turns without a version resolve to unavailable.
+
+## Automated evidence
+
+- `npm run test:unit`: 25 files / 130 tests passed.
+- `npm run build`: passed.
+- `npx playwright test tests/e2e/chat-debug-observability.spec.ts --project=chromium` on isolated port 4193: 3 tests passed.
+- The E2E suite now also locks the 920 / 1160 px desktop geometry, terminal HTTP failure state, responsive content alignment, and table-local overflow behavior.
+
+## Chrome browser QA
+
+- At 1707 × 932, toolbar, user turn, assistant Markdown, and composer all measured `x = 517.7`, `width = 920`; the debug ledger alone measured `x = 397.7`, `width = 1160`.
+- The non-ledger assistant children present in the fixture (answer and Token usage) both had a 0 px horizontal offset from the shared content axis.
+- Document-level horizontal overflow measured 0 px. All four debug data surfaces reported `overflow-x: auto`; at desktop their `clientWidth` and `scrollWidth` were both 874 px, so no scrollbar appears unless the container is actually narrow.
+- Chrome console warnings/errors: none.
+- Independent review found two terminal/responsive blockers before release. They were fixed by settling every pending terminal snapshot to unavailable, preserving local table scrolling, aligning every non-ledger assistant child, and removing the mobile chat-list horizontal inset. Regression assertions were added for each case.
+- No actionable P0, P1, or P2 findings remain.
+
+final result: passed

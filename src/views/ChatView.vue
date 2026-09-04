@@ -43,7 +43,13 @@ import ExecutionTimeline from '@/components/domain/ExecutionTimeline.vue'
 import SuggestionCard from '@/components/domain/SuggestionCard.vue'
 import { useWorkspaceStore, type WorkspaceProjectContext } from '@/stores/workspace'
 import { isConversationNearBottom } from '@/domain/chat-scroll'
-import { historyMessage, isActiveTurnPhase, resolveChatDebugDataState, type ChatDebugDataState } from '@/domain/chat-history'
+import {
+  historyMessage,
+  isActiveTurnPhase,
+  resolveLiveChatDebugDataState,
+  resolveTerminalChatDebugDataState,
+  type ChatDebugDataState
+} from '@/domain/chat-history'
 import {
   CHAT_KNOWLEDGE_BASE_STORAGE_KEY,
   CHAT_PROJECT_STORAGE_KEY,
@@ -770,6 +776,9 @@ async function revealSourceMessage(messageId: string) {
 
 async function cancelStreaming() {
   const controller = streamController.value
+  const pendingAssistant = [...messages.value].reverse().find((message) => (
+    message.role === 'assistant' && message.debugDataState === 'pending'
+  ))
   const target = [...messages.value].reverse().find((message) => (
     message.role === 'assistant'
     && Boolean(message.turnId)
@@ -778,6 +787,7 @@ async function cancelStreaming() {
   const turnId = target?.turnId || recoveringTurnId.value
   if (!turnId || !conversationId.value) {
     controller?.abort()
+    settlePendingDebugState(target || pendingAssistant)
     return
   }
 
@@ -792,11 +802,17 @@ async function cancelStreaming() {
       applyImageBatchCancelled(target)
     }
   } finally {
+    settlePendingDebugState(target || pendingAssistant)
     controller?.abort()
     clearRecoveryPolling()
     recoveringTurnId.value = ''
     loading.value = false
   }
+}
+
+function settlePendingDebugState(message?: Message) {
+  if (!message) return
+  message.debugDataState = resolveTerminalChatDebugDataState(message.debugDataState)
 }
 
 async function submit(retryContext?: RetryTurnContext) {
@@ -909,13 +925,16 @@ async function submit(retryContext?: RetryTurnContext) {
         messages.value[assistantIndex].knowledgeBaseIds = sanitizeKnowledgeBaseIds(meta.knowledgeBaseIds)
         messages.value[assistantIndex].retrievalScope = sanitizeRetrievalScope(meta.retrievalScope)
         messages.value[assistantIndex].debugTruncated = meta.debugTruncated === true
-        messages.value[assistantIndex].debugDataState = resolveChatDebugDataState(meta.debugVersion)
+        messages.value[assistantIndex].debugDataState = resolveLiveChatDebugDataState(meta.debugVersion)
       },
       onTurnStatus: (status) => {
         const target = messages.value[assistantIndex]
         target.turnId = status.turnId || target.turnId
         target.phase = status.phase
         target.statusText = status.message
+        if (status.phase === 'COMPLETED' || status.phase === 'FAILED') {
+          settlePendingDebugState(target)
+        }
       },
       onImageBatchStarted: (batch) => {
         applyImageBatchStarted(messages.value[assistantIndex], batch)
@@ -931,14 +950,10 @@ async function submit(retryContext?: RetryTurnContext) {
         messages.value[assistantIndex].content ||= errorMessage
         messages.value[assistantIndex].phase = 'FAILED'
         messages.value[assistantIndex].statusText = errorMessage
-        if (messages.value[assistantIndex].debugDataState === 'pending') {
-          messages.value[assistantIndex].debugDataState = 'unavailable'
-        }
+        settlePendingDebugState(messages.value[assistantIndex])
       },
       onDone: () => {
-        if (messages.value[assistantIndex].debugDataState === 'pending') {
-          messages.value[assistantIndex].debugDataState = 'unavailable'
-        }
+        settlePendingDebugState(messages.value[assistantIndex])
         streamController.value = null
       }
     }, {
@@ -990,6 +1005,7 @@ async function submit(retryContext?: RetryTurnContext) {
     }
     error.value = fallback
   } finally {
+    if (assistantIndex >= 0) settlePendingDebugState(messages.value[assistantIndex])
     loading.value = false
     streamController.value = null
   }
@@ -1341,7 +1357,7 @@ function debugDataStatusLabel(message: Message) {
   if (message.debugDataState === 'pending') return '采集中'
   if (message.debugDataState === 'unsupported') return '版本不受支持'
   if (message.debugDataState === 'legacy') return '历史明细缺失'
-  if (message.debugDataState === 'unavailable') return '本轮明细不可用'
+  if (message.debugDataState !== 'available') return '本轮明细不可用'
   if (message.debugTruncated) return '安全截断'
   return '数据完整'
 }
@@ -1350,12 +1366,42 @@ function debugDataNotice(message: Message) {
   if (message.debugDataState === 'pending') return '本轮仍在执行，证据账本会在回答完成后更新。'
   if (message.debugDataState === 'unsupported') return '本轮使用了当前界面不支持的调试数据版本，不会将其中的空值解释为真实 0。请升级前端或重新提问。'
   if (message.debugDataState === 'legacy') return '这条旧回答没有保存调试明细，无法判断当时是未调用还是数据未记录。请重新提问以生成完整账本。'
-  if (message.debugDataState === 'unavailable') return '本轮没有收到完整调试快照，不能把空栏目解释为真实 0；可重试本轮进行确认。'
+  if (message.debugDataState !== 'available') return '本轮没有收到完整调试快照，不能把空栏目解释为真实 0；可重试本轮进行确认。'
   if (message.debugTruncated) return '调试快照超过安全容量，部分文本预览已截断；执行计数和状态仍可用于排查。'
   return ''
 }
 
-function debugStepStateLabel(state: DebugExecutionStep['state']) {
+function debugSectionPlaceholder(message: Message, body = false) {
+  if (message.debugDataState === 'pending') return body ? '正在采集…' : '—'
+  if (message.debugDataState === 'legacy') return '未记录'
+  if (message.debugDataState === 'unsupported') return '版本不支持'
+  if (message.debugDataState === 'available') return ''
+  return '快照未返回'
+}
+
+function debugMemorySummary(message: Message) {
+  return debugSectionPlaceholder(message)
+    || `注入 ${injectedMemoryItems(message).length} 条 · 候选 ${recalledMemoryItems(message).length} 条 · 排除 ${memoryExclusionCount(message)} 条`
+}
+
+function debugRagSummary(message: Message) {
+  return debugSectionPlaceholder(message) || `命中 ${ragContextCount(message)} 个片段`
+}
+
+function debugToolsSummary(message: Message) {
+  return debugSectionPlaceholder(message)
+    || (message.toolResults?.length ? `调用 ${message.toolResults.length} 次` : '本轮未调用')
+}
+
+function debugAgentSummary(message: Message) {
+  return debugSectionPlaceholder(message) || `${message.agentTrace?.length || 0} 个节点`
+}
+
+function debugStepStateLabel(message: Message, state: DebugExecutionStep['state']) {
+  if (message.debugDataState === 'pending') return '进行中'
+  if (message.debugDataState === 'legacy') return '未记录'
+  if (message.debugDataState === 'unsupported') return '不支持'
+  if (message.debugDataState !== 'available') return '未返回'
   return ({
     done: '完成',
     empty: '0 项',
@@ -1392,7 +1438,7 @@ function debugExecutionSteps(message: Message): DebugExecutionStep[] {
       state: 'missing'
     }))
   }
-  if (message.debugDataState === 'unavailable') {
+  if (message.debugDataState !== 'available') {
     return [
       { id: 'route', label: '路由', detail: '快照未返回', state: 'missing' },
       { id: 'memory', label: '记忆', detail: '快照未返回', state: 'missing' },
@@ -2956,6 +3002,7 @@ function escapeHtml(text: string) {
           v-if="showDebug && message.role === 'assistant'"
           class="debug-panel debug-ledger"
           data-testid="chat-debug-ledger"
+          :data-debug-state="message.debugDataState || 'unavailable'"
         >
           <div class="debug-actions debug-ledger-head">
             <span><GitBranch :size="17" aria-hidden="true" />本轮调试</span>
@@ -2974,7 +3021,7 @@ function escapeHtml(text: string) {
             </div>
           </div>
 
-          <p v-if="debugDataNotice(message)" class="debug-ledger-notice" role="status">
+          <p v-if="debugDataNotice(message)" class="debug-ledger-notice" data-testid="debug-data-notice" role="status">
             {{ debugDataNotice(message) }}
           </p>
 
@@ -2990,7 +3037,7 @@ function escapeHtml(text: string) {
                 </span>
                 <span class="debug-step-copy">
                   <strong>{{ step.label }}</strong>
-                  <small><Circle :size="7" fill="currentColor" aria-hidden="true" />{{ debugStepStateLabel(step.state) }}</small>
+                  <small><Circle :size="7" fill="currentColor" aria-hidden="true" />{{ debugStepStateLabel(message, step.state) }}</small>
                   <span :title="step.detail">{{ step.detail }}</span>
                 </span>
               </div>
@@ -3001,11 +3048,11 @@ function escapeHtml(text: string) {
           <section class="debug-ledger-section" data-testid="debug-memory-section">
             <div class="debug-ledger-section-head">
               <span><BrainCircuit :size="17" aria-hidden="true" /><strong>记忆</strong></span>
-              <p>注入 {{ injectedMemoryItems(message).length }} 条 · 候选 {{ recalledMemoryItems(message).length }} 条 · 排除 {{ memoryExclusionCount(message) }} 条</p>
+              <p data-testid="debug-memory-summary">{{ debugMemorySummary(message) }}</p>
             </div>
             <div class="debug-ledger-section-body">
               <div v-if="message.debugDataState !== 'available'" class="debug-empty">
-                {{ debugDataNotice(message) || '记忆调试数据不可用。' }}
+                {{ debugSectionPlaceholder(message, true) }}
               </div>
               <template v-else>
                 <div v-if="injectedMemoryRecords(message).length" class="debug-data-table debug-memory-table" role="table" aria-label="实际注入回答的记忆">
@@ -3069,11 +3116,11 @@ function escapeHtml(text: string) {
           <section class="debug-ledger-section" data-testid="debug-rag-section">
             <div class="debug-ledger-section-head">
               <span><Database :size="17" aria-hidden="true" /><strong>知识库 RAG</strong></span>
-              <p>命中 {{ ragContextCount(message) }} 个片段</p>
+              <p data-testid="debug-rag-summary">{{ debugRagSummary(message) }}</p>
             </div>
             <div class="debug-ledger-section-body">
               <div v-if="message.debugDataState !== 'available'" class="debug-empty">
-                {{ debugDataNotice(message) || 'RAG 调试数据不可用。' }}
+                {{ debugSectionPlaceholder(message, true) }}
               </div>
               <template v-else>
                 <div class="debug-inline-facts">
@@ -3124,11 +3171,11 @@ function escapeHtml(text: string) {
           <section class="debug-ledger-section" data-testid="debug-tools-section">
             <div class="debug-ledger-section-head">
               <span><Wrench :size="17" aria-hidden="true" /><strong>工具调用</strong></span>
-              <p>{{ message.toolResults?.length ? `调用 ${message.toolResults.length} 次` : '本轮未调用' }}</p>
+              <p data-testid="debug-tools-summary">{{ debugToolsSummary(message) }}</p>
             </div>
             <div class="debug-ledger-section-body">
               <div v-if="message.debugDataState !== 'available'" class="debug-empty">
-                {{ debugDataNotice(message) || '工具调试数据不可用。' }}
+                {{ debugSectionPlaceholder(message, true) }}
               </div>
               <template v-else>
                 <p v-if="selectedToolNames(message).length" class="debug-ledger-summary">
@@ -3162,11 +3209,11 @@ function escapeHtml(text: string) {
           <section class="debug-ledger-section" data-testid="debug-agent-section">
             <div class="debug-ledger-section-head">
               <span><GitBranch :size="17" aria-hidden="true" /><strong>Agent 流程</strong></span>
-              <p>{{ message.agentTrace?.length || 0 }} 个节点</p>
+              <p data-testid="debug-agent-summary">{{ debugAgentSummary(message) }}</p>
             </div>
             <div class="debug-ledger-section-body">
               <div v-if="message.debugDataState !== 'available'" class="debug-empty">
-                {{ debugDataNotice(message) || 'Agent Trace 不可用。' }}
+                {{ debugSectionPlaceholder(message, true) }}
               </div>
               <template v-else>
                 <div v-if="message.agentTrace?.length" class="debug-agent-table" aria-label="Agent 执行流程">
@@ -3341,10 +3388,13 @@ function escapeHtml(text: string) {
 </template>
 
 <style scoped>
-.page { --chat-reading-width: 920px; }
+.page {
+  --chat-content-width: 920px;
+  --chat-debug-width: 1160px;
+}
 
 .toolbar {
-  width: min(100%, var(--chat-reading-width));
+  width: min(100%, var(--chat-content-width));
   margin-inline: auto;
 }
 
@@ -3368,7 +3418,7 @@ function escapeHtml(text: string) {
   max-height: none;
   overflow-y: auto;
   overscroll-behavior: contain;
-  width: min(100%, var(--chat-reading-width));
+  width: min(100%, var(--chat-content-width));
   justify-self: center;
   border: 0;
   border-radius: 0;
@@ -3381,20 +3431,39 @@ function escapeHtml(text: string) {
 }
 
 .chat-list--debug {
-  width: min(100%, 1160px);
+  width: min(100%, var(--chat-debug-width));
 }
 
 .chat-list--debug .message {
-  width: min(100%, var(--chat-reading-width));
+  width: min(100%, var(--chat-content-width));
 }
 
 .chat-list--debug .message.debug-message {
+  --chat-debug-track-inset: max(0px, calc((100% - var(--chat-content-width)) / 2));
   width: 100%;
+}
+
+.chat-list--debug .message.debug-message > :not(.debug-panel) {
+  min-width: 0;
+  max-width: min(100%, var(--chat-content-width));
+  margin-inline-start: var(--chat-debug-track-inset);
+  margin-inline-end: 0;
 }
 
 .message {
   width: 100%;
   max-width: none;
+  margin-inline: auto;
+}
+
+.message.assistant > .message-bubble {
+  width: 100%;
+  max-width: 100%;
+}
+
+.chat-list--debug .message.debug-message > .message-bubble {
+  width: min(100%, var(--chat-content-width));
+  max-width: var(--chat-content-width);
   margin-inline: auto;
 }
 
@@ -3486,7 +3555,7 @@ function escapeHtml(text: string) {
   backdrop-filter: blur(12px);
   grid-column: 1;
   grid-row: 2;
-  width: min(100%, var(--chat-reading-width));
+  width: min(100%, var(--chat-content-width));
   justify-self: center;
 }
 .chat-input textarea { min-height: 48px; resize: vertical; border: 0; background: transparent; box-shadow: none; }
@@ -3688,7 +3757,7 @@ function escapeHtml(text: string) {
     padding: 10px;
   }
   .starter-grid :deep(.suggestion-card.compact .action) { grid-column: auto; }
-  .chat-list { min-height: 0; max-height: none; padding: var(--space-3); }
+  .chat-list { min-height: 0; max-height: none; padding: var(--space-3) 0; }
   .message,
   .chat-input { width: 100%; }
   .toolbar-controls {
