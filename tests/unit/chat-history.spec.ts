@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { historyMessage, isActiveTurnPhase } from '@/domain/chat-history'
+import {
+  historyMessage,
+  isActiveTurnPhase,
+  resolveLiveChatDebugDataState,
+  resolveTerminalChatDebugDataState
+} from '@/domain/chat-history'
 
 describe('persisted chat turn recovery', () => {
   it('restores a running image batch for refresh polling', () => {
@@ -276,5 +281,44 @@ describe('persisted chat turn recovery', () => {
     expect(unsupported.debugDataState).not.toBe('available')
     expect(unsupported.debugVersion).toBeUndefined()
     expect(whitespace.debugDataState).toBe('legacy')
+  })
+
+  it('treats missing live metadata as unavailable without changing legacy history semantics', () => {
+    expect(resolveLiveChatDebugDataState(undefined)).toBe('unavailable')
+    expect(resolveLiveChatDebugDataState('   ')).toBe('unavailable')
+    expect(resolveLiveChatDebugDataState('chat-debug-v2')).toBe('unsupported')
+    expect(resolveLiveChatDebugDataState('chat-debug-v1')).toBe('available')
+
+    const legacy = historyMessage({
+      id: '10',
+      conversationId: '10',
+      role: 'assistant',
+      content: '旧回答。',
+      createdAt: '2026-09-05T00:00:00Z',
+      metadata: { phase: 'COMPLETED' }
+    })
+
+    expect(legacy.debugDataState).toBe('legacy')
+  })
+
+  it('marks failed history without a debug version as unavailable', () => {
+    const failed = historyMessage({
+      id: '11',
+      conversationId: '10',
+      role: 'assistant',
+      content: '回答失败。',
+      createdAt: '2026-09-05T00:00:00Z',
+      metadata: { phase: 'FAILED', statusText: '网络异常' }
+    })
+
+    expect(failed.debugDataState).toBe('unavailable')
+  })
+
+  it('settles only a pending terminal debug snapshot as unavailable', () => {
+    expect(resolveTerminalChatDebugDataState('pending')).toBe('unavailable')
+    expect(resolveTerminalChatDebugDataState('available')).toBe('available')
+    expect(resolveTerminalChatDebugDataState('unsupported')).toBe('unsupported')
+    expect(resolveTerminalChatDebugDataState('legacy')).toBe('legacy')
+    expect(resolveTerminalChatDebugDataState(undefined)).toBeUndefined()
   })
 })

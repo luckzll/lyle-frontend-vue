@@ -8,10 +8,12 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('complete historical debug evidence survives refresh and stays behind debug mode', async ({ page }) => {
+  await page.setViewportSize({ width: 1707, height: 932 })
   await page.goto('/?debug=1&conversationId=debug-complete')
 
   const ledger = page.getByTestId('chat-debug-ledger')
   await expect(ledger).toBeVisible()
+  await expect(ledger).toHaveAttribute('data-debug-state', 'available')
   await expect(ledger.getByText('数据完整')).toBeVisible()
   await expect(ledger.getByLabel('本轮执行路径')).toContainText('路由')
   await expect(ledger.getByLabel('本轮执行路径')).toContainText('知识库')
@@ -47,6 +49,43 @@ test('complete historical debug evidence survives refresh and stays behind debug
   await expect(agents).toContainText('知识库 RAG')
   await expect(agents).toContainText('回答生成 Writer')
 
+  await expect(page.getByTestId('debug-memory-summary')).toHaveText('注入 1 条 · 候选 4 条 · 排除 1 条')
+  await expect(page.getByTestId('debug-rag-summary')).toHaveText('命中 1 个片段')
+  await expect(page.getByTestId('debug-tools-summary')).toHaveText('调用 1 次')
+  await expect(page.getByTestId('debug-agent-summary')).toHaveText('5 个节点')
+
+  const assistantContent = page.locator('.message.assistant > .message-bubble.markdown').first()
+  const composer = page.locator('.chat-input')
+  const [assistantBox, composerBox, ledgerBox] = await Promise.all([
+    assistantContent.boundingBox(),
+    composer.boundingBox(),
+    ledger.boundingBox()
+  ])
+  expect(assistantBox).not.toBeNull()
+  expect(composerBox).not.toBeNull()
+  expect(ledgerBox).not.toBeNull()
+  expect(Math.abs((assistantBox?.x || 0) - (composerBox?.x || 0))).toBeLessThanOrEqual(1)
+  expect(Math.abs((assistantBox?.width || 0) - (composerBox?.width || 0))).toBeLessThanOrEqual(1)
+  expect(assistantBox?.width).toBeCloseTo(920, 0)
+  expect(ledgerBox?.width).toBeCloseTo(1160, 0)
+  expect(Math.abs(
+    ((assistantBox?.x || 0) - (ledgerBox?.x || 0))
+      - (((ledgerBox?.width || 0) - (assistantBox?.width || 0)) / 2)
+  )).toBeLessThanOrEqual(1)
+  const debugChildOffsets = await page.locator('.message.debug-message > :not(.debug-panel)').evaluateAll((elements) => {
+    const content = document.querySelector<HTMLElement>('.message.debug-message > .message-bubble')
+    const contentX = content?.getBoundingClientRect().x || 0
+    return elements.map((element) => Math.abs(element.getBoundingClientRect().x - contentX))
+  })
+  expect(debugChildOffsets.every((offset) => offset <= 1)).toBe(true)
+  const overflow = await page.evaluate(() => ({
+    page: document.documentElement.scrollWidth - window.innerWidth,
+    tables: Array.from(document.querySelectorAll<HTMLElement>('.debug-data-table, .debug-agent-table'))
+      .map((table) => table.scrollWidth - table.clientWidth)
+  }))
+  expect(overflow.page).toBeLessThanOrEqual(1)
+  expect(overflow.tables.every((value) => value <= 1)).toBe(true)
+
   await page.reload()
   await expect(page.getByTestId('debug-memory-section')).toContainText('向量召回片段')
   await expect(page.getByTestId('debug-rag-section')).toContainText('大模型知识原理.docx')
@@ -60,15 +99,111 @@ test('complete historical debug evidence survives refresh and stays behind debug
 test('debug ledger distinguishes an executed zero result from legacy missing data', async ({ page }) => {
   await page.goto('/?debug=1&conversationId=debug-zero')
 
+  await expect(page.getByTestId('chat-debug-ledger')).toHaveAttribute('data-debug-state', 'available')
   await expect(page.getByTestId('chat-debug-ledger').getByText('数据完整')).toBeVisible()
+  await expect(page.getByTestId('debug-memory-summary')).toHaveText('注入 0 条 · 候选 0 条 · 排除 0 条')
+  await expect(page.getByTestId('debug-rag-summary')).toHaveText('命中 0 个片段')
+  await expect(page.getByTestId('debug-tools-summary')).toHaveText('本轮未调用')
   await expect(page.getByTestId('debug-rag-section')).toContainText('已执行，但命中 0 个片段')
   await expect(page.getByTestId('debug-rag-section')).toContainText('检索已执行，但返回 0 个知识片段')
   await expect(page.getByTestId('debug-tools-section')).toContainText('本轮没有调用任何工具')
 
   await page.goto('/?debug=1&conversationId=debug-legacy')
-  await expect(page.getByTestId('chat-debug-ledger').getByText('历史明细缺失')).toBeVisible()
-  await expect(page.getByTestId('chat-debug-ledger')).toContainText('无法判断当时是未调用还是数据未记录')
+  const legacyLedger = page.getByTestId('chat-debug-ledger')
+  await expect(legacyLedger).toHaveAttribute('data-debug-state', 'legacy')
+  await expect(legacyLedger.getByText('历史明细缺失')).toBeVisible()
+  await expect(legacyLedger).toContainText('无法判断当时是未调用还是数据未记录')
+  await expect(legacyLedger.getByTestId('debug-data-notice')).toHaveCount(1)
+  await expect(legacyLedger.getByLabel('本轮执行路径').getByText('未记录', { exact: true })).toHaveCount(5)
+  for (const testId of ['debug-memory-summary', 'debug-rag-summary', 'debug-tools-summary', 'debug-agent-summary']) {
+    await expect(page.getByTestId(testId)).toHaveText('未记录')
+  }
+  for (const sectionId of ['debug-memory-section', 'debug-rag-section', 'debug-tools-section', 'debug-agent-section']) {
+    await expect(page.getByTestId(sectionId).locator('.debug-empty')).toHaveText('未记录')
+  }
+  await expect(legacyLedger).not.toContainText('注入 0 条')
+  await expect(legacyLedger).not.toContainText('本轮未调用')
+
+  await page.goto('/?debug=1&conversationId=debug-unsupported')
+  const unsupportedLedger = page.getByTestId('chat-debug-ledger')
+  await expect(unsupportedLedger).toHaveAttribute('data-debug-state', 'unsupported')
+  await expect(unsupportedLedger.getByText('版本不受支持')).toBeVisible()
+  await expect(unsupportedLedger.getByTestId('debug-data-notice')).toHaveCount(1)
+  await expect(unsupportedLedger.getByLabel('本轮执行路径').getByText('不支持', { exact: true })).toHaveCount(5)
+  for (const testId of ['debug-memory-summary', 'debug-rag-summary', 'debug-tools-summary', 'debug-agent-summary']) {
+    await expect(page.getByTestId(testId)).toHaveText('版本不支持')
+  }
 })
+
+test('live metadata without a debug version is unavailable instead of legacy', async ({ page }) => {
+  await page.goto('/?debug=1&conversationId=debug-complete')
+  await page.getByTestId('chat-input').fill('验证本轮调试快照')
+  await page.getByTestId('chat-submit').click()
+
+  const ledger = page.getByTestId('chat-debug-ledger').last()
+  await expect(ledger).toHaveAttribute('data-debug-state', 'unavailable')
+  await expect(ledger.getByText('本轮明细不可用')).toBeVisible()
+  for (const testId of ['debug-memory-summary', 'debug-rag-summary', 'debug-tools-summary', 'debug-agent-summary']) {
+    await expect(ledger.getByTestId(testId)).toHaveText('快照未返回')
+  }
+  await expect(ledger.getByTestId('debug-data-notice')).toHaveCount(1)
+  await expect(ledger.getByLabel('本轮执行路径').getByText('未返回', { exact: true })).toHaveCount(5)
+})
+
+test('terminal HTTP failure settles pending debug state', async ({ page }) => {
+  await page.goto('/?debug=1&conversationId=debug-complete')
+  await page.getByTestId('chat-input').fill('触发 HTTP 失败')
+  await page.getByTestId('chat-submit').click()
+
+  const ledger = page.getByTestId('chat-debug-ledger').last()
+  await expect(ledger).toHaveAttribute('data-debug-state', 'unavailable')
+  await expect(ledger).not.toHaveAttribute('data-debug-state', 'pending')
+  await expect(ledger.getByText('本轮明细不可用')).toBeVisible()
+})
+
+test('debug ledger keeps table overflow local and content aligned at responsive widths', async ({ page }) => {
+  await page.setViewportSize({ width: 820, height: 900 })
+  await page.goto('/?debug=1&conversationId=debug-complete')
+  await expect(page.getByTestId('chat-debug-ledger')).toBeVisible()
+
+  const narrow = await responsiveMetrics(page)
+  expect(narrow.pageOverflow).toBeLessThanOrEqual(1)
+  expect(narrow.tables.every((table) => table.overflowX === 'auto')).toBe(true)
+  expect(narrow.tables.every((table) => table.right <= narrow.ledgerRight + 1)).toBe(true)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  const mobile = await responsiveMetrics(page)
+  expect(mobile.pageOverflow).toBeLessThanOrEqual(1)
+  expect(Math.abs(mobile.assistantX - mobile.composerX)).toBeLessThanOrEqual(1)
+  expect(Math.abs(mobile.assistantWidth - mobile.composerWidth)).toBeLessThanOrEqual(1)
+  expect(mobile.tables.every((table) => table.overflowX === 'auto')).toBe(true)
+  expect(mobile.tables.some((table) => table.scrollWidth > table.clientWidth)).toBe(true)
+})
+
+async function responsiveMetrics(page: Page) {
+  return page.evaluate(() => {
+    const assistant = document.querySelector<HTMLElement>('.message.assistant > .message-bubble')?.getBoundingClientRect()
+    const composer = document.querySelector<HTMLElement>('.chat-input')?.getBoundingClientRect()
+    const ledger = document.querySelector<HTMLElement>('[data-testid="chat-debug-ledger"]')?.getBoundingClientRect()
+    return {
+      pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      assistantX: assistant?.x || 0,
+      assistantWidth: assistant?.width || 0,
+      composerX: composer?.x || 0,
+      composerWidth: composer?.width || 0,
+      ledgerRight: ledger?.right || 0,
+      tables: Array.from(document.querySelectorAll<HTMLElement>('.debug-data-table, .debug-agent-table')).map((table) => {
+        const rect = table.getBoundingClientRect()
+        return {
+          right: rect.right,
+          clientWidth: table.clientWidth,
+          scrollWidth: table.scrollWidth,
+          overflowX: getComputedStyle(table).overflowX
+        }
+      })
+    }
+  })
+}
 
 async function installAuthenticatedSession(page: Page) {
   const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')
@@ -91,11 +226,34 @@ async function mockApis(page: Page) {
     if (path === '/api/conversations') return json(route, [
       { id: 'debug-complete', title: '完整调试账本', createdAt: NOW, updatedAt: NOW },
       { id: 'debug-zero', title: '零结果调试账本', createdAt: NOW, updatedAt: NOW },
-      { id: 'debug-legacy', title: '旧历史', createdAt: NOW, updatedAt: NOW }
+      { id: 'debug-legacy', title: '旧历史', createdAt: NOW, updatedAt: NOW },
+      { id: 'debug-unsupported', title: '不支持的调试版本', createdAt: NOW, updatedAt: NOW }
     ])
     if (path === '/api/chat/messages/debug-complete') return json(route, completeMessages())
     if (path === '/api/chat/messages/debug-zero') return json(route, zeroMessages())
     if (path === '/api/chat/messages/debug-legacy') return json(route, legacyMessages())
+    if (path === '/api/chat/messages/debug-unsupported') return json(route, unsupportedMessages())
+    if (path === '/api/chat/stream') {
+      if ((request.postData() || '').includes('触发 HTTP 失败')) {
+        return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: '上游服务暂时不可用' }) })
+      }
+      const body = [
+        'event: delta',
+        'data: {"text":"本轮回答已完成。"}',
+        '',
+        'event: meta',
+        'data: {"sources":[],"agentTrace":[],"toolResults":[],"usedMemories":[]}',
+        '',
+        'event: turn.status',
+        'data: {"turnId":"live-no-debug-version","phase":"COMPLETED","message":"已完成"}',
+        '',
+        'event: done',
+        'data: {}',
+        '',
+        ''
+      ].join('\n')
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', body })
+    }
     if (path === '/api/knowledge-bases') return json(route, [{ id: 'kb-llm', name: '大模型知识库', createdAt: NOW }])
     if (path === '/api/projects') return json(route, { items: [] })
     if (path === '/api/memory/current') return json(route, emptyMemory())
@@ -244,6 +402,17 @@ function legacyMessages() {
     content: '这是升级前保存的回答。',
     createdAt: NOW,
     metadata: { phase: 'COMPLETED', usedMemories: [] }
+  }]
+}
+
+function unsupportedMessages() {
+  return [{
+    id: 'u1',
+    conversationId: 'debug-unsupported',
+    role: 'assistant',
+    content: '这条回答来自更新的调试协议。',
+    createdAt: NOW,
+    metadata: { phase: 'COMPLETED', debugVersion: 'chat-debug-v2' }
   }]
 }
 

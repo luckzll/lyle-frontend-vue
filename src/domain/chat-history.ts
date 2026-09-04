@@ -65,16 +65,20 @@ export type RecoveredChatMessage = {
 
 export function historyMessage(item: ChatMessage): RecoveredChatMessage {
   const metadata = isRecord(item.metadata) ? item.metadata : {}
+  const phase = historyTurnPhase(metadata.phase)
   const debugVersion = sanitizeDebugVersion(metadata.debugVersion)
+  const resolvedDebugDataState = resolveChatDebugDataState(metadata.debugVersion)
   const debugDataState = item.role === 'assistant'
-    ? resolveChatDebugDataState(metadata.debugVersion)
+    ? phase === 'FAILED' && resolvedDebugDataState === 'legacy'
+      ? 'unavailable'
+      : resolvedDebugDataState
     : undefined
   return {
     id: item.id,
     role: item.role,
     content: item.content,
     turnId: item.turnId || (typeof metadata.turnId === 'string' ? metadata.turnId : undefined),
-    phase: historyTurnPhase(metadata.phase),
+    phase,
     statusText: typeof metadata.statusText === 'string' ? metadata.statusText : undefined,
     imageBatch: historyImageBatch(metadata.imageBatch),
     attachments: Array.isArray(item.attachments) ? item.attachments : undefined,
@@ -99,6 +103,15 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
 export function resolveChatDebugDataState(value: unknown): Extract<ChatDebugDataState, 'available' | 'unsupported' | 'legacy'> {
   if (sanitizeDebugVersion(value) === CHAT_DEBUG_VERSION) return 'available'
   return typeof value === 'string' && Boolean(value.trim()) ? 'unsupported' : 'legacy'
+}
+
+export function resolveLiveChatDebugDataState(value: unknown): Extract<ChatDebugDataState, 'available' | 'unsupported' | 'unavailable'> {
+  const state = resolveChatDebugDataState(value)
+  return state === 'legacy' ? 'unavailable' : state
+}
+
+export function resolveTerminalChatDebugDataState(state: ChatDebugDataState | undefined): ChatDebugDataState | undefined {
+  return state === 'pending' ? 'unavailable' : state
 }
 
 export function isActiveTurnPhase(phase: TurnStatusEvent['phase'] | undefined) {

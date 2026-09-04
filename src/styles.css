@@ -1917,12 +1917,14 @@ pre {
 }
 
 .message.debug-message {
-  width: min(1160px, 100%);
+  width: min(var(--chat-debug-width, 1160px), 100%);
   max-width: 100%;
 }
 
 .message.debug-message > .message-bubble {
-  max-width: min(980px, 100%);
+  width: min(var(--chat-content-width, 920px), 100%);
+  max-width: 100%;
+  margin-inline: auto;
 }
 
 .debug-panel {
@@ -2344,13 +2346,6 @@ pre {
   margin: 0;
   color: var(--muted-foreground, #64748b);
   line-height: 1.5;
-}
-
-@media (min-width: 761px) {
-  .debug-data-table,
-  .debug-agent-table {
-    overflow-x: visible;
-  }
 }
 
 @container (max-width: 860px) {
