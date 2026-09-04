@@ -1,20 +1,25 @@
 <script setup lang="ts">
 import axios from 'axios'
 import {
+  ArrowRight,
   CircleAlert,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Clock3,
   FileText,
   FileUp,
   FolderOpen,
+  MessageSquareText,
   MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Trash2
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   createKnowledgeBase,
   debugRag,
@@ -25,6 +30,7 @@ import {
   listKnowledgeFiles,
   rebuildKnowledgeBaseFiles,
   rebuildKnowledgeFile,
+  updateKnowledgeBase,
   uploadKnowledgeFile
 } from '@/api/app'
 import type { KnowledgeBase, KnowledgeFile, RagChunkResponse, RagDebugResponse } from '@/api/types'
@@ -32,6 +38,7 @@ import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
 import { isKnowledgeFileSupported, KNOWLEDGE_FILE_ACCEPT } from '@/domain/knowledge-file'
 
 const name = ref('')
+const router = useRouter()
 const loading = ref(false)
 const pageLoading = ref(true)
 const error = ref('')
@@ -53,6 +60,9 @@ const dragActive = ref(false)
 const showCreateForm = ref(false)
 const knowledgeMenuOpen = ref(false)
 const openFileMenuId = ref<string>()
+const renamingKnowledgeBase = ref(false)
+const renameDraft = ref('')
+const renameSaving = ref(false)
 const selectedKnowledgeBase = computed(() =>
   knowledgeBases.value.find((item) => item.id === selectedKnowledgeBaseId.value)
 )
@@ -128,6 +138,47 @@ async function removeKnowledgeBase(id: string) {
   } finally {
     loading.value = false
   }
+}
+
+function startRenameKnowledgeBase() {
+  if (!selectedKnowledgeBase.value) return
+  renameDraft.value = selectedKnowledgeBase.value.name
+  renamingKnowledgeBase.value = true
+  knowledgeMenuOpen.value = false
+}
+
+function cancelRenameKnowledgeBase() {
+  renamingKnowledgeBase.value = false
+  renameDraft.value = ''
+}
+
+async function renameKnowledgeBase() {
+  const id = selectedKnowledgeBaseId.value
+  const nextName = renameDraft.value.trim()
+  if (!id || !nextName || renameSaving.value) return
+  if (nextName === selectedKnowledgeBase.value?.name) {
+    cancelRenameKnowledgeBase()
+    return
+  }
+
+  renameSaving.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const response = await updateKnowledgeBase(id, nextName)
+    knowledgeBases.value = knowledgeBases.value.map((item) => item.id === id ? response.data : item)
+    notice.value = '知识库名称已更新。'
+    cancelRenameKnowledgeBase()
+  } catch {
+    error.value = '知识库重命名失败，请稍后重试。'
+  } finally {
+    renameSaving.value = false
+  }
+}
+
+async function openChatWithKnowledgeBase() {
+  if (!selectedKnowledgeBaseId.value) return
+  await router.push({ name: 'chat', query: { knowledgeBaseId: selectedKnowledgeBaseId.value } })
 }
 
 async function removeFile(fileId: string) {
@@ -289,6 +340,7 @@ async function toggleTechnicalDetails() {
 
 async function selectKnowledgeBase(id: string) {
   selectedKnowledgeBaseId.value = id
+  cancelRenameKnowledgeBase()
   ragDebug.value = null
   ragChunks.value = []
   showRetrievalTest.value = true
@@ -393,6 +445,7 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
             v-model="name"
             data-testid="knowledge-name-input"
             placeholder="例如：产品资料"
+            maxlength="255"
             autofocus
           />
           <div class="kb-create__actions">
@@ -432,7 +485,7 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
               <strong>{{ item.name }}</strong>
               <small>{{ item.id === selectedKnowledgeBaseId ? `${files.length} 个文件` : '点击打开' }}</small>
             </span>
-            <MoreHorizontal :size="17" aria-hidden="true" />
+            <ChevronRight :size="17" aria-hidden="true" />
           </button>
         </div>
 
@@ -445,7 +498,22 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
       <section v-if="selectedKnowledgeBaseId" class="kb-workspace" aria-label="知识库详情">
         <header class="kb-workspace__header">
           <div>
-            <div class="kb-title-row">
+            <form v-if="renamingKnowledgeBase" class="kb-title-edit" @submit.prevent="renameKnowledgeBase">
+              <label class="visually-hidden" for="knowledge-rename">知识库名称</label>
+              <input
+                id="knowledge-rename"
+                v-model="renameDraft"
+                data-testid="knowledge-rename-input"
+                maxlength="255"
+                autofocus
+                @keydown.esc.prevent="cancelRenameKnowledgeBase"
+              />
+              <button type="submit" :disabled="renameSaving || !renameDraft.trim()">
+                {{ renameSaving ? '保存中…' : '保存' }}
+              </button>
+              <button class="secondary" type="button" :disabled="renameSaving" @click="cancelRenameKnowledgeBase">取消</button>
+            </form>
+            <div v-else class="kb-title-row">
               <h1>{{ selectedKnowledgeBase?.name || '选择知识库' }}</h1>
               <div class="action-menu" @click.stop>
                 <button
@@ -459,6 +527,10 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
                   <MoreHorizontal :size="19" aria-hidden="true" />
                 </button>
                 <div v-if="knowledgeMenuOpen" class="action-menu__popover" role="menu">
+                  <button type="button" role="menuitem" :disabled="loading" @click="startRenameKnowledgeBase">
+                    <Pencil :size="15" aria-hidden="true" />
+                    重命名
+                  </button>
                   <button
                     v-if="files.length > 0"
                     type="button"
@@ -486,6 +558,15 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
           </div>
 
           <div class="kb-workspace__actions">
+            <button
+              v-if="files.length > 0"
+              class="secondary use-in-chat-button"
+              type="button"
+              @click="openChatWithKnowledgeBase"
+            >
+              <MessageSquareText :size="17" aria-hidden="true" />
+              去聊天使用
+            </button>
             <input
               id="knowledge-file-input"
               class="visually-hidden"
@@ -525,6 +606,20 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
             {{ loading ? '处理中' : '选择文件' }}
           </label>
         </div>
+
+        <section v-if="files.length > 0" class="kb-usage-guide" aria-label="知识库使用说明">
+          <div class="kb-usage-guide__copy">
+            <span class="kb-usage-guide__icon"><CheckCircle2 :size="18" aria-hidden="true" /></span>
+            <div>
+              <strong>资料已经可以在聊天中使用</strong>
+              <p>进入聊天后，此知识库会持续用于后续提问；需要停用时，可在“当前上下文”中切换为不使用。</p>
+            </div>
+          </div>
+          <button class="secondary" type="button" @click="openChatWithKnowledgeBase">
+            去聊天提问
+            <ArrowRight :size="16" aria-hidden="true" />
+          </button>
+        </section>
 
         <section class="file-section" aria-labelledby="file-section-title">
           <div class="file-section__header">
@@ -914,6 +1009,25 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
   letter-spacing: -0.035em;
 }
 
+.kb-title-edit {
+  display: flex;
+  min-width: min(560px, 58vw);
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-title-edit input {
+  min-width: 0;
+  min-height: 42px;
+  flex: 1;
+  font-size: 16px;
+  font-weight: 680;
+}
+
+.kb-title-edit button {
+  min-height: 42px;
+}
+
 .kb-workspace__header p {
   margin: 7px 0 0;
   color: var(--muted-foreground, #64748b);
@@ -921,7 +1035,17 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
 }
 
 .kb-workspace__actions {
+  display: flex;
   flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.use-in-chat-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 7px;
 }
 
 .primary-upload-button {
@@ -1052,6 +1176,57 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
   padding: 10px 4px;
   font-size: 13px;
   font-weight: 720;
+}
+
+.kb-usage-guide {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 14px;
+  border: 1px solid var(--primary-border, #c7d2fe);
+  border-radius: var(--radius-lg, 10px);
+  background: color-mix(in srgb, var(--primary-soft, #eef2ff) 58%, var(--surface, #fff));
+  padding: 14px 16px;
+}
+
+.kb-usage-guide__copy {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.kb-usage-guide__copy strong {
+  color: var(--foreground, #0f172a);
+  font-size: 13px;
+}
+
+.kb-usage-guide__copy p {
+  margin: 4px 0 0;
+  color: var(--muted-foreground, #64748b);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.kb-usage-guide__icon {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface, #fff);
+  color: var(--success-strong, #047857);
+}
+
+.kb-usage-guide > button {
+  display: inline-flex;
+  min-height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
 }
 
 .file-section {
@@ -1335,8 +1510,24 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
     flex-direction: column;
   }
 
-  .primary-upload-button {
+  .kb-title-edit {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .kb-title-edit input {
+    flex-basis: 100%;
+  }
+
+  .kb-workspace__actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .primary-upload-button,
+  .use-in-chat-button {
     width: 100%;
+    justify-content: center;
   }
 
   .upload-zone {
@@ -1350,6 +1541,15 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
     border-top: 1px solid var(--border, #e2e8f0);
     padding: 12px 0 0;
     text-align: center;
+  }
+
+  .kb-usage-guide {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .kb-usage-guide > button {
+    justify-content: center;
   }
 
   .file-table__head {

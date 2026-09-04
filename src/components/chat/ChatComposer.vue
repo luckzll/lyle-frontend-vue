@@ -19,6 +19,7 @@ const props = defineProps<{
   folderAttachmentsEnabled?: boolean
   chatModelId: ChatModelId
   modelOptions: readonly ChatModelOption[]
+  contextSummary: string
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
@@ -29,6 +30,7 @@ const emit = defineEmits<{
   retry: [localId: string]
   dismissHint: []
   'update:chatModelId': [value: ChatModelId]
+  'open-context': []
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -155,7 +157,14 @@ defineExpose({ focus: () => textarea.value?.focus() })
           <ChevronDown :size="13" aria-hidden="true" />
         </label>
         <span class="composer-meta-divider" aria-hidden="true" />
-        <span class="composer-context">当前项目 / 知识库</span>
+        <button
+          class="composer-context"
+          type="button"
+          data-testid="chat-context-summary"
+          :aria-label="`当前上下文：${contextSummary}`"
+          :title="`当前上下文：${contextSummary}`"
+          @click="$emit('open-context')"
+        >{{ contextSummary }}</button>
       </div>
       <button v-if="loading" class="primary-action stop" type="button" aria-label="停止生成" @click="$emit('stop')">
         <Square :size="17" fill="currentColor" aria-hidden="true" />
@@ -182,7 +191,9 @@ footer { display: flex; min-height: 48px; align-items: center; gap: 10px; paddin
 .model-picker select:disabled { cursor: not-allowed; opacity: .65; }
 .model-picker svg:last-child { flex: 0 0 auto; color: var(--muted-foreground); pointer-events: none; }
 .composer-meta-divider { width: 1px; height: 16px; flex: 0 0 auto; background: var(--border); }
-.composer-context { min-width: 0; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.composer-context { min-width: 0; min-height: 32px; overflow: hidden; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--muted-foreground); padding: 0 7px; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; text-align: left; }
+.composer-context:hover { background: var(--surface-muted); color: var(--foreground); }
+.composer-context:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .primary-action { display: inline-grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 50%; padding: 0; }
 .primary-action.stop { background: var(--foreground); }
 .attachment-hint { display: flex; min-width: 0; align-items: center; gap: 5px; color: var(--muted-foreground); font-size: 12px; }
