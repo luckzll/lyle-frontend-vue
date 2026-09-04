@@ -170,6 +170,7 @@ async function mockDashboardAndChatApis(page: Page) {
 
   // Chat initializes these reads before focusing the handed-off draft.
   await page.route('**/api/knowledge-bases', (route) => fulfillJson(route, []))
+  await page.route('**/api/projects?**', (route) => fulfillJson(route, { items: briefing.projects }))
   await page.route('**/api/conversations', (route) => fulfillJson(route, []))
   await page.route('**/api/agent-tools/todos**', (route) => fulfillJson(route, { items: [] }))
   await page.route('**/api/agent-tools/operations**', (route) => fulfillJson(route, { items: [] }))
@@ -377,6 +378,72 @@ test('V4.2 dashboard presents work and hands a project draft to chat once', asyn
   await expect(page.getByTestId('chat-input')).toHaveValue('')
 })
 
+test('chat context can be selected from the composer and survives navigation until explicitly cleared', async ({ page }) => {
+  const knowledgeBase = {
+    id: 'kb-v42',
+    name: 'V4.2 产品资料',
+    createdAt: NOW
+  }
+  await page.route('**/api/knowledge-bases', (route) => fulfillJson(route, [knowledgeBase]))
+
+  await page.goto('/')
+  const summary = page.getByTestId('chat-context-summary')
+  await expect(summary).toHaveText('选择项目 / 知识库')
+  await summary.click()
+
+  const projectSelect = page.getByTestId('chat-project-select')
+  const knowledgeSelect = page.getByTestId('chat-knowledge-select')
+  await projectSelect.selectOption(String(PROJECT_ID))
+  await knowledgeSelect.selectOption(knowledgeBase.id)
+  await expect(summary).toHaveText(`${PROJECT_NAME} / ${knowledgeBase.name}`)
+  expect(await page.evaluate(() => localStorage.getItem('lyle.chat.project-id'))).toBe(String(PROJECT_ID))
+  expect(await page.evaluate(() => localStorage.getItem('lyle.chat.knowledge-base-id'))).toBe(knowledgeBase.id)
+
+  await page.getByRole('link', { name: '工作台', exact: true }).click()
+  await page.getByRole('link', { name: '聊天', exact: true }).click()
+  await expect(summary).toHaveText(`${PROJECT_NAME} / ${knowledgeBase.name}`)
+
+  await page.getByRole('button', { name: '新建', exact: true }).click()
+  await summary.click()
+  await expect(projectSelect).toHaveValue(String(PROJECT_ID))
+  await expect(knowledgeSelect).toHaveValue(knowledgeBase.id)
+
+  await projectSelect.selectOption('')
+  await knowledgeSelect.selectOption('')
+  await expect(summary).toHaveText('选择项目 / 知识库')
+  expect(await page.evaluate(() => localStorage.getItem('lyle.chat.project-id'))).toBeNull()
+  expect(await page.evaluate(() => localStorage.getItem('lyle.chat.knowledge-base-id'))).toBeNull()
+})
+
+test('chat accepts a knowledge-base handoff and removes unavailable stored context', async ({ page }) => {
+  const knowledgeBase = {
+    id: 'kb-handoff',
+    name: '交付资料',
+    createdAt: NOW
+  }
+  await page.route('**/api/knowledge-bases', (route) => fulfillJson(route, [knowledgeBase]))
+
+  await page.goto(`/?knowledgeBaseId=${knowledgeBase.id}`)
+  const summary = page.getByTestId('chat-context-summary')
+  await expect(summary).toHaveText(knowledgeBase.name)
+  await summary.click()
+  await expect(page.getByTestId('chat-knowledge-select')).toHaveValue(knowledgeBase.id)
+  await expect(page).toHaveURL('/')
+  expect(await page.evaluate(() => localStorage.getItem('lyle.chat.knowledge-base-id'))).toBe(knowledgeBase.id)
+
+  await page.evaluate(() => {
+    localStorage.setItem('lyle.chat.knowledge-base-id', 'missing-kb')
+    localStorage.setItem('lyle.chat.project-id', '999')
+  })
+  await page.reload()
+  await expect(summary).toHaveText('选择项目 / 知识库')
+  await summary.click()
+  await expect(page.getByTestId('chat-knowledge-select')).toHaveValue('')
+  await expect(page.getByTestId('chat-project-select')).toHaveValue('')
+  expect(await page.evaluate(() => localStorage.getItem('lyle.chat.knowledge-base-id'))).toBeNull()
+  expect(await page.evaluate(() => localStorage.getItem('lyle.chat.project-id'))).toBeNull()
+})
+
 test('unscoped chat automation handoff does not inherit the automation page default project', async ({ page }) => {
   const originalIntent = '每天检查代码健康并生成简报'
   let draftPayload: Record<string, unknown> | null = null
@@ -505,7 +572,7 @@ test('V4.2 mobile chat keeps context optional and restores focus after Escape', 
   const selectHeights = await contextDialog.locator('select').evaluateAll((items) => (
     items.map((item) => item.getBoundingClientRect().height)
   ))
-  expect(selectHeights).toEqual([44, 44])
+  expect(selectHeights).toEqual([44, 44, 44])
   const backdrop = page.getByTestId('context-panel-backdrop')
   await backdrop.click({ position: { x: 2, y: 2 } })
   await expect(contextDialog).toHaveCount(0)

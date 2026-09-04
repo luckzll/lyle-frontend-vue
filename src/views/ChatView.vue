@@ -16,6 +16,7 @@ import {
   listAgentReminders,
   listAgentTodos,
   listKnowledgeBases,
+  listProjects,
   listPendingOperations,
   purgeStructuredMemory,
   saveStructuredMemory,
@@ -35,7 +36,7 @@ import {
   type ImageItemEvent,
   type TurnStatusEvent
 } from '@/api/app'
-import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, ChatUsage, Conversation, KnowledgeBase, MemoryExclusions, MemoryItem, MemorySnapshot, PendingOperationItem, ProjectChatContext, ToolResult, ExecutionSuggestionItem, UsedMemory } from '@/api/types'
+import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, ChatUsage, Conversation, KnowledgeBase, MemoryExclusions, MemoryItem, MemorySnapshot, PendingOperationItem, Project, ProjectChatContext, ToolResult, ExecutionSuggestionItem, UsedMemory } from '@/api/types'
 import ContextPanel from '@/components/layout/ContextPanel.vue'
 import MemoryExplanationPanel from '@/components/memory/MemoryExplanationPanel.vue'
 import ExecutionTimeline from '@/components/domain/ExecutionTimeline.vue'
@@ -43,6 +44,12 @@ import SuggestionCard from '@/components/domain/SuggestionCard.vue'
 import { useWorkspaceStore, type WorkspaceProjectContext } from '@/stores/workspace'
 import { isConversationNearBottom } from '@/domain/chat-scroll'
 import { historyMessage, isActiveTurnPhase } from '@/domain/chat-history'
+import {
+  CHAT_KNOWLEDGE_BASE_STORAGE_KEY,
+  CHAT_PROJECT_STORAGE_KEY,
+  resolveKnowledgeBaseSelection,
+  resolveProjectSelection
+} from '@/domain/chat-context'
 import { NEW_CONVERSATION_STORAGE_VALUE, resolveConversationToRestore } from '@/domain/chat-session'
 import { cancelPendingImageItems } from '@/domain/image-batch'
 import type { ChatAttachment } from '@/domain/chat-attachment'
@@ -158,7 +165,11 @@ const conversations = ref<Conversation[]>([])
 const knowledgeBases = ref<KnowledgeBase[]>([])
 const knowledgeBasesLoading = ref(false)
 const knowledgeBasesError = ref('')
-const selectedKnowledgeBaseId = ref('')
+const selectedKnowledgeBaseId = ref(readStoredContext(CHAT_KNOWLEDGE_BASE_STORAGE_KEY))
+const projects = ref<Project[]>([])
+const projectsLoading = ref(false)
+const projectsError = ref('')
+const selectedProjectId = ref(readStoredContext(CHAT_PROJECT_STORAGE_KEY))
 const memoryActionLoading = ref<Record<string, boolean>>({})
 const taskActionLoading = ref<Record<string, boolean>>({})
 const projectCandidateActionLoading = ref<Record<string, boolean>>({})
@@ -229,12 +240,31 @@ const activeKnowledgeBaseName = computed(() => {
   if (!selectedKnowledgeBaseId.value) return '未使用知识库'
   return knowledgeBases.value.find((item) => String(item.id) === selectedKnowledgeBaseId.value)?.name || '已选择知识库'
 })
+const selectedProject = computed(() => (
+  projects.value.find((item) => String(item.id) === selectedProjectId.value)
+))
 const activeProjectId = computed(() => {
   const value = route.params.projectId
   const raw = Array.isArray(value) ? value[0] : value
   const parsed = Number(raw)
   if (Number.isFinite(parsed) && parsed > 0) return parsed
+  const selected = Number(selectedProjectId.value)
+  if (Number.isInteger(selected) && selected > 0) return selected
   return handoffProject.value?.id
+})
+const activeProjectName = computed(() => {
+  if (!activeProjectId.value) return ''
+  if (selectedProject.value?.id === activeProjectId.value) return selectedProject.value.name
+  if (handoffProject.value?.id === activeProjectId.value && handoffProject.value.name) return handoffProject.value.name
+  return `项目 #${activeProjectId.value}`
+})
+const activeContextSummary = computed(() => {
+  const project = activeProjectName.value
+  const knowledge = selectedKnowledgeBaseId.value ? activeKnowledgeBaseName.value : ''
+  if (project && knowledge) return `${project} / ${knowledge}`
+  if (project) return project
+  if (knowledge) return knowledge
+  return '选择项目 / 知识库'
 })
 const hasUserMessages = computed(() => messages.value.some((message) => message.role === 'user'))
 const latestAssistantMessage = computed(() => [...messages.value].reverse().find((message) => message.role === 'assistant'))
@@ -326,10 +356,15 @@ onMounted(async () => {
   if (handoff) {
     input.value = handoff.draft
     handoffProject.value = handoff.project
+    if (handoff.project) {
+      selectedProjectId.value = String(handoff.project.id)
+      writeStoredContext(CHAT_PROJECT_STORAGE_KEY, selectedProjectId.value)
+    }
   }
   // Knowledge bases and the brief are optional context. Load them in the
   // background so a slow auxiliary request never blocks the chat surface.
   void refreshKnowledgeBases()
+  void refreshProjects()
   void refreshBrief()
   try {
     await refreshConversations()
@@ -396,11 +431,85 @@ async function refreshKnowledgeBases() {
   try {
     const response = await listKnowledgeBases()
     knowledgeBases.value = response.data
+    const requestedId = routeQueryText(route.query.knowledgeBaseId)
+    const preferredId = requestedId || selectedKnowledgeBaseId.value
+    const resolvedId = resolveKnowledgeBaseSelection(preferredId, response.data.map((item) => item.id))
+    selectedKnowledgeBaseId.value = resolvedId
+    writeStoredContext(CHAT_KNOWLEDGE_BASE_STORAGE_KEY, resolvedId)
+    if (requestedId) void clearRouteQuery('knowledgeBaseId')
   } catch {
     knowledgeBasesError.value = '知识库列表暂时无法加载。'
   } finally {
     knowledgeBasesLoading.value = false
   }
+}
+
+async function refreshProjects() {
+  projectsLoading.value = true
+  projectsError.value = ''
+  try {
+    const response = await listProjects()
+    projects.value = response.data.items
+    const resolvedId = resolveProjectSelection(
+      selectedProjectId.value || handoffProject.value?.id,
+      response.data.items.map((item) => item.id)
+    )
+    selectedProjectId.value = resolvedId ? String(resolvedId) : ''
+    handoffProject.value = resolvedId
+      ? { id: resolvedId, name: response.data.items.find((item) => item.id === resolvedId)?.name }
+      : null
+    writeStoredContext(CHAT_PROJECT_STORAGE_KEY, selectedProjectId.value)
+  } catch {
+    projectsError.value = '项目列表暂时无法加载。'
+  } finally {
+    projectsLoading.value = false
+  }
+}
+
+function changeKnowledgeContext() {
+  const resolvedId = resolveKnowledgeBaseSelection(
+    selectedKnowledgeBaseId.value,
+    knowledgeBases.value.map((item) => item.id)
+  )
+  selectedKnowledgeBaseId.value = resolvedId
+  writeStoredContext(CHAT_KNOWLEDGE_BASE_STORAGE_KEY, resolvedId)
+  if (route.query.knowledgeBaseId !== undefined) void clearRouteQuery('knowledgeBaseId')
+}
+
+function changeProjectContext() {
+  const resolvedId = resolveProjectSelection(
+    selectedProjectId.value,
+    projects.value.map((item) => item.id)
+  )
+  selectedProjectId.value = resolvedId ? String(resolvedId) : ''
+  handoffProject.value = resolvedId
+    ? { id: resolvedId, name: projects.value.find((item) => item.id === resolvedId)?.name }
+    : null
+  writeStoredContext(CHAT_PROJECT_STORAGE_KEY, selectedProjectId.value)
+}
+
+function readStoredContext(key: string) {
+  try {
+    return window.localStorage.getItem(key)?.trim() || ''
+  } catch {
+    return ''
+  }
+}
+
+function writeStoredContext(key: string, value: string) {
+  try {
+    if (value) window.localStorage.setItem(key, value)
+    else window.localStorage.removeItem(key)
+  } catch {
+    // Context persistence is a convenience; the current in-memory selection still works.
+  }
+}
+
+async function clearRouteQuery(key: string) {
+  if (route.query[key] === undefined) return
+  const query = { ...route.query }
+  delete query[key]
+  await router.replace({ query })
 }
 
 async function exitDebugMode() {
@@ -562,12 +671,19 @@ function applyStarterPrompt(draft: string) {
   nextTick(() => composerRef.value?.focus())
 }
 
-function toggleContextPanel() {
+function openContextPanel() {
   showMemoryExplanation.value = false
-  showContextPanel.value = !showContextPanel.value
+  if (showContextPanel.value) return
+  showContextPanel.value = true
+  void trackProductEvent({ eventType: 'context_panel_opened', page: 'chat', projectId: activeProjectId.value }).catch(() => undefined)
+}
+
+function toggleContextPanel() {
   if (showContextPanel.value) {
-    void trackProductEvent({ eventType: 'context_panel_opened', page: 'chat', projectId: activeProjectId.value }).catch(() => undefined)
+    showContextPanel.value = false
+    return
   }
+  openContextPanel()
 }
 
 function openMemoryExplanation(message: Message) {
@@ -2553,6 +2669,7 @@ function escapeHtml(text: string) {
     <ContextPanel title="当前上下文" :open="showContextPanel" @close="showContextPanel = false">
       <section class="context-section context-controls">
         <small>切换上下文</small>
+        <p class="context-persistence-note">项目和知识库会持续用于新消息与新会话，直到你在这里切换为不使用。</p>
         <label>
           <span>会话</span>
           <select
@@ -2569,12 +2686,30 @@ function escapeHtml(text: string) {
           </select>
         </label>
         <label>
+          <span>项目</span>
+          <select
+            v-model="selectedProjectId"
+            data-testid="chat-project-select"
+            aria-label="选择项目"
+            :disabled="loading || projectsLoading"
+            @change="changeProjectContext"
+          >
+            <option value="">不关联项目</option>
+            <option v-for="item in projects" :key="item.id" :value="String(item.id)">
+              {{ item.name }}
+            </option>
+          </select>
+          <small v-if="projectsLoading" class="context-load-note">项目正在后台加载…</small>
+          <small v-else-if="projectsError" class="context-load-note danger">{{ projectsError }}</small>
+        </label>
+        <label>
           <span>知识库</span>
           <select
             v-model="selectedKnowledgeBaseId"
             data-testid="chat-knowledge-select"
             aria-label="选择知识库"
             :disabled="loading || knowledgeBasesLoading"
+            @change="changeKnowledgeContext"
           >
             <option value="">不使用知识库</option>
             <option v-for="item in knowledgeBases" :key="item.id" :value="String(item.id)">
@@ -2587,9 +2722,12 @@ function escapeHtml(text: string) {
       </section>
       <section class="context-section">
         <small>项目</small>
-        <strong>{{ contextProject?.projectName || handoffProject?.name || (activeProjectId ? `项目 #${activeProjectId}` : '未关联项目') }}</strong>
+        <strong>{{ activeProjectName || '未关联项目' }}</strong>
         <RouterLink v-if="activeProjectId" class="inline-link" :to="`/projects/${activeProjectId}`">打开项目</RouterLink>
         <p v-else class="muted">从工作台或项目页发起对话，可自动携带项目上下文。</p>
+        <span v-if="contextProject?.projectId && contextProject.projectId !== activeProjectId">
+          最近回答使用了 {{ contextProject.projectName || `项目 #${contextProject.projectId}` }}
+        </span>
       </section>
       <section class="context-section">
         <small>知识与记忆</small>
@@ -2636,7 +2774,9 @@ function escapeHtml(text: string) {
       :show-attachment-hint="showAttachmentHint"
       :folder-attachments-enabled="runtimeFeatures.chatFolderAttachmentsEnabled"
       :model-options="CHAT_MODEL_OPTIONS"
+      :context-summary="activeContextSummary"
       v-model:chat-model-id="chatModelId"
+      @open-context="openContextPanel"
       @submit="submit"
       @stop="cancelStreaming"
       @files="handleAttachmentFiles"
@@ -2736,6 +2876,7 @@ function escapeHtml(text: string) {
 
 .context-section { display: grid; gap: var(--space-2); }
 .context-controls label { display: grid; gap: 6px; color: var(--muted-foreground); font-size: 12px; font-weight: 700; }
+.context-section > .context-persistence-note { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
 .context-controls select { width: 100%; min-width: 0; min-height: 44px; }
 .context-load-note { color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
 .context-load-note.danger { color: var(--danger); }

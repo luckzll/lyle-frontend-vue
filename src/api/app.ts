@@ -220,6 +220,10 @@ export function listKnowledgeBases() {
   return http.get<KnowledgeBase[]>('/knowledge-bases')
 }
 
+export function updateKnowledgeBase(knowledgeBaseId: string, name: string) {
+  return http.patch<KnowledgeBase>(`/knowledge-bases/${knowledgeBaseId}`, { name })
+}
+
 export function deleteKnowledgeBase(knowledgeBaseId: string) {
   return http.delete(`/knowledge-bases/${knowledgeBaseId}`)
 }
