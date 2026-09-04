@@ -284,7 +284,7 @@ test('套餐页保留工作台导航框架', async ({ page }) => {
 
   await expect(page.locator('.lyle-shell')).toBeVisible()
   await expect(page.locator('.app-sidebar')).toBeVisible()
-  await expect(page.getByRole('link', { name: '设置', exact: true })).toHaveClass(/app-sidebar__link--active/)
+  await expect(page.locator('.app-sidebar').getByRole('link', { name: '设置', exact: true })).toHaveCount(0)
   await expect(page.locator('.pricing-nav')).toHaveCount(0)
   await expect(page.getByRole('heading', { name: '选择适合你的 Lyle' })).toBeVisible()
 })

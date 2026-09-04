@@ -165,7 +165,7 @@ onBeforeUnmount(() => {
 
         <div class="account-menu__separator" role="separator" />
 
-        <RouterLink class="account-menu__item" to="/settings" role="menuitem" @click="closeMenu()">
+        <RouterLink class="account-menu__item" :to="{ name: 'settings' }" role="menuitem" @click="closeMenu()">
           <Settings :size="18" :stroke-width="1.8" aria-hidden="true" />
           <span>设置</span>
         </RouterLink>
