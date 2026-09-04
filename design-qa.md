@@ -48,6 +48,68 @@ final result: passed
 
 ---
 
+# 知识库聚焦工作区设计验收（2026-09-04）
+
+## Evidence
+
+- Source visual truth: `D:/vit/文档/Lyle/artifacts/knowledge-base-redesign-audit-2026-09-04/02-selected-option-1.png`.
+- Browser-rendered desktop implementation: `D:/vit/文档/Lyle/artifacts/knowledge-base-redesign-audit-2026-09-04/09-implementation-desktop-final.png`.
+- Browser-rendered mobile implementation: `D:/vit/文档/Lyle/artifacts/knowledge-base-redesign-audit-2026-09-04/07-implementation-mobile.png`.
+- Full-view comparison: `D:/vit/文档/Lyle/artifacts/knowledge-base-redesign-audit-2026-09-04/10-desktop-comparison-final.png`（左侧为设计，右侧为实现）.
+- Focused comparison: `D:/vit/文档/Lyle/artifacts/knowledge-base-redesign-audit-2026-09-04/11-desktop-focused-comparison-final.png`（标题、上传区和文件列表）.
+- Source pixels: 1487 × 1058. Comparison normalization: source resized to 1440 × 1024 with Lanczos; implementation captured at 1440 × 1024 CSS px and device scale factor 1.
+- State: 已登录测试账号；默认知识库；1 个已入库 DOCX 文件；检索测试展开。
+- Primary interactions tested: 新建知识库表单打开、知识库维护菜单打开、文件操作菜单打开、检索测试展开/收起控件可达。
+- Browser console errors and warnings: 0.
+
+## Findings
+
+No actionable P0, P1, or P2 findings remain.
+
+- Fonts and typography: 使用现有 Inter / 系统中文字体栈；H1、区块标题、正文、辅助文字和表头层级与选定方向一致，文件名在窄宽度下保持截断而不撑破布局。
+- Spacing and layout rhythm: 保留全局工作台框架，内容区改为知识库窄栏 + 连续资料工作区；标题、上传区、文件列表和底部检索区使用 8px 网格与轻量分隔线，移除了卡片堆叠和整行危险操作。
+- Colors and visual tokens: 主操作、选中态、边框、页面背景及成功状态均复用 Lyle V7 的 primary、primary-soft、border、surface、foreground、muted 与 success token。
+- Image quality and asset fidelity: 页面没有需要复刻的位图内容；品牌资产由现有 AppShell 提供，功能图标来自项目既有 Lucide 图标库，没有使用占位图、手工 SVG、CSS 图形或 Emoji 替代。
+- Copy and content: 保留“默认知识库”“大模型知识原理.docx”“已入库”“检索测试”等真实产品文案；新增“添加资料”和菜单文案直接对应现有能力。
+- Accessibility and interaction: 页面只保留一个 H1；文件列表使用 table/row/cell 语义；状态同时提供图标和文字；危险操作进入有名称的菜单并继续使用确认对话框；动态反馈使用 `role=status` / `role=alert`。
+- Responsive behavior: 390 × 844 下无横向溢出；知识库列表横向滚动，主操作占满可用宽度，文件状态和操作按钮保持可达，检索区可继续纵向滚动。
+
+## Comparison History
+
+### Pass 1
+
+- Evidence: `03-implementation-desktop-pass1.png` and `04-desktop-comparison-pass1.png`.
+- P1: 检索测试默认收起，与选定设计的展开状态不一致。
+- P2: 上传区高度和呼吸感不足；文件行尚未暴露完整 row/cell 语义；添加时间列缺失。
+
+### Pass 2 and final
+
+- Fixes: 检索测试默认展开；上传区增高并调整内边距；文件列表补齐 table/row/cell 语义；增加“添加时间”列和真实时间格式；新建输入默认值清空。
+- Post-fix evidence: `05-implementation-desktop-pass2.png`, `06-desktop-comparison-pass2.png`, `09-implementation-desktop-final.png`, `10-desktop-comparison-final.png`, and `11-desktop-focused-comparison-final.png`.
+- Earlier P1/P2 findings are resolved.
+
+## Open Questions
+
+- None for the selected knowledge-base screen scope.
+
+## Implementation Checklist
+
+- [x] “添加资料”作为唯一主操作，原生文件控件不再外露。
+- [x] 文件改为连续列表，重建与删除进入更多菜单。
+- [x] 知识库删除和批量重建进入页头维护菜单。
+- [x] 新建知识库按需展开，不长期占据侧栏。
+- [x] 检索测试作为底部工作区展开。
+- [x] 1440 × 1024 与 390 × 844 浏览器验证通过。
+- [x] 构建与 119 个单元测试通过。
+
+## Follow-up Polish
+
+- P3: 设计图包含批量选择框；当前实现没有对应的批量操作，因此刻意省略，避免出现不可解释的无效控件。
+
+final result: passed
+
+---
+
 **Evidence**
 - Source visual truth: `C:/Temp/codex-clipboard-cb24c3de-89d4-426f-9187-cbd3d5dfaccb.png`.
 - Supporting source error state: `C:/Temp/codex-clipboard-cf2cf7ec-d37f-4762-aa36-e5ccc150b66a.png`.

@@ -32,7 +32,7 @@ test('registers, uploads knowledge, debugs RAG, and chats with sources', async (
   await expect(page.getByText('文件已上传并完成入库。')).toBeVisible()
   await expect(page.locator('.file-row').filter({ hasText: `lyle-e2e-${suffix}.txt` })).toBeVisible()
 
-  await page.getByRole('button', { name: '打开检索测试' }).click()
+  await expect(page.getByTestId('rag-question-input')).toBeVisible()
   await page.getByTestId('rag-question-input').fill('答案是什么？')
   await page.getByTestId('rag-debug-button').click()
   await expect(page.getByText(answerText)).toBeVisible()
