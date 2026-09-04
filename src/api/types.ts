@@ -260,6 +260,20 @@ export interface ChatResponse {
   usedMemories?: UsedMemory[]
   memoryExclusions?: MemoryExclusions
   memoryExplanationVersion?: string
+  debugVersion?: string
+  knowledgeBaseIds?: string[]
+  retrievalScope?: ChatRetrievalScope
+  debugTruncated?: boolean
+}
+
+export interface ChatRetrievalScope {
+  requested?: boolean
+  executed?: boolean
+  skipped?: boolean
+  knowledgeBaseCount?: number
+  queryCount?: number
+  contextCount?: number
+  reason?: string
 }
 
 export interface UsedMemory {
@@ -283,6 +297,45 @@ export interface ChatUsage {
   callCount: number
   estimatedCostMicros: number
   measurementSource: 'PROVIDER_REPORTED' | 'ESTIMATED' | 'PARTIAL_ESTIMATE' | 'PENDING'
+}
+
+export interface AgentTraceDecision {
+  depth?: string
+  reason?: string
+  router?: string
+  confidence?: number
+  needs_clarification?: boolean
+  should_recall?: boolean
+  should_retrieve?: boolean
+  should_call_tools?: boolean
+  selected_tools?: string[]
+}
+
+export interface AgentMemoryShortTermPreview {
+  role: string
+  content: string
+}
+
+export interface AgentMemorySummary {
+  summaryChars?: number
+  summaryPreview?: string
+  shortTermCount?: number
+  shortTermPreview?: AgentMemoryShortTermPreview[]
+  structuredCount?: number
+  structuredPreview?: string[]
+  semanticCount?: number
+  vectorCount?: number
+  retrievedCount?: number
+  retrievedPreview?: string[]
+}
+
+export interface AgentWriterInput {
+  memoryContextChars?: number
+  excludedMemoryContextChars?: number
+  memoryExclusionReason?: string
+  toolContextChars?: number
+  ragContextCount?: number
+  combinedContextChars?: number
 }
 
 export interface ExecutionSuggestionItem {
@@ -455,6 +508,29 @@ export interface ConnectionDiagnostic {
 
 export interface AgentTraceItem {
   agent: string
+  approved?: boolean
+  skipped?: boolean
+  streaming?: boolean
+  ruleBlocked?: boolean
+  sufficient?: boolean
+  deterministicMemoryOverview?: boolean
+  answerChars?: number
+  rewriteAttempt?: number
+  toolCount?: number
+  contextCount?: number
+  queryCount?: number
+  elapsedMs?: number
+  memoryContextChars?: number
+  score?: number
+  action?: 'read' | 'write'
+  intent?: string
+  nextAgents?: string[]
+  receivedAgents?: string[]
+  selectedTools?: string[]
+  queries?: string[]
+  decision?: AgentTraceDecision
+  memorySummary?: AgentMemorySummary
+  writerInput?: AgentWriterInput
   [key: string]: unknown
 }
 
@@ -462,6 +538,11 @@ export interface ToolResult {
   tool: string
   ok: boolean
   content: string
+  summary?: string
+  operationType?: string
+  riskLevel?: string
+  retryable?: boolean
+  elapsedMs?: number
   requiresConfirmation?: boolean
   operation?: PendingOperationItem
   [key: string]: unknown

@@ -46,8 +46,6 @@
 
 final result: passed
 
----
-
 # 知识库聚焦工作区设计验收（2026-09-04）
 
 ## Evidence
@@ -256,5 +254,74 @@ No actionable P0, P1, or P2 mismatch remains.
 ## Follow-up Polish
 
 - P3: when the backend exposes multiple selectable providers, wire the existing payment-method selector to a provider-specific checkout request instead of only reflecting the provider returned by the server.
+
+final result: passed
+
+---
+
+# 聊天调试证据账本设计验收（2026-09-05）
+
+## Evidence
+
+- Source visual truth: `C:/Users/zhl20/.codex/generated_images/01a06a12-b16f-73b3-90a1-48c62e0b157f/exec-a261bc78-b1b5-4233-a28f-af6c14ea8f18.png`.
+- Browser-rendered desktop implementation: `C:/Users/zhl20/.codex/visualizations/2026/09/04/01a06a12-b16f-73b3-90a1-48c62e0b157f/implementation-debug-desktop-v4.png`.
+- Browser-rendered RAG expanded state: `C:/Users/zhl20/.codex/visualizations/2026/09/04/01a06a12-b16f-73b3-90a1-48c62e0b157f/implementation-debug-rag-expanded-v4.png`.
+- Browser-rendered mobile implementation: `C:/Users/zhl20/.codex/visualizations/2026/09/04/01a06a12-b16f-73b3-90a1-48c62e0b157f/implementation-debug-mobile-v4.png`.
+- Full-view comparison: `C:/Users/zhl20/.codex/visualizations/2026/09/04/01a06a12-b16f-73b3-90a1-48c62e0b157f/design-comparison-v4.png`（左侧为设计，右侧为浏览器实现）.
+- Focused ledger comparison: `C:/Users/zhl20/.codex/visualizations/2026/09/04/01a06a12-b16f-73b3-90a1-48c62e0b157f/design-comparison-ledger-focus-v4.png`.
+- Comparison history: `design-comparison-pass2.png`、`design-comparison-pass3.png`、`design-comparison-rag-focus.png`（同一证据目录）.
+- Source pixels: 1649 × 954. Desktop implementation pixels/CSS viewport: 1650 × 954 at device scale 1. Mobile viewport: 390 × 844 at device scale 1.
+- State: authenticated test fixture, complete historical `chat-debug-v1` snapshot, three injected memories, five recall previews, two RAG sources, one successful tool call, six Agent nodes, context panel closed.
+
+## Findings
+
+No actionable P0, P1, or P2 findings remain.
+
+- Fonts and typography: 沿用 Lyle 的 Inter / 系统中文字体栈；标题、分区标题、表头、正文、辅助说明和状态文字形成与选定稿一致的紧凑层级。
+- Spacing and layout rhythm: 调试态阅读区扩展为 1160 px；账本采用单一白底细边框面板，顶部为连续五步执行路径，记忆、RAG、工具和 Agent 均使用左侧固定概览、右侧表格/行式证据。普通消息与输入区仍保持原 920 px 阅读宽度。
+- Colors and visual tokens: 主图标使用既有 primary，成功、跳过、失败状态继续使用项目语义色；边框、背景、正文和弱化文字均复用现有 token，没有引入新的孤立视觉体系。
+- Image quality and asset fidelity: 该界面不需要位图内容；流程及分区图标均来自项目现有 Lucide 图标库，没有占位图、手工 SVG、Emoji 或 CSS 图形替代。
+- Copy and content: 默认态直接呈现实际注入记忆、知识库名称与检索 Query、命中文档、工具状态及 Agent 流程；召回原文和 Agent 安全详情按需展开，且完整、真实 0、主动跳过、旧历史缺失使用不同文案。
+- Icons: 路由、记忆、知识库、工具和生成均使用含义一致的现有图标，状态同时提供圆点和文字，未依赖颜色单独传意。
+- Accessibility and interaction: 证据列表提供 table/row/cell 语义；记忆召回、RAG 来源和 Agent 详情可展开；复制诊断在浏览器中显示“已复制”反馈；普通模式不渲染调试账本。
+- Responsive behavior: 1650 px 桌面下账本宽 1160 px，三张数据表的 `clientWidth` 与 `scrollWidth` 均为 874 px，无内部横向滚动。390 px 下 document/body 宽均为 390 px，无页面级横向溢出；宽表保留在各自 313 px 容器中的局部安全滚动。
+- Browser console warnings/errors: 0.
+
+## Comparison History
+
+### Iteration 1
+
+- Earlier evidence: `design-comparison-pass2.png`.
+- P2: 初版仍是多张圆角卡片堆叠，调试账本受 760/920 px 阅读轨限制，与选定稿的单一横向证据面板差异明显。
+- Fix: 重构为五步连续流程和四个左右分栏区；记忆、RAG、工具、Agent 使用表格/行式证据，召回及详细 Trace 收入折叠区。
+
+### Iteration 2
+
+- Earlier evidence: `design-comparison-pass3.png` and `design-comparison-rag-focus.png`.
+- P2: 账本虽然扩展到完整阅读列，但桌面右栏表格仍出现横向滚动条；390 px 工具栏曾把标题挤成纵向字符。
+- Fix: 调试态 chat-list 扩展至 1160 px，桌面表格随右栏自适应；小于 860 px 时改为上下分区，并为移动工具栏使用明确的纵向布局。
+
+### Final
+
+- Post-fix evidence: `design-comparison-v4.png`, `design-comparison-ledger-focus-v4.png`, `implementation-debug-rag-expanded-v4.png`, and `implementation-debug-mobile-v4.png`.
+- 桌面无页面级或表格级意外横向滚动；移动端仅宽表内部可横向浏览。记忆召回、RAG 来源、Agent 详情、复制反馈和普通模式隐藏均在用户指定浏览器中复查通过。
+
+## Open Questions
+
+- None for the selected debug-ledger scope.
+
+## Implementation Checklist
+
+- [x] 调试模式展示本轮五步执行路径。
+- [x] 区分实际注入记忆、召回预览和被排除记忆。
+- [x] 展示知识库范围、真实检索 Query、命中数和可展开来源。
+- [x] 展示工具路由、状态、耗时和安全摘要。
+- [x] 展示 Agent 节点、耗时、状态、概要和按需安全详情。
+- [x] 区分完整、截断、执行中、真实零结果和旧历史缺失状态。
+- [x] 桌面、390 px 移动端、展开态、普通模式及浏览器控制台验证通过。
+
+## Follow-up Polish
+
+- P3: 选定稿是脱离应用外壳的纯内容构图；实现保留 Lyle 现有侧栏、顶部栏和固定输入器，因此全页留白与垂直起点不同，但调试账本本体的布局、层级和交互已按选定方向还原。
 
 final result: passed

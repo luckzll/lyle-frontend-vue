@@ -1,11 +1,16 @@
 import type {
+  AgentTraceDecision,
   AgentTraceItem,
+  AgentWriterInput,
+  ChatRetrievalScope,
   ChatSource,
   ExecutionSuggestionItem,
   Goal,
+  MemoryExclusions,
   PendingOperationItem,
   ProjectChatContext,
-  ToolResult
+  ToolResult,
+  UsedMemory
 } from '@/api/types'
 
 const MAX_TRACE_TEXT = 500
@@ -55,27 +60,57 @@ const SENSITIVE_KEY_MARKERS = [
  * UI contract as soon as it enters page state so arbitrary trace/tool fields
  * (including credentials or full tool parameters) are never retained.
  */
-export function sanitizeAgentTrace(items: AgentTraceItem[] | undefined): AgentTraceItem[] {
+export function sanitizeAgentTrace(items: unknown): AgentTraceItem[] {
   if (!Array.isArray(items)) return []
-  return items.slice(0, 40).map((item) => {
+  return items.slice(0, 40).flatMap((raw): AgentTraceItem[] => {
+    const item = record(raw)
+    if (!item) return []
     const safe: AgentTraceItem = {
       agent: safeText(item.agent, 80) || 'unknown'
     }
-    copyBooleanFields(item, safe, ['approved', 'skipped', 'streaming', 'ruleBlocked'])
-    copyNumberFields(item, safe, ['answerChars', 'rewriteAttempt', 'toolCount', 'contextCount', 'queryCount'])
+    copyBooleanFields(item, safe, [
+      'approved',
+      'skipped',
+      'streaming',
+      'ruleBlocked',
+      'sufficient',
+      'deterministicMemoryOverview'
+    ])
+    copyNumberFields(item, safe, [
+      'answerChars',
+      'rewriteAttempt',
+      'toolCount',
+      'contextCount',
+      'queryCount',
+      'elapsedMs',
+      'memoryContextChars',
+      'score'
+    ])
     copyEnumField(item, safe, 'action', ['read', 'write'])
 
+    const intent = safeText(item.intent, 80)
+    if (intent) safe.intent = intent
+    const nextAgents = safeStringArray(item.nextAgents, 20, 80)
+    if (nextAgents.length) safe.nextAgents = nextAgents
+    const receivedAgents = safeStringArray(item.receivedAgents, 20, 80)
+    if (receivedAgents.length) safe.receivedAgents = receivedAgents
     const selectedTools = safeStringArray(item.selectedTools, 20, 80)
     if (selectedTools.length) safe.selectedTools = selectedTools
+    const queries = safeStringArray(item.queries, 8, MAX_TRACE_TEXT)
+    if (queries.length) safe.queries = queries
 
     const writerInput = record(item.writerInput)
     if (writerInput) {
-      safe.writerInput = numericRecord(writerInput, [
+      const safeWriterInput: AgentWriterInput = numericRecord(writerInput, [
         'memoryContextChars',
+        'excludedMemoryContextChars',
         'toolContextChars',
         'ragContextCount',
         'combinedContextChars'
       ])
+      const memoryExclusionReason = safeText(writerInput.memoryExclusionReason, 160)
+      if (memoryExclusionReason) safeWriterInput.memoryExclusionReason = memoryExclusionReason
+      safe.writerInput = safeWriterInput
     }
 
     const memorySummary = record(item.memorySummary)
@@ -86,44 +121,71 @@ export function sanitizeAgentTrace(items: AgentTraceItem[] | undefined): AgentTr
           'shortTermCount',
           'structuredCount',
           'semanticCount',
+          'vectorCount',
           'retrievedCount'
         ]),
-        structuredPreview: safeStringArray(memorySummary.structuredPreview, 8, MAX_TRACE_TEXT),
-        retrievedPreview: safeStringArray(memorySummary.retrievedPreview, 3, MAX_TRACE_TEXT),
+        structuredPreview: safeStringArray(memorySummary.structuredPreview, 12, MAX_TRACE_TEXT),
+        retrievedPreview: safeStringArray(memorySummary.retrievedPreview, 8, MAX_TRACE_TEXT),
+        shortTermPreview: safeMemoryTurnPreview(memorySummary.shortTermPreview),
         summaryPreview: safeText(memorySummary.summaryPreview, 1000)
       }
     }
 
     const decision = record(item.decision)
     if (decision) {
-      safe.decision = {
+      const safeDecision: AgentTraceDecision = {
         depth: safeText(decision.depth, 40),
         selected_tools: safeStringArray(decision.selected_tools, 20, 80),
         reason: safeText(decision.reason, MAX_TRACE_TEXT)
       }
+      const router = safeText(decision.router, 80)
+      if (router) safeDecision.router = router
+      copyBooleanFields(decision, safeDecision, [
+        'needs_clarification',
+        'should_recall',
+        'should_retrieve',
+        'should_call_tools'
+      ])
+      copyNumberFields(decision, safeDecision, ['confidence'])
+      safe.decision = safeDecision
     }
-    return safe
+    return [safe]
   })
 }
 
-export function sanitizeToolResults(items: ToolResult[] | undefined): ToolResult[] {
+export function sanitizeToolResults(items: unknown): ToolResult[] {
   if (!Array.isArray(items)) return []
-  return items.slice(0, 40).map((item) => {
+  return items.slice(0, 40).flatMap((raw): ToolResult[] => {
+    const item = record(raw)
+    if (!item) return []
+    const operation = record(item.operation)
+    const operationSummary = safeText(operation?.summary, 500)
+    const explicitSummary = safeText(item.summary, 500)
+    const requiresConfirmation = item.requiresConfirmation === true
+    const ok = item.ok === true
     const safe: ToolResult = {
       tool: safeText(item.tool, 100) || 'unknown',
-      ok: item.ok === true,
-      // Never retain an extensible raw tool payload. The assistant answer and
-      // the whitelisted operation preview carry the user-facing information.
-      content: item.operation?.summary
-        ? safeText(item.operation.summary, 500)
-        : item.requiresConfirmation
+      ok,
+      // Raw tool output may contain credentials or large third-party payloads.
+      // Only an explicit summary or a whitelisted operation preview is retained.
+      content: operationSummary
+        || explicitSummary
+        || (requiresConfirmation
           ? '工具已准备，等待用户确认。'
-          : item.ok === true
+          : ok
             ? '工具执行已完成。'
-            : '工具执行未完成。'
+            : '工具执行未完成。')
     }
-    if (item.requiresConfirmation === true) safe.requiresConfirmation = true
-    if (item.operation) safe.operation = sanitizePendingOperation(item.operation)
+    if (explicitSummary) safe.summary = explicitSummary
+    if (requiresConfirmation) safe.requiresConfirmation = true
+    if (typeof item.retryable === 'boolean') safe.retryable = item.retryable
+    const operationType = safeText(item.operationType, 100)
+    const riskLevel = safeText(item.riskLevel, 40)
+    const elapsedMs = finiteNumber(item.elapsedMs)
+    if (operationType) safe.operationType = operationType
+    if (riskLevel) safe.riskLevel = riskLevel
+    if (elapsedMs !== undefined) safe.elapsedMs = elapsedMs
+    if (operation) safe.operation = sanitizePendingOperation(operation as unknown as PendingOperationItem)
     if (safe.tool === 'image_generate') {
       const model = safeText(item.model, 100)
       const storageRequested = safeText(item.storageRequested, 80)
@@ -134,7 +196,7 @@ export function sanitizeToolResults(items: ToolResult[] | undefined): ToolResult
       if (storageUsed) safe.storageUsed = storageUsed
       if (storageError) safe.storageError = storageError
     }
-    return safe
+    return [safe]
   })
 }
 
@@ -171,22 +233,28 @@ export function sanitizeExecutionSuggestions(
   })
 }
 
-export function sanitizeProjectContext(value: ProjectChatContext | undefined): ProjectChatContext | undefined {
-  if (!value) return undefined
-  const resolver = value.resolver
+export function sanitizeProjectContext(value: unknown): ProjectChatContext | undefined {
+  const source = record(value)
+  if (!source) return undefined
+  const rawResolver = record(source.resolver)
+  const rawContext = record(source.context)
+  const resolver = rawResolver
     ? {
-        projectId: positiveInteger(value.resolver.projectId),
-        projectName: safeText(value.resolver.projectName, 240),
-        confidence: finiteNumber(value.resolver.confidence),
-        requiresClarification: value.resolver.requiresClarification === true,
-        reason: safeText(value.resolver.reason, MAX_TRACE_TEXT),
-        linkedConversation: value.resolver.linkedConversation === true
+        projectId: positiveInteger(rawResolver.projectId),
+        projectName: safeText(rawResolver.projectName, 240),
+        confidence: finiteNumber(rawResolver.confidence),
+        requiresClarification: rawResolver.requiresClarification === true,
+        reason: safeText(rawResolver.reason, MAX_TRACE_TEXT),
+        linkedConversation: rawResolver.linkedConversation === true
       }
     : undefined
-  const goals = Array.isArray(value.context?.goals)
-    ? value.context.goals.slice(0, 6).map(sanitizeGoal)
+  const goals = Array.isArray(rawContext?.goals)
+    ? rawContext.goals.slice(0, 6).flatMap((raw): Goal[] => {
+        const goal = record(raw)
+        return goal ? [sanitizeGoal(goal as unknown as Goal)] : []
+      })
     : []
-  const nextStepSuggestions = safeStringArray(value.context?.nextStepSuggestions, 8, 500)
+  const nextStepSuggestions = safeStringArray(rawContext?.nextStepSuggestions, 8, 500)
   return {
     ...(resolver ? { resolver } : {}),
     ...(goals.length || nextStepSuggestions.length
@@ -195,7 +263,7 @@ export function sanitizeProjectContext(value: ProjectChatContext | undefined): P
   }
 }
 
-export function sanitizeReview(value: Record<string, unknown> | undefined): Record<string, unknown> {
+export function sanitizeReview(value: unknown): Record<string, unknown> {
   const source = record(value)
   if (!source) return {}
   const safe: Record<string, unknown> = {}
@@ -210,20 +278,90 @@ export function sanitizeReview(value: Record<string, unknown> | undefined): Reco
   return safe
 }
 
-export function sanitizeChatSources(items: ChatSource[] | undefined): ChatSource[] {
+export function sanitizeChatSources(items: unknown): ChatSource[] {
   if (!Array.isArray(items)) return []
-  return items.slice(0, 50).map((item) => ({
-    docId: safeText(item.docId, 160),
-    title: safeText(item.title, 300),
-    chunk: safeText(item.chunk, 4000),
-    ...(item.score ? { score: safeText(item.score, 40) } : {}),
-    ...(item.backend ? { backend: safeText(item.backend, 80) } : {}),
-    ...(item.hitModes ? { hitModes: safeText(item.hitModes, 120) } : {}),
-    ...(item.chunkIndex ? { chunkIndex: safeText(item.chunkIndex, 40) } : {}),
-    ...(item.parentTitle ? { parentTitle: safeText(item.parentTitle, 300) } : {}),
-    ...(item.startChar ? { startChar: safeText(item.startChar, 40) } : {}),
-    ...(item.endChar ? { endChar: safeText(item.endChar, 40) } : {})
-  }))
+  return items.slice(0, 50).flatMap((raw): ChatSource[] => {
+    const item = record(raw)
+    if (!item) return []
+    const source: ChatSource = {
+      docId: safeText(item.docId, 160),
+      title: safeText(item.title, 300),
+      chunk: safeText(item.chunk, 4000)
+    }
+    copyOptionalText(item, source, 'score', 40)
+    copyOptionalText(item, source, 'backend', 80)
+    copyOptionalText(item, source, 'hitModes', 120)
+    copyOptionalText(item, source, 'chunkIndex', 40)
+    copyOptionalText(item, source, 'parentTitle', 300)
+    copyOptionalText(item, source, 'startChar', 40)
+    copyOptionalText(item, source, 'endChar', 40)
+    return source.docId || source.title || source.chunk ? [source] : []
+  })
+}
+
+export function sanitizeUsedMemories(items: unknown): UsedMemory[] {
+  if (!Array.isArray(items)) return []
+  return items.slice(0, 40).flatMap((raw): UsedMemory[] => {
+    const item = record(raw)
+    if (!item) return []
+    const memoryId = safeText(item.memoryId, 160)
+    const title = safeText(item.title, 240)
+    const valueSummary = safeText(item.valueSummary, 1000)
+    if (!memoryId || !title || !valueSummary) return []
+    const reliability = safeText(item.reliability, 40)
+    return [{
+      memoryId,
+      title,
+      valueSummary,
+      reasonCode: safeText(item.reasonCode, 80) || 'QUESTION_RELEVANT',
+      reliability: ['RELIABLE', 'BASIC', 'REVIEW_REQUIRED'].includes(reliability)
+        ? reliability as UsedMemory['reliability']
+        : 'REVIEW_REQUIRED',
+      sourceCount: Math.max(0, Math.trunc(finiteNumber(item.sourceCount) || 0))
+    }]
+  })
+}
+
+export function sanitizeMemoryExclusions(value: unknown): MemoryExclusions | undefined {
+  const source = record(value)
+  if (!source) return undefined
+  return {
+    conflicted: nonNegativeInteger(source.conflicted),
+    sensitive: nonNegativeInteger(source.sensitive),
+    governed: nonNegativeInteger(source.governed)
+  }
+}
+
+export function sanitizeKnowledgeBaseIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return Array.from(new Set(value
+    .slice(0, 20)
+    .flatMap((item): string[] => (
+      typeof item === 'string' || typeof item === 'number'
+        ? [safeText(item, 160)]
+        : []
+    ))
+    .filter(Boolean)))
+}
+
+export function sanitizeDebugVersion(value: unknown): string | undefined {
+  const version = safeText(value, 80)
+  // This marker means the complete v1 snapshot is present, not merely that
+  // some future/unknown debug string happened to be stored.
+  return version === 'chat-debug-v1' ? version : undefined
+}
+
+export function sanitizeRetrievalScope(value: unknown): ChatRetrievalScope | undefined {
+  const source = record(value)
+  if (!source) return undefined
+  const scope: ChatRetrievalScope = {}
+  copyBooleanFields(source, scope as Record<string, unknown>, ['requested', 'executed', 'skipped'])
+  for (const key of ['knowledgeBaseCount', 'queryCount', 'contextCount'] as const) {
+    if (finiteNumber(source[key]) !== undefined) scope[key] = nonNegativeInteger(source[key])
+  }
+  const reason = safeText(source.reason, MAX_TRACE_TEXT)
+  if (reason) scope.reason = reason
+  return scope
 }
 
 export function maskSensitiveText(value: unknown): string {
@@ -361,6 +499,28 @@ function safeStringArray(value: unknown, maxItems: number, maxLength: number): s
     .filter(Boolean)
 }
 
+function safeMemoryTurnPreview(value: unknown): Array<{ role: string; content: string }> {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, 8).flatMap((raw): Array<{ role: string; content: string }> => {
+    const item = record(raw)
+    if (!item) return []
+    const role = safeText(item.role, 40)
+    const content = safeText(item.content, MAX_TRACE_TEXT)
+    return role || content ? [{ role, content }] : []
+  })
+}
+
+function copyOptionalText(
+  source: Record<string, unknown>,
+  target: object,
+  key: string,
+  maxLength: number
+) {
+  if (source[key] === null || source[key] === undefined || source[key] === '') return
+  const value = safeText(source[key], maxLength)
+  if (value) (target as Record<string, unknown>)[key] = value
+}
+
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -377,6 +537,11 @@ function finiteNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
+function nonNegativeInteger(value: unknown): number {
+  const parsed = finiteNumber(value)
+  return parsed === undefined ? 0 : Math.max(0, Math.trunc(parsed))
+}
+
 function numericRecord(source: Record<string, unknown>, keys: string[]): Record<string, number> {
   return Object.fromEntries(keys.flatMap((key) => {
     const value = finiteNumber(source[key])
@@ -386,30 +551,34 @@ function numericRecord(source: Record<string, unknown>, keys: string[]): Record<
 
 function copyBooleanFields(
   source: Record<string, unknown>,
-  target: Record<string, unknown>,
+  target: object,
   keys: string[]
 ) {
+  const targetRecord = target as Record<string, unknown>
   for (const key of keys) {
-    if (typeof source[key] === 'boolean') target[key] = source[key]
+    if (typeof source[key] === 'boolean') targetRecord[key] = source[key]
   }
 }
 
 function copyNumberFields(
   source: Record<string, unknown>,
-  target: Record<string, unknown>,
+  target: object,
   keys: string[]
 ) {
+  const targetRecord = target as Record<string, unknown>
   for (const key of keys) {
     const value = finiteNumber(source[key])
-    if (value !== undefined) target[key] = value
+    if (value !== undefined) targetRecord[key] = value
   }
 }
 
 function copyEnumField(
   source: Record<string, unknown>,
-  target: Record<string, unknown>,
+  target: object,
   key: string,
   allowed: string[]
 ) {
-  if (typeof source[key] === 'string' && allowed.includes(source[key])) target[key] = source[key]
+  if (typeof source[key] === 'string' && allowed.includes(source[key])) {
+    (target as Record<string, unknown>)[key] = source[key]
+  }
 }
