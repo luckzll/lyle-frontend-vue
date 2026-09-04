@@ -1,6 +1,32 @@
 import type { ImageBatchItem, TurnStatusEvent } from '@/api/app'
-import type { ChatMessage, ChatUsage, MemoryExclusions, UsedMemory } from '@/api/types'
+import type {
+  AgentTraceItem,
+  ChatMessage,
+  ChatRetrievalScope,
+  ChatSource,
+  ChatUsage,
+  MemoryExclusions,
+  ProjectChatContext,
+  ToolResult,
+  UsedMemory
+} from '@/api/types'
 import type { ChatAttachment } from '@/domain/chat-attachment'
+import {
+  sanitizeAgentTrace,
+  sanitizeChatSources,
+  sanitizeDebugVersion,
+  sanitizeKnowledgeBaseIds,
+  sanitizeMemoryExclusions,
+  sanitizeProjectContext,
+  sanitizeRetrievalScope,
+  sanitizeReview,
+  sanitizeToolResults,
+  sanitizeUsedMemories
+} from '@/domain/chat-safety'
+
+export const CHAT_DEBUG_VERSION = 'chat-debug-v1'
+
+export type ChatDebugDataState = 'pending' | 'available' | 'unsupported' | 'legacy' | 'unavailable'
 
 export type RecoveredImageBatch = {
   batchId: string
@@ -22,13 +48,27 @@ export type RecoveredChatMessage = {
   imageBatch?: RecoveredImageBatch
   attachments?: ChatAttachment[]
   usage?: ChatUsage
+  sources?: ChatSource[]
+  agentTrace?: AgentTraceItem[]
+  toolResults?: ToolResult[]
+  projectContext?: ProjectChatContext
+  review?: Record<string, unknown>
   usedMemories?: UsedMemory[]
   memoryExclusions?: MemoryExclusions
   memoryExplanationVersion?: string
+  debugVersion?: string
+  knowledgeBaseIds?: string[]
+  retrievalScope?: ChatRetrievalScope
+  debugTruncated?: boolean
+  debugDataState?: ChatDebugDataState
 }
 
 export function historyMessage(item: ChatMessage): RecoveredChatMessage {
   const metadata = isRecord(item.metadata) ? item.metadata : {}
+  const debugVersion = sanitizeDebugVersion(metadata.debugVersion)
+  const debugDataState = item.role === 'assistant'
+    ? resolveChatDebugDataState(metadata.debugVersion)
+    : undefined
   return {
     id: item.id,
     role: item.role,
@@ -39,12 +79,26 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
     imageBatch: historyImageBatch(metadata.imageBatch),
     attachments: Array.isArray(item.attachments) ? item.attachments : undefined,
     usage: historyUsage(metadata.usage),
-    usedMemories: historyUsedMemories(metadata.usedMemories),
-    memoryExclusions: historyMemoryExclusions(metadata.memoryExclusions),
+    sources: sanitizeChatSources(metadata.sources),
+    agentTrace: sanitizeAgentTrace(metadata.agentTrace),
+    toolResults: sanitizeToolResults(metadata.toolResults),
+    projectContext: sanitizeProjectContext(metadata.projectContext),
+    review: sanitizeReview(metadata.review),
+    usedMemories: sanitizeUsedMemories(metadata.usedMemories),
+    memoryExclusions: sanitizeMemoryExclusions(metadata.memoryExclusions),
     memoryExplanationVersion: typeof metadata.memoryExplanationVersion === 'string'
       ? metadata.memoryExplanationVersion
-      : undefined
+      : undefined,
+    debugVersion,
+    knowledgeBaseIds: sanitizeKnowledgeBaseIds(metadata.knowledgeBaseIds),
+    retrievalScope: sanitizeRetrievalScope(metadata.retrievalScope),
+    debugTruncated: metadata.debugTruncated === true,
+    debugDataState
   }
+}
+export function resolveChatDebugDataState(value: unknown): Extract<ChatDebugDataState, 'available' | 'unsupported' | 'legacy'> {
+  if (sanitizeDebugVersion(value) === CHAT_DEBUG_VERSION) return 'available'
+  return typeof value === 'string' && Boolean(value.trim()) ? 'unsupported' : 'legacy'
 }
 
 export function isActiveTurnPhase(phase: TurnStatusEvent['phase'] | undefined) {
@@ -100,37 +154,5 @@ function historyUsage(value: unknown): ChatUsage | undefined {
     measurementSource: ['PROVIDER_REPORTED', 'ESTIMATED', 'PARTIAL_ESTIMATE'].includes(String(value.measurementSource))
       ? value.measurementSource as ChatUsage['measurementSource']
       : 'PENDING'
-  }
-}
-
-function historyUsedMemories(value: unknown): UsedMemory[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  const items = value.flatMap((raw): UsedMemory[] => {
-    if (!isRecord(raw)) return []
-    const memoryId = typeof raw.memoryId === 'string' ? raw.memoryId : ''
-    const title = typeof raw.title === 'string' ? raw.title : ''
-    const valueSummary = typeof raw.valueSummary === 'string' ? raw.valueSummary : ''
-    if (!memoryId || !title || !valueSummary) return []
-    const reliability = String(raw.reliability || '')
-    return [{
-      memoryId,
-      title,
-      valueSummary,
-      reasonCode: typeof raw.reasonCode === 'string' ? raw.reasonCode : 'QUESTION_RELEVANT',
-      reliability: ['RELIABLE', 'BASIC', 'REVIEW_REQUIRED'].includes(reliability)
-        ? reliability as UsedMemory['reliability']
-        : 'REVIEW_REQUIRED',
-      sourceCount: Math.max(0, Number(raw.sourceCount || 0))
-    }]
-  })
-  return items.length ? items : undefined
-}
-
-function historyMemoryExclusions(value: unknown): MemoryExclusions | undefined {
-  if (!isRecord(value)) return undefined
-  return {
-    conflicted: Math.max(0, Number(value.conflicted || 0)),
-    sensitive: Math.max(0, Number(value.sensitive || 0)),
-    governed: Math.max(0, Number(value.governed || 0))
   }
 }

@@ -90,6 +90,10 @@ export type StreamMeta = {
   usedMemories?: UsedMemory[]
   memoryExclusions?: MemoryExclusions
   memoryExplanationVersion?: string
+  debugVersion?: ChatResponse['debugVersion']
+  knowledgeBaseIds?: ChatResponse['knowledgeBaseIds']
+  retrievalScope?: ChatResponse['retrievalScope']
+  debugTruncated?: ChatResponse['debugTruncated']
 }
 
 export type SseHandlers = {

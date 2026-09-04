@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, BrainCircuit, ChevronRight, PanelRightOpen } from '@lucide/vue'
+import { ArrowDown, ArrowRight, BrainCircuit, ChevronRight, Circle, Copy, Database, GitBranch, PanelRightOpen, Sparkles, Wrench } from '@lucide/vue'
 import {
   createConversation,
   createAgentTodo,
@@ -36,14 +36,14 @@ import {
   type ImageItemEvent,
   type TurnStatusEvent
 } from '@/api/app'
-import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatSource, ChatUsage, Conversation, KnowledgeBase, MemoryExclusions, MemoryItem, MemorySnapshot, PendingOperationItem, Project, ProjectChatContext, ToolResult, ExecutionSuggestionItem, UsedMemory } from '@/api/types'
+import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatRetrievalScope, ChatSource, ChatUsage, Conversation, KnowledgeBase, MemoryExclusions, MemoryItem, MemorySnapshot, PendingOperationItem, Project, ProjectChatContext, ToolResult, ExecutionSuggestionItem, UsedMemory } from '@/api/types'
 import ContextPanel from '@/components/layout/ContextPanel.vue'
 import MemoryExplanationPanel from '@/components/memory/MemoryExplanationPanel.vue'
 import ExecutionTimeline from '@/components/domain/ExecutionTimeline.vue'
 import SuggestionCard from '@/components/domain/SuggestionCard.vue'
 import { useWorkspaceStore, type WorkspaceProjectContext } from '@/stores/workspace'
 import { isConversationNearBottom } from '@/domain/chat-scroll'
-import { historyMessage, isActiveTurnPhase } from '@/domain/chat-history'
+import { historyMessage, isActiveTurnPhase, resolveChatDebugDataState, type ChatDebugDataState } from '@/domain/chat-history'
 import {
   CHAT_KNOWLEDGE_BASE_STORAGE_KEY,
   CHAT_PROJECT_STORAGE_KEY,
@@ -75,10 +75,15 @@ import MessageFailureActions from '@/components/chat/MessageFailureActions.vue'
 import {
   sanitizeAgentTrace,
   sanitizeChatSources,
+  sanitizeDebugVersion,
   sanitizeExecutionSuggestions,
+  sanitizeKnowledgeBaseIds,
+  sanitizeMemoryExclusions,
   sanitizeProjectContext,
+  sanitizeRetrievalScope,
   sanitizeReview,
-  sanitizeToolResults
+  sanitizeToolResults,
+  sanitizeUsedMemories
 } from '@/domain/chat-safety'
 
 interface Message {
@@ -119,6 +124,25 @@ interface Message {
   usedMemories?: UsedMemory[]
   memoryExclusions?: MemoryExclusions
   memoryExplanationVersion?: string
+  debugVersion?: string
+  knowledgeBaseIds?: string[]
+  retrievalScope?: ChatRetrievalScope
+  debugTruncated?: boolean
+  debugDataState?: ChatDebugDataState
+}
+
+interface DebugMemoryItem {
+  kind: 'injected' | 'excluded' | 'summary' | 'short-term' | 'structured' | 'retrieved'
+  label: string
+  value: string
+  meta: string
+}
+
+interface DebugExecutionStep {
+  id: 'route' | 'memory' | 'rag' | 'tools' | 'writer'
+  label: string
+  detail: string
+  state: 'done' | 'empty' | 'skipped' | 'missing' | 'running' | 'failed'
 }
 
 interface RetryTurnContext {
@@ -270,7 +294,7 @@ const hasUserMessages = computed(() => messages.value.some((message) => message.
 const latestAssistantMessage = computed(() => [...messages.value].reverse().find((message) => message.role === 'assistant'))
 const contextSources = computed(() => latestAssistantMessage.value?.sources || [])
 const contextProject = computed(() => latestAssistantMessage.value?.projectContext?.resolver)
-const contextMemoryCount = computed(() => latestAssistantMessage.value ? usedMemoryItems(latestAssistantMessage.value).length : 0)
+const contextMemoryCount = computed(() => latestAssistantMessage.value ? injectedMemoryItems(latestAssistantMessage.value).length : 0)
 const contextTimeline = computed(() => {
   const message = latestAssistantMessage.value
   const steps: Array<{ id: string; title: string; detail?: string; status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' }> = []
@@ -820,7 +844,8 @@ async function submit(retryContext?: RetryTurnContext) {
         content: '',
         turnId,
         phase: 'THINKING',
-        statusText: '正在理解你的需求…'
+        statusText: '正在理解你的需求…',
+        debugDataState: 'pending'
       }
     } else {
       messages.value.push({
@@ -833,7 +858,8 @@ async function submit(retryContext?: RetryTurnContext) {
         content: '',
         turnId,
         phase: 'THINKING',
-        statusText: '正在理解你的需求…'
+        statusText: '正在理解你的需求…',
+        debugDataState: 'pending'
       })
       assistantIndex = messages.value.length - 1
     }
@@ -862,6 +888,7 @@ async function submit(retryContext?: RetryTurnContext) {
         })
       },
       onMeta: (meta) => {
+        const debugVersion = sanitizeDebugVersion(meta.debugVersion)
         messages.value[assistantIndex].sources = sanitizeChatSources(meta.sources)
         messages.value[assistantIndex].agentTrace = sanitizeAgentTrace(meta.agentTrace)
         messages.value[assistantIndex].toolResults = sanitizeToolResults(meta.toolResults)
@@ -875,9 +902,14 @@ async function submit(retryContext?: RetryTurnContext) {
         messages.value[assistantIndex].projectContext = sanitizeProjectContext(meta.projectContext)
         messages.value[assistantIndex].review = sanitizeReview(meta.review)
         messages.value[assistantIndex].usage = meta.usage
-        messages.value[assistantIndex].usedMemories = meta.usedMemories || []
-        messages.value[assistantIndex].memoryExclusions = meta.memoryExclusions
+        messages.value[assistantIndex].usedMemories = sanitizeUsedMemories(meta.usedMemories)
+        messages.value[assistantIndex].memoryExclusions = sanitizeMemoryExclusions(meta.memoryExclusions)
         messages.value[assistantIndex].memoryExplanationVersion = meta.memoryExplanationVersion
+        messages.value[assistantIndex].debugVersion = debugVersion
+        messages.value[assistantIndex].knowledgeBaseIds = sanitizeKnowledgeBaseIds(meta.knowledgeBaseIds)
+        messages.value[assistantIndex].retrievalScope = sanitizeRetrievalScope(meta.retrievalScope)
+        messages.value[assistantIndex].debugTruncated = meta.debugTruncated === true
+        messages.value[assistantIndex].debugDataState = resolveChatDebugDataState(meta.debugVersion)
       },
       onTurnStatus: (status) => {
         const target = messages.value[assistantIndex]
@@ -899,8 +931,14 @@ async function submit(retryContext?: RetryTurnContext) {
         messages.value[assistantIndex].content ||= errorMessage
         messages.value[assistantIndex].phase = 'FAILED'
         messages.value[assistantIndex].statusText = errorMessage
+        if (messages.value[assistantIndex].debugDataState === 'pending') {
+          messages.value[assistantIndex].debugDataState = 'unavailable'
+        }
       },
       onDone: () => {
+        if (messages.value[assistantIndex].debugDataState === 'pending') {
+          messages.value[assistantIndex].debugDataState = 'unavailable'
+        }
         streamController.value = null
       }
     }, {
@@ -1129,19 +1167,6 @@ function formatTraceDetail(item: AgentTraceItem) {
   return Object.keys(detail).length ? JSON.stringify(detail, null, 2) : ''
 }
 
-function formatToolDebug(tool: ToolResult) {
-  const lines = [`${tool.tool}：${tool.content || ''}`]
-  if (tool.tool === 'image_generate') {
-    if (tool.model) lines.push(`模型：${tool.model}`)
-    if (tool.storageRequested || tool.storageUsed) {
-      lines.push(`存储：${tool.storageRequested || '-'} -> ${tool.storageUsed || '-'}`)
-    }
-    if (tool.imageUrl) lines.push(`图片：${tool.imageUrl}`)
-    if (tool.storageError) lines.push(`存储错误：${tool.storageError}`)
-  }
-  return lines.join('\n')
-}
-
 function userDisplayText(message: Message) {
   return message.content.replace(/\n?图片\d*\s*：https?:\/\/\S+/g, '').trim()
 }
@@ -1195,6 +1220,13 @@ function failureRetryLabel(message: Message) {
 
 async function copyDebugPayload(message: Message, index: number) {
   const payload = {
+    debugVersion: message.debugVersion || null,
+    debugDataState: message.debugDataState || null,
+    debugTruncated: message.debugTruncated === true,
+    knowledgeBaseIds: message.knowledgeBaseIds || [],
+    retrievalScope: message.retrievalScope || {},
+    usedMemories: message.usedMemories || [],
+    memoryExclusions: message.memoryExclusions || {},
     agentTrace: message.agentTrace || [],
     toolResults: message.toolResults || [],
     sources: message.sources || [],
@@ -1296,6 +1328,267 @@ function agentDecision(item: AgentTraceItem) {
   return `${agentStatus(item)}${depth}${tools}${reason}`
 }
 
+function traceItem(message: Message, agent: string) {
+  return (message.agentTrace || []).find((item) => item.agent === agent)
+}
+
+function traceDecisionReason(item?: AgentTraceItem) {
+  const decision = item?.decision as Record<string, unknown> | undefined
+  return String(decision?.reason || '').trim()
+}
+
+function debugDataStatusLabel(message: Message) {
+  if (message.debugDataState === 'pending') return '采集中'
+  if (message.debugDataState === 'unsupported') return '版本不受支持'
+  if (message.debugDataState === 'legacy') return '历史明细缺失'
+  if (message.debugDataState === 'unavailable') return '本轮明细不可用'
+  if (message.debugTruncated) return '安全截断'
+  return '数据完整'
+}
+
+function debugDataNotice(message: Message) {
+  if (message.debugDataState === 'pending') return '本轮仍在执行，证据账本会在回答完成后更新。'
+  if (message.debugDataState === 'unsupported') return '本轮使用了当前界面不支持的调试数据版本，不会将其中的空值解释为真实 0。请升级前端或重新提问。'
+  if (message.debugDataState === 'legacy') return '这条旧回答没有保存调试明细，无法判断当时是未调用还是数据未记录。请重新提问以生成完整账本。'
+  if (message.debugDataState === 'unavailable') return '本轮没有收到完整调试快照，不能把空栏目解释为真实 0；可重试本轮进行确认。'
+  if (message.debugTruncated) return '调试快照超过安全容量，部分文本预览已截断；执行计数和状态仍可用于排查。'
+  return ''
+}
+
+function debugStepStateLabel(state: DebugExecutionStep['state']) {
+  return ({
+    done: '完成',
+    empty: '0 项',
+    skipped: '跳过',
+    missing: '缺数据',
+    running: '进行中',
+    failed: '失败'
+  } as Record<DebugExecutionStep['state'], string>)[state]
+}
+
+function debugExecutionSteps(message: Message): DebugExecutionStep[] {
+  if (message.debugDataState === 'pending') {
+    return [
+      { id: 'route', label: '路由', detail: '正在决策', state: 'running' },
+      { id: 'memory', label: '记忆', detail: '等待结果', state: 'running' },
+      { id: 'rag', label: '知识库', detail: '等待结果', state: 'running' },
+      { id: 'tools', label: '工具', detail: '等待结果', state: 'running' },
+      { id: 'writer', label: '生成', detail: '正在生成', state: 'running' }
+    ]
+  }
+  if (message.debugDataState === 'legacy') {
+    return ['route', 'memory', 'rag', 'tools', 'writer'].map((id, index) => ({
+      id: id as DebugExecutionStep['id'],
+      label: ['路由', '记忆', '知识库', '工具', '生成'][index],
+      detail: '历史未记录',
+      state: 'missing'
+    }))
+  }
+  if (message.debugDataState === 'unsupported') {
+    return ['route', 'memory', 'rag', 'tools', 'writer'].map((id, index) => ({
+      id: id as DebugExecutionStep['id'],
+      label: ['路由', '记忆', '知识库', '工具', '生成'][index],
+      detail: '版本不支持',
+      state: 'missing'
+    }))
+  }
+  if (message.debugDataState === 'unavailable') {
+    return [
+      { id: 'route', label: '路由', detail: '快照未返回', state: 'missing' },
+      { id: 'memory', label: '记忆', detail: '快照未返回', state: 'missing' },
+      { id: 'rag', label: '知识库', detail: '快照未返回', state: 'missing' },
+      { id: 'tools', label: '工具', detail: '快照未返回', state: 'missing' },
+      { id: 'writer', label: '生成', detail: message.phase === 'FAILED' ? '回答失败' : '快照未返回', state: message.phase === 'FAILED' ? 'failed' : 'missing' }
+    ]
+  }
+
+  const supervisor = traceItem(message, 'supervisor_agent')
+  const memory = traceItem(message, 'memory_agent')
+  const rag = traceItem(message, 'rag_agent')
+  const tools = traceItem(message, 'tool_agent')
+  const writer = traceItem(message, 'writer_agent')
+  const memoryCount = injectedMemoryItems(message).length + recalledMemoryItems(message).length
+  const ragCount = ragContextCount(message)
+  const toolCount = message.toolResults?.length || 0
+  const routeStep: DebugExecutionStep = supervisor
+    ? { id: 'route', label: '路由', detail: String(supervisor.intent || '已决策'), state: 'done' }
+    : { id: 'route', label: '路由', detail: '无路由 Trace', state: 'missing' }
+  const memoryStep: DebugExecutionStep = memory?.skipped
+    ? { id: 'memory', label: '记忆', detail: traceDecisionReason(memory) || '主动跳过', state: 'skipped' }
+    : memory
+      ? { id: 'memory', label: '记忆', detail: `${memoryCount} 条可见证据`, state: memoryCount ? 'done' : 'empty' }
+      : { id: 'memory', label: '记忆', detail: '未调度或无 Trace', state: 'skipped' }
+  const ragStep: DebugExecutionStep = message.retrievalScope?.requested === false
+    ? { id: 'rag', label: '知识库', detail: ragReason(message) || '本轮未请求', state: 'skipped' }
+    : ragWasSkipped(message)
+    ? { id: 'rag', label: '知识库', detail: ragReason(message) || '主动跳过', state: 'skipped' }
+    : ragWasExecuted(message)
+      ? { id: 'rag', label: '知识库', detail: `命中 ${ragCount} 段`, state: ragCount ? 'done' : 'empty' }
+      : message.retrievalScope?.requested === true
+        ? { id: 'rag', label: '知识库', detail: ragReason(message) || '已请求但未执行', state: 'missing' }
+        : { id: 'rag', label: '知识库', detail: '未请求或无 Trace', state: 'skipped' }
+  const toolStep: DebugExecutionStep = tools?.skipped
+    ? { id: 'tools', label: '工具', detail: traceDecisionReason(tools) || '主动跳过', state: 'skipped' }
+    : tools || toolCount
+      ? {
+          id: 'tools',
+          label: '工具',
+          detail: `${toolCount} 次调用`,
+          state: message.toolResults?.some((item) => !item.ok) ? 'failed' : toolCount ? 'done' : 'empty'
+        }
+      : { id: 'tools', label: '工具', detail: '未调用', state: 'empty' }
+  const writerStep: DebugExecutionStep = message.phase === 'FAILED'
+    ? { id: 'writer', label: '生成', detail: '回答失败', state: 'failed' }
+    : writer
+      ? { id: 'writer', label: '生成', detail: `${writer.answerChars || message.content.length} 字`, state: 'done' }
+      : { id: 'writer', label: '生成', detail: '无生成 Trace', state: 'missing' }
+  return [routeStep, memoryStep, ragStep, toolStep, writerStep]
+}
+
+function memoryTraceSummaryText(message: Message) {
+  const summary = usedMemorySummary(message)
+  if (!summary) return '没有记忆召回统计。'
+  return [
+    `长期摘要 ${summary.summaryChars || 0} 字`,
+    `短期 ${summary.shortTermCount || 0} 条`,
+    `结构化 ${summary.structuredCount || 0} 条`,
+    `Qdrant 候选 ${summary.semanticCount || 0} 条`,
+    `Milvus 候选 ${summary.vectorCount || 0} 条`,
+    `合并召回 ${summary.retrievedCount || 0} 条`
+  ].join(' · ')
+}
+
+function memoryExclusionText(message: Message) {
+  const exclusions = message.memoryExclusions
+  if (!exclusions) return ''
+  return `已过滤：冲突 ${exclusions.conflicted} · 敏感 ${exclusions.sensitive} · 已治理 ${exclusions.governed}`
+}
+
+function memoryExclusionCount(message: Message) {
+  const exclusions = message.memoryExclusions
+  if (!exclusions) return 0
+  return exclusions.conflicted + exclusions.sensitive + exclusions.governed
+}
+
+function writerInputFor(message: Message) {
+  return traceItem(message, 'writer_agent')?.writerInput as Record<string, unknown> | undefined
+}
+
+function memoryContextWasExcluded(message: Message) {
+  const writerInput = writerInputFor(message)
+  return Number(writerInput?.excludedMemoryContextChars || 0) > 0
+    && Number(writerInput?.memoryContextChars || 0) === 0
+}
+
+function memoryWriterInputText(message: Message) {
+  const writerInput = writerInputFor(message)
+  if (!writerInput) return ''
+  const injectedChars = Number(writerInput.memoryContextChars || 0)
+  const excludedChars = Number(writerInput.excludedMemoryContextChars || 0)
+  const reason = String(writerInput.memoryExclusionReason || '').trim()
+  if (excludedChars > 0 && injectedChars === 0) {
+    return `生成阶段未注入已召回记忆：排除 ${excludedChars} 字${reason ? ` · ${reason}` : ''}`
+  }
+  if (injectedChars > 0) return `生成阶段实际注入记忆上下文 ${injectedChars} 字。`
+  return ''
+}
+
+function ragTrace(message: Message) {
+  return traceItem(message, 'rag_agent')
+}
+
+function ragWasSkipped(message: Message) {
+  if (message.retrievalScope?.skipped === true) return true
+  return ragTrace(message)?.skipped === true
+}
+
+function ragWasExecuted(message: Message) {
+  if (message.retrievalScope?.executed === true) return true
+  const trace = ragTrace(message)
+  return Boolean(trace && trace.skipped !== true)
+}
+
+function ragContextCount(message: Message) {
+  const scoped = message.retrievalScope?.contextCount
+  if (typeof scoped === 'number') return scoped
+  const traced = ragTrace(message)?.contextCount
+  if (typeof traced === 'number') return traced
+  return message.sources?.length || 0
+}
+
+function ragQueryCount(message: Message) {
+  const scoped = message.retrievalScope?.queryCount
+  if (typeof scoped === 'number') return scoped
+  const traced = ragTrace(message)?.queryCount
+  return typeof traced === 'number' ? traced : 0
+}
+
+function ragQueries(message: Message) {
+  const queries = ragTrace(message)?.queries
+  return Array.isArray(queries) ? queries : []
+}
+
+function ragReason(message: Message) {
+  return message.retrievalScope?.reason || traceDecisionReason(ragTrace(message))
+}
+
+function ragStatusText(message: Message) {
+  if (message.debugDataState === 'legacy') return '历史未记录'
+  if (message.retrievalScope?.requested === false) return `本轮未请求知识库检索${ragReason(message) ? `：${ragReason(message)}` : ''}`
+  if (ragWasSkipped(message)) return `已跳过${ragReason(message) ? `：${ragReason(message)}` : ''}`
+  if (ragWasExecuted(message)) {
+    const count = ragContextCount(message)
+    return count ? `已执行，命中 ${count} 个片段` : '已执行，但命中 0 个片段'
+  }
+  if (message.retrievalScope?.requested === true) return `已请求但未执行${ragReason(message) ? `：${ragReason(message)}` : ''}`
+  return '本轮未请求知识库检索'
+}
+
+function debugKnowledgeBaseLabel(id: string) {
+  const match = knowledgeBases.value.find((item) => String(item.id) === id)
+  return match ? `${match.name}（${id}）` : id
+}
+
+function toolTrace(message: Message) {
+  return traceItem(message, 'tool_agent')
+}
+
+function selectedToolNames(message: Message) {
+  const trace = toolTrace(message)
+  const selected = Array.isArray(trace?.selectedTools) ? trace.selectedTools : []
+  return Array.from(new Set(selected.length ? selected : (message.toolResults || []).map((item) => item.tool)))
+}
+
+function toolStatusText(tool: ToolResult) {
+  if (tool.requiresConfirmation) return '等待确认'
+  return tool.ok ? '成功' : '失败'
+}
+
+function toolRetryLabel(tool: ToolResult) {
+  if (tool.retryable === true) return '可重试'
+  if (tool.retryable === false) return '不可重试'
+  return '未记录重试策略'
+}
+
+function toolEmptyText(message: Message) {
+  if (message.debugDataState === 'legacy') return '该历史回答没有保存工具调用明细。'
+  const trace = toolTrace(message)
+  if (trace?.skipped) return traceDecisionReason(trace) || 'Tool Agent 主动跳过了本轮。'
+  return traceDecisionReason(trace) || '本轮没有调用任何工具。'
+}
+
+function agentDisplayName(agent: string) {
+  return ({
+    supervisor_agent: '路由 Supervisor',
+    memory_agent: '记忆 Memory',
+    rag_agent: '知识库 RAG',
+    tool_agent: '工具 Tool',
+    gather_agent: '上下文汇总',
+    writer_agent: '回答生成 Writer',
+    reviewer_agent: '质量审核 Reviewer'
+  } as Record<string, string>)[agent] || agent
+}
+
 function reviewText(review?: Record<string, unknown>) {
   if (!review || Object.keys(review).length === 0) return ''
   const approved = review.approved === undefined ? '未开启' : review.approved ? '通过' : '未通过'
@@ -1386,40 +1679,121 @@ function usedMemorySummary(message: Message) {
   return trace?.memorySummary as Record<string, unknown> | undefined
 }
 
-function usedMemoryItems(message: Message) {
-  if (message.usedMemories?.length) {
-    return message.usedMemories.map((item) => ({
-      label: item.title,
-      value: item.valueSummary,
-      meta: `可靠性：${item.reliability} · ${item.sourceCount} 个来源`
-    }))
-  }
+function memoryMetricItems(message: Message) {
   const summary = usedMemorySummary(message)
-  if (!summary) return []
-  const items: Array<{ label: string; value: string; meta: string }> = []
+  return [
+    { label: '长期画像', value: injectedMemoryItems(message).length },
+    { label: '短期记忆', value: Number(summary?.shortTermCount || 0) },
+    { label: '结构化记忆', value: Number(summary?.structuredCount || 0) },
+    { label: '向量召回', value: Number(summary?.retrievedCount || summary?.vectorCount || 0) }
+  ]
+}
+
+function memoryUsageRecords(message: Message): DebugMemoryItem[] {
+  return (message.usedMemories || []).map((item) => ({
+    kind: 'injected',
+    label: item.title,
+    value: item.valueSummary,
+    meta: `${memoryReasonLabel(item.reasonCode)} · ${memoryReliabilityLabel(item.reliability)} · ${item.sourceCount} 个来源`
+  }))
+}
+
+function injectedMemoryRecords(message: Message): UsedMemory[] {
+  return memoryContextWasExcluded(message) ? [] : (message.usedMemories || [])
+}
+
+function injectedMemoryItems(message: Message): DebugMemoryItem[] {
+  return injectedMemoryRecords(message).map((item) => ({
+    kind: 'injected',
+    label: item.title,
+    value: item.valueSummary,
+    meta: `${memoryReasonLabel(item.reasonCode)} · ${memoryReliabilityLabel(item.reliability)} · ${item.sourceCount} 个来源`
+  }))
+}
+
+function recalledMemoryItems(message: Message): DebugMemoryItem[] {
+  const items: DebugMemoryItem[] = memoryContextWasExcluded(message)
+    ? memoryUsageRecords(message).map((item) => ({
+        ...item,
+        kind: 'excluded' as const,
+        label: `${item.label}（未注入）`,
+        meta: `${item.meta} · 生成阶段已排除`
+      }))
+    : []
+  const summary = usedMemorySummary(message)
+  if (!summary) return items
+  const summaryPreview = String(summary.summaryPreview || '').trim()
+  if (summaryPreview) {
+    items.push({ kind: 'summary', label: '长期摘要', value: summaryPreview, meta: '摘要记忆' })
+  }
+  const shortTerm = Array.isArray(summary.shortTermPreview) ? summary.shortTermPreview : []
+  for (const raw of shortTerm) {
+    const turn = raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? raw as Record<string, unknown>
+      : {}
+    const value = String(turn.content || '').trim()
+    if (value) {
+      items.push({
+        kind: 'short-term',
+        label: String(turn.role || '').toLowerCase() === 'assistant' ? '短期记忆 · 助手' : '短期记忆 · 用户',
+        value,
+        meta: '当前会话上下文'
+      })
+    }
+  }
   const structured = Array.isArray(summary.structuredPreview) ? summary.structuredPreview : []
   for (const raw of structured) {
     const parsed = parseMemoryPreview(String(raw || ''))
     if (parsed.value) {
       items.push({
+        kind: 'structured',
         label: structuredMemoryLabel(parsed.key),
         value: parsed.value,
         meta: '结构化记忆'
       })
     }
   }
-  const summaryPreview = String(summary.summaryPreview || '').trim()
-  if (summaryPreview) {
-    items.push({ label: '长期摘要', value: summaryPreview, meta: '摘要记忆' })
-  }
   const retrieved = Array.isArray(summary.retrievedPreview) ? summary.retrievedPreview : []
-  for (const raw of retrieved.slice(0, 3)) {
+  for (const raw of retrieved) {
     const value = String(raw || '').trim()
     if (value) {
-      items.push({ label: '相关片段', value, meta: '向量召回' })
+      items.push({ kind: 'retrieved', label: '向量召回片段', value, meta: '合并并进入记忆上下文' })
     }
   }
-  return items.slice(0, 8)
+  return items.slice(0, 28)
+}
+
+function usedMemoryItems(message: Message): DebugMemoryItem[] {
+  const items = [...injectedMemoryItems(message), ...recalledMemoryItems(message)]
+  const seen = new Set<string>()
+  return items.filter((item) => {
+    const key = `${item.kind}:${item.label}:${item.value}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function agentRowSummary(item: AgentTraceItem) {
+  return traceSummary(item)
+    || traceDecisionReason(item)
+    || (item.skipped ? '本步由路由器主动跳过' : '已记录执行状态')
+}
+
+function memoryReasonLabel(reason: string) {
+  return ({
+    QUESTION_RELEVANT: '与问题相关',
+    USER_REQUESTED_RECALL: '用户主动要求回忆',
+    PROJECT_CONTEXT: '项目上下文'
+  } as Record<string, string>)[reason] || reason || '召回使用'
+}
+
+function memoryReliabilityLabel(reliability: string) {
+  return ({
+    RELIABLE: '可靠',
+    BASIC: '基础信息',
+    REVIEW_REQUIRED: '待核对'
+  } as Record<string, string>)[reliability] || reliability
 }
 
 function parseMemoryPreview(value: string) {
@@ -2117,7 +2491,7 @@ function escapeHtml(text: string) {
     <div
       ref="chatListRef"
       class="panel chat-list"
-      :class="{ 'chat-list--empty': !hasUserMessages }"
+      :class="{ 'chat-list--empty': !hasUserMessages, 'chat-list--debug': showDebug && hasUserMessages }"
       :role="hasUserMessages ? 'log' : undefined"
       :aria-label="hasUserMessages ? '对话消息' : undefined"
       :aria-live="hasUserMessages ? 'polite' : undefined"
@@ -2144,7 +2518,7 @@ function escapeHtml(text: string) {
         v-for="(message, index) in messages"
         :key="message.id || index"
         class="message"
-        :class="[message.role, { 'source-message-highlight': highlightedMessageId === message.id }]"
+        :class="[message.role, { 'debug-message': showDebug && message.role === 'assistant', 'source-message-highlight': highlightedMessageId === message.id }]"
         :data-message-id="message.id || undefined"
         :tabindex="highlightedMessageId === message.id ? -1 : undefined"
       >
@@ -2215,7 +2589,7 @@ function escapeHtml(text: string) {
             </div>
           </details>
           <button
-            v-if="message.usedMemories?.length"
+            v-if="message.usedMemories?.length && !showDebug"
             class="memory-explanation-trigger"
             type="button"
             @click="openMemoryExplanation(message)"
@@ -2247,7 +2621,7 @@ function escapeHtml(text: string) {
           </div>
         </div>
 
-        <div v-if="message.role === 'assistant' && message.sources?.length" class="source-panel">
+        <div v-if="message.role === 'assistant' && message.sources?.length && !showDebug" class="source-panel">
           <div class="source-panel-head">
             <strong>资料来源</strong>
             <span class="badge">{{ message.sources.length }} 条</span>
@@ -2270,22 +2644,6 @@ function escapeHtml(text: string) {
             <p>{{ sourceSnippet(source) }}</p>
             <pre>{{ source.chunk }}</pre>
           </details>
-        </div>
-
-        <div v-if="showDebug && message.role === 'assistant' && usedMemoryItems(message).length" class="source-panel memory-used-panel">
-          <div class="source-panel-head">
-            <strong>本轮使用记忆</strong>
-            <span class="badge">{{ usedMemoryItems(message).length }} 条</span>
-          </div>
-          <div
-            v-for="item in usedMemoryItems(message)"
-            :key="`${item.meta}-${item.label}-${item.value}`"
-            class="memory-used-card"
-          >
-            <strong>{{ item.label }}</strong>
-            <span>{{ item.value }}</span>
-            <small>{{ item.meta }}</small>
-          </div>
         </div>
 
         <div v-if="message.role === 'assistant' && pendingCandidateMemories(message).length" class="candidate-memory-list">
@@ -2595,73 +2953,267 @@ function escapeHtml(text: string) {
         </div>
 
         <div
-          v-if="showDebug && message.role === 'assistant' && (message.agentTrace?.length || message.sources?.length || message.toolResults?.length || reviewText(message.review))"
-          class="debug-panel"
+          v-if="showDebug && message.role === 'assistant'"
+          class="debug-panel debug-ledger"
+          data-testid="chat-debug-ledger"
         >
-          <div class="debug-actions">
-            <span>调试信息</span>
-            <button class="inline" type="button" @click="copyDebugPayload(message, index)">
-              {{ traceCopyState[index] === 'copied' ? '已复制' : traceCopyState[index] === 'failed' ? '复制失败' : '复制 Trace' }}
-            </button>
-          </div>
-          <details v-if="message.agentTrace?.length" class="debug-section">
-            <summary class="debug-title">Agent Trace</summary>
-            <div class="agent-flow">
-              <div
-                v-for="(item, traceIndex) in message.agentTrace"
-                :key="`${traceIndex}-${item.agent}`"
-                class="agent-node"
-                :class="agentNodeClass(item)"
+          <div class="debug-actions debug-ledger-head">
+            <span><GitBranch :size="17" aria-hidden="true" />本轮调试</span>
+            <div class="debug-ledger-actions">
+              <span
+                class="debug-version"
+                :class="{ warning: message.debugDataState !== 'available' || message.debugTruncated }"
+                :title="message.debugVersion || undefined"
               >
-                <strong>{{ item.agent }}</strong>
-                <span>{{ agentStatus(item) }}</span>
-              </div>
+                {{ debugDataStatusLabel(message) }}
+              </span>
+              <button class="inline" type="button" @click="copyDebugPayload(message, index)">
+                <Copy :size="14" aria-hidden="true" />
+                {{ traceCopyState[index] === 'copied' ? '已复制' : traceCopyState[index] === 'failed' ? '复制失败' : '复制诊断' }}
+              </button>
             </div>
-            <div v-for="(item, traceIndex) in message.agentTrace" :key="traceIndex" class="trace-item">
-              <div class="trace-head">
-                <span class="trace-agent">{{ item.agent }}</span>
-                <span class="badge" :class="{ danger: item.approved === false }">{{ agentStatus(item) }}</span>
-              </div>
-              <div v-if="agentDecision(item)" class="debug-line">{{ agentDecision(item) }}</div>
-              <div v-if="traceSummary(item)" class="trace-summary">{{ traceSummary(item) }}</div>
-              <div v-if="writerInputSummary(item)" class="trace-summary">{{ writerInputSummary(item) }}</div>
-              <details v-if="formatTraceDetail(item)" class="trace-detail">
-                <summary>查看详情</summary>
-                <pre>{{ formatTraceDetail(item) }}</pre>
-              </details>
-            </div>
-          </details>
+          </div>
 
-          <details v-if="message.toolResults?.length" class="debug-section">
-            <summary class="debug-title">Tools</summary>
-            <div v-for="(tool, toolIndex) in message.toolResults" :key="toolIndex" class="debug-line">
-              <pre>{{ formatToolDebug(tool) }}</pre>
-            </div>
-          </details>
+          <p v-if="debugDataNotice(message)" class="debug-ledger-notice" role="status">
+            {{ debugDataNotice(message) }}
+          </p>
 
-          <details v-if="message.sources?.length" class="debug-section">
-            <summary class="debug-title">Sources</summary>
-            <div v-for="source in message.sources" :key="source.docId + source.title" class="debug-line">
-              {{ source.title }} · {{ sourceRetrievalLabel(source) || 'unknown' }}
-            </div>
-          </details>
-
-          <details v-if="reviewText(message.review)" class="debug-section">
-            <summary class="debug-title">Review</summary>
-            <div class="review-card" :class="reviewCardClass(message.review)">
-              <div class="review-card-head">
-                <strong>{{ reviewRuleText(message.review) }}</strong>
-                <span class="badge" :class="{ danger: message.review?.approved === false, success: message.review?.approved === true }">
-                  {{ reviewStatusText(message.review) }}
+          <div class="debug-execution-strip" aria-label="本轮执行路径">
+            <template v-for="(step, stepIndex) in debugExecutionSteps(message)" :key="step.id">
+              <div class="debug-execution-step" :class="`is-${step.state}`">
+                <span class="debug-step-icon">
+                  <GitBranch v-if="step.id === 'route'" :size="21" aria-hidden="true" />
+                  <BrainCircuit v-else-if="step.id === 'memory'" :size="21" aria-hidden="true" />
+                  <Database v-else-if="step.id === 'rag'" :size="21" aria-hidden="true" />
+                  <Wrench v-else-if="step.id === 'tools'" :size="21" aria-hidden="true" />
+                  <Sparkles v-else :size="21" aria-hidden="true" />
+                </span>
+                <span class="debug-step-copy">
+                  <strong>{{ step.label }}</strong>
+                  <small><Circle :size="7" fill="currentColor" aria-hidden="true" />{{ debugStepStateLabel(step.state) }}</small>
+                  <span :title="step.detail">{{ step.detail }}</span>
                 </span>
               </div>
-              <div class="debug-line">{{ reviewText(message.review) }}</div>
-              <p>{{ reviewReason(message.review) }}</p>
-              <small v-if="reviewRewriteInstruction(message.review)" class="memory-meta">
-                {{ reviewRewriteInstruction(message.review) }}
-              </small>
+              <ArrowRight v-if="stepIndex < 4" class="debug-step-arrow" :size="20" aria-hidden="true" />
+            </template>
+          </div>
+
+          <section class="debug-ledger-section" data-testid="debug-memory-section">
+            <div class="debug-ledger-section-head">
+              <span><BrainCircuit :size="17" aria-hidden="true" /><strong>记忆</strong></span>
+              <p>注入 {{ injectedMemoryItems(message).length }} 条 · 候选 {{ recalledMemoryItems(message).length }} 条 · 排除 {{ memoryExclusionCount(message) }} 条</p>
             </div>
-          </details>
+            <div class="debug-ledger-section-body">
+              <div v-if="message.debugDataState !== 'available'" class="debug-empty">
+                {{ debugDataNotice(message) || '记忆调试数据不可用。' }}
+              </div>
+              <template v-else>
+                <div v-if="injectedMemoryRecords(message).length" class="debug-data-table debug-memory-table" role="table" aria-label="实际注入回答的记忆">
+                  <div class="debug-table-row debug-table-head" role="row">
+                    <span role="columnheader">记忆项</span>
+                    <span role="columnheader">值摘要</span>
+                    <span role="columnheader">来源数</span>
+                    <span role="columnheader">召回原因</span>
+                  </div>
+                  <div v-for="item in injectedMemoryRecords(message)" :key="`${item.memoryId}-${item.title}`" class="debug-table-row" role="row">
+                    <strong role="cell">{{ item.title }}</strong>
+                    <span role="cell">{{ item.valueSummary }}</span>
+                    <span role="cell">{{ item.sourceCount }} 个</span>
+                    <span role="cell">{{ memoryReasonLabel(item.reasonCode) }} · {{ memoryReliabilityLabel(item.reliability) }}</span>
+                  </div>
+                </div>
+                <p v-else class="debug-empty">本轮实际注入 0 条画像记忆。</p>
+
+                <div class="debug-memory-metrics" aria-label="记忆召回统计">
+                  <span v-for="metric in memoryMetricItems(message)" :key="metric.label">
+                    {{ metric.label }} <strong>{{ metric.value }}</strong>
+                  </span>
+                </div>
+
+                <details v-if="recalledMemoryItems(message).length" class="debug-disclosure debug-recall-disclosure">
+                  <summary>
+                    <span>查看召回过程</span>
+                    <small>{{ recalledMemoryItems(message).length }} 条预览</small>
+                  </summary>
+                  <div class="debug-recall-detail">
+                    <div class="debug-section-notes">
+                      <p class="debug-ledger-summary">{{ memoryTraceSummaryText(message) }}</p>
+                      <p v-if="traceDecisionReason(traceItem(message, 'memory_agent'))" class="debug-ledger-reason">
+                        召回决策：{{ traceDecisionReason(traceItem(message, 'memory_agent')) }}
+                      </p>
+                      <p v-if="memoryExclusionText(message)" class="debug-ledger-reason">{{ memoryExclusionText(message) }}</p>
+                      <p v-if="memoryWriterInputText(message)" class="debug-ledger-reason">{{ memoryWriterInputText(message) }}</p>
+                    </div>
+                    <div class="debug-evidence-list">
+                      <article
+                        v-for="item in recalledMemoryItems(message)"
+                        :key="`${item.kind}-${item.label}-${item.value}`"
+                        class="debug-evidence-card"
+                        :data-kind="item.kind"
+                      >
+                        <strong>{{ item.label }}</strong>
+                        <p>{{ item.value }}</p>
+                        <small>{{ item.meta }}</small>
+                      </article>
+                    </div>
+                  </div>
+                </details>
+                <p v-else-if="traceItem(message, 'memory_agent')?.skipped" class="debug-empty">
+                  记忆 Agent 主动跳过：{{ traceDecisionReason(traceItem(message, 'memory_agent')) || '本轮不需要召回记忆。' }}
+                </p>
+                <p v-else class="debug-empty">本轮没有可展示的摘要、短期、结构化或向量召回预览。</p>
+              </template>
+            </div>
+          </section>
+
+          <section class="debug-ledger-section" data-testid="debug-rag-section">
+            <div class="debug-ledger-section-head">
+              <span><Database :size="17" aria-hidden="true" /><strong>知识库 RAG</strong></span>
+              <p>命中 {{ ragContextCount(message) }} 个片段</p>
+            </div>
+            <div class="debug-ledger-section-body">
+              <div v-if="message.debugDataState !== 'available'" class="debug-empty">
+                {{ debugDataNotice(message) || 'RAG 调试数据不可用。' }}
+              </div>
+              <template v-else>
+                <div class="debug-inline-facts">
+                  <span>
+                    <strong>选用知识库：</strong>
+                    <template v-if="message.knowledgeBaseIds?.length">
+                      {{ message.knowledgeBaseIds.map(debugKnowledgeBaseLabel).join('；') }}
+                    </template>
+                    <template v-else>未选择或未记录</template>
+                  </span>
+                  <span>
+                    <strong>检索 Query：</strong>
+                    {{ ragQueries(message).length ? ragQueries(message).join('；') : `未保留文本（${ragQueryCount(message)} 个 Query）` }}
+                  </span>
+                </div>
+                <p class="debug-ledger-summary">{{ ragStatusText(message) }}</p>
+                <div v-if="message.sources?.length" class="debug-data-table debug-source-list" role="table" aria-label="RAG 命中片段">
+                  <div class="debug-table-row debug-table-head" role="row">
+                    <span role="columnheader">文档标题</span>
+                    <span role="columnheader">相似度</span>
+                    <span role="columnheader">检索方式</span>
+                    <span role="columnheader">片段预览</span>
+                  </div>
+                  <details
+                    v-for="(source, sourceIndex) in message.sources"
+                    :key="sourceCardKey(source, sourceIndex)"
+                    class="debug-source-card"
+                  >
+                    <summary class="debug-table-row" role="row">
+                      <strong role="cell">{{ sourceFileName(source) }}</strong>
+                      <span role="cell">{{ source.score || '-' }}</span>
+                      <span role="cell">{{ source.hitModes || source.backend || '-' }}</span>
+                      <span role="cell">{{ sourceSnippet(source) }}</span>
+                    </summary>
+                    <div class="debug-table-expanded">
+                      <small>{{ sourceSegmentLabel(source) }} · 文档 {{ source.docId || '-' }}<template v-if="sourceRetrievalLabel(source)"> · {{ sourceRetrievalLabel(source) }}</template></small>
+                      <pre>{{ source.chunk }}</pre>
+                    </div>
+                  </details>
+                </div>
+                <p v-else class="debug-empty">
+                  {{ ragWasExecuted(message) ? '检索已执行，但返回 0 个知识片段。' : ragReason(message) || '本轮没有执行知识库检索。' }}
+                </p>
+              </template>
+            </div>
+          </section>
+
+          <section class="debug-ledger-section" data-testid="debug-tools-section">
+            <div class="debug-ledger-section-head">
+              <span><Wrench :size="17" aria-hidden="true" /><strong>工具调用</strong></span>
+              <p>{{ message.toolResults?.length ? `调用 ${message.toolResults.length} 次` : '本轮未调用' }}</p>
+            </div>
+            <div class="debug-ledger-section-body">
+              <div v-if="message.debugDataState !== 'available'" class="debug-empty">
+                {{ debugDataNotice(message) || '工具调试数据不可用。' }}
+              </div>
+              <template v-else>
+                <p v-if="selectedToolNames(message).length" class="debug-ledger-summary">
+                  <strong>路由选择：</strong>{{ selectedToolNames(message).join('；') }}
+                </p>
+                <div v-if="message.toolResults?.length" class="debug-data-table debug-tool-list" role="table" aria-label="工具调用结果">
+                  <div class="debug-table-row debug-table-head" role="row">
+                    <span role="columnheader">工具</span>
+                    <span role="columnheader">状态</span>
+                    <span role="columnheader">耗时</span>
+                    <span role="columnheader">安全摘要</span>
+                  </div>
+                  <article v-for="(tool, toolIndex) in message.toolResults" :key="`${toolIndex}-${tool.tool}`" class="debug-tool-card debug-table-row" role="row">
+                    <strong role="cell">{{ tool.tool }}</strong>
+                    <span role="cell" class="debug-status-text" :class="{ danger: !tool.ok, success: tool.ok }">{{ toolStatusText(tool) }}</span>
+                    <span role="cell">{{ typeof tool.elapsedMs === 'number' ? `${tool.elapsedMs}ms` : '-' }}</span>
+                    <span role="cell">
+                      {{ tool.content }}
+                      <small><template v-if="tool.operationType">{{ tool.operationType }} · </template><template v-if="tool.riskLevel">{{ tool.riskLevel }} · </template>{{ toolRetryLabel(tool) }}</small>
+                    </span>
+                  </article>
+                </div>
+                <div v-else class="debug-tool-empty">
+                  <strong>本轮未调用工具</strong>
+                  <span>路由原因：{{ toolEmptyText(message) }}</span>
+                </div>
+              </template>
+            </div>
+          </section>
+
+          <section class="debug-ledger-section" data-testid="debug-agent-section">
+            <div class="debug-ledger-section-head">
+              <span><GitBranch :size="17" aria-hidden="true" /><strong>Agent 流程</strong></span>
+              <p>{{ message.agentTrace?.length || 0 }} 个节点</p>
+            </div>
+            <div class="debug-ledger-section-body">
+              <div v-if="message.debugDataState !== 'available'" class="debug-empty">
+                {{ debugDataNotice(message) || 'Agent Trace 不可用。' }}
+              </div>
+              <template v-else>
+                <div v-if="message.agentTrace?.length" class="debug-agent-table" aria-label="Agent 执行流程">
+                  <div v-for="(item, traceIndex) in message.agentTrace" :key="`${traceIndex}-${item.agent}`" class="debug-agent-row">
+                    <strong>{{ agentDisplayName(item.agent) }}</strong>
+                    <span>{{ typeof item.elapsedMs === 'number' ? `${item.elapsedMs}ms` : '-' }}</span>
+                    <span class="debug-agent-state" :class="agentNodeClass(item)">
+                      <Circle :size="8" fill="currentColor" aria-hidden="true" />{{ agentStatus(item) }}
+                    </span>
+                    <span>{{ agentRowSummary(item) }}</span>
+                  </div>
+                </div>
+                <p v-else class="debug-empty">本轮 Agent Trace 为 0 步。</p>
+
+                <details v-if="message.agentTrace?.length" class="debug-disclosure debug-agent-disclosure">
+                  <summary>
+                    <span>查看各步骤安全详情</span>
+                    <small>{{ message.agentTrace.length }} 步</small>
+                  </summary>
+                  <div class="debug-trace-list">
+                    <article v-for="(item, traceIndex) in message.agentTrace" :key="traceIndex" class="trace-item">
+                      <div class="trace-head">
+                        <span class="trace-agent">{{ agentDisplayName(item.agent) }}</span>
+                        <span class="badge" :class="{ danger: item.approved === false }">{{ agentStatus(item) }}</span>
+                      </div>
+                      <div v-if="agentDecision(item)" class="debug-line">{{ agentDecision(item) }}</div>
+                      <div v-if="traceSummary(item)" class="trace-summary">{{ traceSummary(item) }}</div>
+                      <div v-if="writerInputSummary(item)" class="trace-summary">{{ writerInputSummary(item) }}</div>
+                      <small v-if="typeof item.elapsedMs === 'number'" class="debug-muted">耗时 {{ item.elapsedMs }}ms</small>
+                      <details v-if="formatTraceDetail(item)" class="trace-detail">
+                        <summary>查看安全详情</summary>
+                        <pre>{{ formatTraceDetail(item) }}</pre>
+                      </details>
+                    </article>
+                  </div>
+                </details>
+
+                <div v-if="reviewText(message.review)" class="debug-review-block">
+                  <strong>{{ reviewRuleText(message.review) }} · {{ reviewStatusText(message.review) }}</strong>
+                  <span>{{ reviewText(message.review) }}</span>
+                  <span>{{ reviewReason(message.review) }}</span>
+                  <small v-if="reviewRewriteInstruction(message.review)" class="memory-meta">{{ reviewRewriteInstruction(message.review) }}</small>
+                </div>
+                <p v-else class="debug-empty">本轮没有保存独立审核结果。</p>
+              </template>
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -2826,6 +3378,18 @@ function escapeHtml(text: string) {
   scrollbar-width: none;
   -ms-overflow-style: none;
   padding: var(--space-3) 0 var(--space-5);
+}
+
+.chat-list--debug {
+  width: min(100%, 1160px);
+}
+
+.chat-list--debug .message {
+  width: min(100%, var(--chat-reading-width));
+}
+
+.chat-list--debug .message.debug-message {
+  width: 100%;
 }
 
 .message {
@@ -3103,6 +3667,12 @@ function escapeHtml(text: string) {
 }
 
 @media (max-width: 640px) {
+  .toolbar {
+    display: flex;
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
   .commercial-quota-card { grid-template-columns: 1fr 1fr; }
   .commercial-quota-card > div { grid-column: 1 / -1; }
   .chat-list--empty { overflow-y: auto; }
@@ -3123,10 +3693,10 @@ function escapeHtml(text: string) {
   .chat-input { width: 100%; }
   .toolbar-controls {
     display: flex;
-    width: auto;
+    width: 100%;
     gap: var(--space-2);
     flex-wrap: wrap;
-    justify-content: flex-end;
+    justify-content: flex-start;
   }
   .toolbar-controls > button {
     width: auto;
