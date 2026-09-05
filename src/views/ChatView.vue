@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, ArrowRight, BrainCircuit, ChevronRight, Circle, Copy, Database, GitBranch, PanelRightOpen, Sparkles, Wrench } from '@lucide/vue'
+import { ArrowDown, ArrowRight, BrainCircuit, ChevronRight, Circle, Database, GitBranch, PanelRightOpen, Sparkles, Wrench } from '@lucide/vue'
 import {
   createConversation,
   createAgentTodo,
@@ -75,6 +75,8 @@ import {
 } from '@/domain/chat-model'
 import ChatComposer from '@/components/chat/ChatComposer.vue'
 import DebugAgentTimeline from '@/components/chat/DebugAgentTimeline.vue'
+import DebugLedger from '@/components/chat/DebugLedger.vue'
+import { summarizeChatDebug } from '@/domain/chat-debug-summary'
 import ChatSources from '@/components/chat/ChatSources.vue'
 import { presentAgentTrace } from '@/domain/chat-trace-presentation'
 import MessageAttachments from '@/components/chat/MessageAttachments.vue'
@@ -2846,29 +2848,26 @@ function escapeHtml(text: string) {
           </article>
         </div>
 
-        <div
+        <DebugLedger
           v-if="showDebug && message.role === 'assistant'"
-          class="debug-panel debug-ledger"
-          data-testid="chat-debug-ledger"
-          :data-debug-state="message.debugDataState || 'unavailable'"
+          :key="`${conversationId}-${index}`"
+          :state="message.debugDataState"
+          :status="debugDataStatusLabel(message)"
+          :summary="summarizeChatDebug({
+            state: message.debugDataState,
+            truncated: message.debugTruncated,
+            injectedMemoryCount: injectedMemoryRecords(message).length,
+            sourceCount: message.sources?.length || 0,
+            toolResultCount: message.toolResults?.length || 0,
+            failedToolCount: message.toolResults?.filter(tool => !tool.ok && !tool.requiresConfirmation).length,
+            reviewBlocked: message.review?.approved === false || message.review?.ruleBlocked === true,
+            answerFailed: message.phase === 'FAILED'
+          })"
+          :version="message.debugVersion"
+          :truncated="message.debugTruncated"
+          :copy-state="traceCopyState[index]"
+          @copy="copyDebugPayload(message, index)"
         >
-          <div class="debug-actions debug-ledger-head">
-            <span><GitBranch :size="17" aria-hidden="true" />本轮调试</span>
-            <div class="debug-ledger-actions">
-              <span
-                class="debug-version"
-                :class="{ warning: message.debugDataState !== 'available' || message.debugTruncated }"
-                :title="message.debugVersion || undefined"
-              >
-                {{ debugDataStatusLabel(message) }}
-              </span>
-              <button class="inline" type="button" @click="copyDebugPayload(message, index)">
-                <Copy :size="14" aria-hidden="true" />
-                {{ traceCopyState[index] === 'copied' ? '已复制' : traceCopyState[index] === 'failed' ? '复制失败' : '复制诊断' }}
-              </button>
-            </div>
-          </div>
-
           <p v-if="debugDataNotice(message)" class="debug-ledger-notice" data-testid="debug-data-notice" role="status">
             {{ debugDataNotice(message) }}
           </p>
@@ -3075,7 +3074,7 @@ function escapeHtml(text: string) {
               </template>
             </div>
           </section>
-        </div>
+        </DebugLedger>
       </div>
     </div>
 
@@ -3360,19 +3359,12 @@ function escapeHtml(text: string) {
   display: block;
   grid-template-columns: none;
   gap: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
   padding: 0;
-  box-shadow: var(--shadow-popover);
-  backdrop-filter: blur(12px);
   grid-column: 1;
   grid-row: 2;
   width: min(100%, var(--chat-content-width));
   justify-self: center;
 }
-.chat-input textarea { min-height: 48px; resize: vertical; border: 0; background: transparent; box-shadow: none; }
-.chat-input textarea:focus { outline: 0; }
 .image-attachment-grid,
 .uploaded-image-grid,
 .image-batch-grid {
