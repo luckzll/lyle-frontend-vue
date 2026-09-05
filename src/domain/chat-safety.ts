@@ -80,13 +80,24 @@ export function sanitizeAgentTrace(items: unknown): AgentTraceItem[] {
       'answerChars',
       'rewriteAttempt',
       'toolCount',
+      'imageCount',
       'contextCount',
       'queryCount',
       'elapsedMs',
       'memoryContextChars',
+      'candidateCount',
       'score'
     ])
-    copyEnumField(item, safe, 'action', ['read', 'write'])
+    copyEnumField(item, safe, 'action', ['read', 'write', 'candidate_ready'])
+    copyEnumField({ status: typeof item.status === 'string' ? item.status.trim().toLowerCase() : undefined }, safe, 'status', [
+      'pending', 'queued', 'scheduled', 'running', 'in_progress', 'processing',
+      'completed', 'succeeded', 'success', 'failed', 'error', 'rejected',
+      'cancelled', 'canceled', 'skipped'
+    ])
+    if (safe.agent === 'tool_agent') {
+      const tool = safeText(item.tool, 100)
+      if (tool) safe.tool = tool
+    }
 
     const intent = safeText(item.intent, 80)
     if (intent) safe.intent = intent

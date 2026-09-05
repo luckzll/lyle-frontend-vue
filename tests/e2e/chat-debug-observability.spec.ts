@@ -44,15 +44,20 @@ test('complete historical debug evidence survives refresh and stays behind debug
   await expect(tools).toContainText('成功')
 
   const agents = page.getByTestId('debug-agent-section')
-  await expect(agents).toContainText('路由 Supervisor')
-  await expect(agents).toContainText('记忆 Memory')
-  await expect(agents).toContainText('知识库 RAG')
-  await expect(agents).toContainText('回答生成 Writer')
+  await expect(agents).toContainText('理解与分流')
+  await expect(agents).toContainText('记忆召回')
+  await expect(agents).toContainText('知识库检索')
+  await expect(agents).toContainText('生成回答')
+  await expect(agents.locator('.debug-flow-step[data-agent="project_resolver"] > summary')).toContainText('未匹配')
+  await expect(agents.locator('.debug-flow-step[data-agent="memory_agent"]').last()).toContainText('记忆整理')
+  await agents.locator('.debug-flow-step[data-agent="project_resolver"] > summary').click()
+  await expect(agents.getByText('判断当前问题属于哪个项目', { exact: true })).toBeVisible()
+  await expect(agents).not.toContainText('已记录执行状态')
 
   await expect(page.getByTestId('debug-memory-summary')).toHaveText('注入 1 条 · 候选 4 条 · 排除 1 条')
   await expect(page.getByTestId('debug-rag-summary')).toHaveText('命中 1 个片段')
   await expect(page.getByTestId('debug-tools-summary')).toHaveText('调用 1 次')
-  await expect(page.getByTestId('debug-agent-summary')).toHaveText('5 个节点')
+  await expect(page.getByTestId('debug-agent-summary')).toHaveText('7 个节点')
 
   const assistantContent = page.locator('.message.assistant > .message-bubble.markdown').first()
   const composer = page.locator('.chat-input')
@@ -67,7 +72,7 @@ test('complete historical debug evidence survives refresh and stays behind debug
   expect(Math.abs((assistantBox?.x || 0) - (composerBox?.x || 0))).toBeLessThanOrEqual(1)
   expect(Math.abs((assistantBox?.width || 0) - (composerBox?.width || 0))).toBeLessThanOrEqual(1)
   expect(assistantBox?.width).toBeCloseTo(920, 0)
-  expect(ledgerBox?.width).toBeCloseTo(1160, 0)
+  expect(ledgerBox?.width).toBeCloseTo(920, 0)
   expect(Math.abs(
     ((assistantBox?.x || 0) - (ledgerBox?.x || 0))
       - (((ledgerBox?.width || 0) - (assistantBox?.width || 0)) / 2)
@@ -86,6 +91,11 @@ test('complete historical debug evidence survives refresh and stays behind debug
   expect(overflow.page).toBeLessThanOrEqual(1)
   expect(overflow.tables.every((value) => value <= 1)).toBe(true)
 
+  await page.getByRole('button', { name: '上下文', exact: true }).click()
+  const withContext = await responsiveMetrics(page)
+  expect(Math.abs(withContext.ledgerX - withContext.composerX)).toBeLessThanOrEqual(1)
+  expect(Math.abs(withContext.ledgerWidth - withContext.composerWidth)).toBeLessThanOrEqual(1)
+
   await page.reload()
   await expect(page.getByTestId('debug-memory-section')).toContainText('向量召回片段')
   await expect(page.getByTestId('debug-rag-section')).toContainText('大模型知识原理.docx')
@@ -94,6 +104,16 @@ test('complete historical debug evidence survives refresh and stays behind debug
   await page.goto('/?conversationId=debug-complete')
   await expect(page.getByTestId('chat-debug-ledger')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /使用了 1 条记忆/ })).toBeVisible()
+  const sourceDisclosure = page.getByTestId('chat-sources')
+  await expect(sourceDisclosure).not.toHaveAttribute('open', '')
+  await expect(sourceDisclosure).toContainText('1 份文档 · 1 个片段')
+  await sourceDisclosure.locator(':scope > summary').press('Enter')
+  await expect(page.getByTestId('chat-source-document')).toHaveCount(1)
+  const fragment = page.getByTestId('chat-source-fragment')
+  await fragment.locator('summary').press('Enter')
+  await expect(fragment.locator('.chat-source-full-text')).toHaveText('Build 负责记忆构建，Recall 负责检索召回。')
+  await sourceDisclosure.locator(':scope > summary').press('Enter')
+  await expect(fragment).not.toBeVisible()
 })
 
 test('debug ledger distinguishes an executed zero result from legacy missing data', async ({ page }) => {
@@ -176,6 +196,8 @@ test('debug ledger keeps table overflow local and content aligned at responsive 
   expect(mobile.pageOverflow).toBeLessThanOrEqual(1)
   expect(Math.abs(mobile.assistantX - mobile.composerX)).toBeLessThanOrEqual(1)
   expect(Math.abs(mobile.assistantWidth - mobile.composerWidth)).toBeLessThanOrEqual(1)
+  expect(Math.abs(mobile.ledgerX - mobile.composerX)).toBeLessThanOrEqual(1)
+  expect(Math.abs(mobile.ledgerWidth - mobile.composerWidth)).toBeLessThanOrEqual(1)
   expect(mobile.tables.every((table) => table.overflowX === 'auto')).toBe(true)
   expect(mobile.tables.some((table) => table.scrollWidth > table.clientWidth)).toBe(true)
 })
@@ -192,6 +214,8 @@ async function responsiveMetrics(page: Page) {
       composerX: composer?.x || 0,
       composerWidth: composer?.width || 0,
       ledgerRight: ledger?.right || 0,
+      ledgerX: ledger?.x || 0,
+      ledgerWidth: ledger?.width || 0,
       tables: Array.from(document.querySelectorAll<HTMLElement>('.debug-data-table, .debug-agent-table')).map((table) => {
         const rect = table.getBoundingClientRect()
         return {
@@ -299,6 +323,7 @@ function completeMessages() {
           sourceCount: 2
         }],
         memoryExclusions: { conflicted: 0, sensitive: 1, governed: 0 },
+        projectContext: { resolver: { projectId: null, reason: '没有可匹配的活跃项目', linkedConversation: false } },
         agentTrace: [{
           agent: 'supervisor_agent',
           intent: 'knowledge',
@@ -340,6 +365,12 @@ function completeMessages() {
           answerChars: 24,
           writerInput: { memoryContextChars: 420, toolContextChars: 80, ragContextCount: 1, combinedContextChars: 500 },
           elapsedMs: 18
+        }, {
+          agent: 'project_resolver'
+        }, {
+          agent: 'memory_agent',
+          action: 'candidate_ready',
+          candidateCount: 0
         }],
         sources: [{
           docId: 'doc-llm',

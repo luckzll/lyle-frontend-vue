@@ -517,12 +517,18 @@ export interface AgentTraceItem {
   answerChars?: number
   rewriteAttempt?: number
   toolCount?: number
+  imageCount?: number
   contextCount?: number
   queryCount?: number
   elapsedMs?: number
   memoryContextChars?: number
+  candidateCount?: number
   score?: number
-  action?: 'read' | 'write'
+  action?: 'read' | 'write' | 'candidate_ready'
+  status?: 'pending' | 'queued' | 'scheduled' | 'running' | 'in_progress' | 'processing'
+    | 'completed' | 'succeeded' | 'success' | 'failed' | 'error' | 'rejected'
+    | 'cancelled' | 'canceled' | 'skipped'
+  tool?: string
   intent?: string
   nextAgents?: string[]
   receivedAgents?: string[]
