@@ -407,3 +407,81 @@ final result: passed
 - Remaining P3: none required for this scoped revision.
 
 final result: passed
+
+## 调试账本整体折叠（2026-09-05，本地后续修订）
+
+### Scope and visual evidence
+
+- Latest user instruction supersedes the initial icon-change request: **keep all existing icons; only implement folding**. `DebugAgentTimeline.vue` is unchanged from HEAD. Existing header, section and pipeline icons remain.
+- Source visual: `C:/Temp/codex-clipboard-11b1e814-d03d-4739-8433-66c7eeaaac25.png` (1431 × 254 cropped header/pipeline). Additional icon references: `codex-clipboard-ced3f969-4366-43c7-8035-f1cd1d207f35.png` and `codex-clipboard-e983af6c-dd56-4c28-94ab-dde8fe303557.png` in the same C:/Temp directory.
+- Implementation: `http://127.0.0.1:4173/?debug=1&conversationId=debug-complete`, synthetic local account 界面验收. Historical missing-state route: `conversationId=debug-legacy`.
+- Browser: Codex in-app browser. Screenshots are returned inline, not saved to a filesystem screenshot path. Source image and rendered implementation were emitted together in the same comparison input, both before and after the final icon restoration.
+- Viewports: 1707 × 932 desktop, 390 × 844 mobile; 320 × 844 narrow-width boundary. Browser screenshots were CSS-sized. Source is a density/crop-mismatched before-state; its ~1380 px card corresponds to the existing 920 CSS px track at approximately 1.5×. Comparison evaluates retained icons, typography, palette, hierarchy and intentional disclosure changes, not pixel-identical copying of the old always-open card.
+- Full-view comparison checks the card/composer axis and reading flow. Focused header/pipeline comparison checks unchanged icon meanings, title hierarchy, toggle affordance and independent copy action. Mobile capture checks the complete collapsed header, wrapping and control spacing.
+
+### Design and interaction result
+
+- Root defaults collapsed to a compact ~75 px desktop/mobile header with saved evidence counts and metadata state. Pending, legacy and unsupported states do not display fabricated zero counts.
+- Expand button fills the heading area, with a rotating chevron and desktop 展开/收起 label. Copy is a separate sibling button and never toggles disclosure.
+- Existing detailed evidence is retained, not removed; v-show hides it from the accessibility tree and keyboard order while preserving nested disclosures.
+- Bottom collapse returns focus to the heading without forcing ancestor scrolling. Each message owns an independent state; new messages and page reload default collapsed.
+- Desktop card and composer: width 920, x=517.67 with context closed and x=349.67 with context open. Mobile: width 366, x=12. Page/header horizontal overflow at 390 and 320 widths: 0.
+- Enter/Space toggle, independent copy (success state), retained nested recall disclosure, footer focus return, Tab to copy, multi-message independence, historical missing-state explanation and default-collapsed live/terminal result were checked through the browser UI.
+- Browser console errors/warnings: none. One later browser-driver click timed out during a short simulated stream; subsequent DOM inspection showed completed metadata and a collapsed card. This is not counted as a completed manual-toggle-across-stream test.
+
+### Required fidelity surfaces and review history
+
+- Typography: preserved Lyle font stack; 13 px title, 11 px summary, 10 px metadata badge. Summary wraps rather than clipping; keyboard focus is clearly visible.
+- Spacing/layout: shared card/composer track, compact two-line heading, independent copy target, original body/pipeline layout retained.
+- Colors/tokens: existing purple icons, neutral surface/border tokens; data completeness badge is neutral rather than implying every operation succeeded; missing states remain distinct.
+- Assets: only original Lucide icons and standard disclosure chevrons; no replacement art or new decorative assets. Initial numbering/icon-removal edits were fully reverted following user clarification.
+- Copy/content: labels describe saved evidence, not inferred tool execution. Review found a P2 where pending-confirmation tool results could be counted as failures; fixed by excluding requiresConfirmation results. No actionable P0/P1/P2 remains.
+- Unit suite: 28 files / 162 tests passed. Production build and typecheck passed. Relevant E2E specifications updated; no standalone Playwright browser was launched. Full automated streaming edge coverage remains available in the updated spec, not claimed as executed.
+- This revision is local only. No Git push, server cleanup or deployment was performed; earlier production disk-space blocker remains outside this turn's requested scope.
+
+final result: passed
+
+## 输入区布局与附件菜单优化（2026-09-05，本地修订）
+
+### Scope and comparison evidence
+
+- Product Design was explicitly requested. This is a scoped redesign of the supplied existing composer, retaining Lyle tokens, rounded surface, model select and send/stop behavior; it is not a new screen or icon redesign of the debug ledger.
+- Source visual: `C:/Temp/codex-clipboard-5ae4839a-0b7e-4870-ad77-16bdcf3125da.png`, 1596 × 195 cropped image. Its approximately 1380 px card corresponds to the existing 920 CSS px track at about 1.5× density.
+- Implementation URL: `http://127.0.0.1:4173/?debug=1&conversationId=debug-complete`. State: authenticated synthetic local fixture 界面验收, blank focused draft, Qwen 3.7 Flash, no selected project/knowledge base. Additional states used a saved knowledge-base selection, another model, a draft, an open attachment menu and a simulated stream.
+- Implementation screenshot evidence: inline Codex in-app browser captures in this task, not a saved file path. The source image and rendered desktop screenshot were emitted together in the same comparison input twice. Full screenshots measured 1707 × 932; actual CSS viewport was 1707 × 932. Browser DPR is 1.5; captures are normalized by the browser tool. The reference is a component crop, not a full-screen pixel-match target. Comparison assesses intentional layout improvements and retained design language after accounting for crop/density differences.
+- Focused evidence: the source itself isolates the composer; rendered 390 × 844 and 320 × 740 captures show all toolbar controls clearly, and a separate composer-region capture was inspected. The clip API returns a differently scaled region, so exact typography measurements use CSS geometry rather than treating that crop as a 1:1 pixel comparison. Desktop full-view comparison verifies the shared content track.
+
+### Findings and fixes
+
+- [P2, fixed] Manual attachment menu remained open after clicking back into the draft, so Enter navigated into the menu instead of sending. Dismissal now distinguishes the trigger/menu from the rest of the composer; slash suggestions stay open only while editing a slash command. Browser verification: returning to textarea closes the menu, preserves the draft and allows one Enter submission.
+- [P2, fixed] The prior debug disclosure's visually hidden copy announcement was positioned against an outer ancestor, creating hidden page overflow. At 390 px width the page had scrollHeight 1785 vs clientHeight 756; focusing the composer shifted it upward. Its header is now positioned, and the 1 px announcement is anchored at top/left zero inside the card. Post-fix page height equals 756, and composer bottom remains 824 through focus, Shift+Enter and opening the menu (fractional page scroll <= 1 px).
+- [P2, fixed] A short viewport could clip the attachment menu or leave its keyboard-focused item outside its own scroll area. The menu measures available space above the composer, responds to viewport/anchor resizing, and scrolls only its own contents to reveal focus. At 1707 × 360, menu top 94.67 is inside page top 88; End focuses the full folder row at y=156.83–210.83 inside menu y=94.67–211.33. Menu scrollTop is 88, page scrollTop is 0. Home returns to the image row without moving the page.
+- No actionable P0/P1/P2 remains in the scoped composer work. The changes above were followed by fresh browser captures and the final source/implementation comparison.
+
+### Required fidelity surfaces
+
+- Fonts/typography: inherited Lyle font family and textarea line height; model/context use 12 px UI labels with stronger model weight; 10 px keyboard guidance is deliberately secondary and hidden in narrower containers. At 320 px, a long model name truncates inside the native select rather than displacing controls. Complete selection remains available in its native menu. No replacement typeface.
+- Spacing/layout: upper editable text area, lower aligned toolbar: attachment / model / context on the left, shortcut hint / send on the right. Removed the redundant divider and conflicting ChatView appearance overrides. Desktop composer and ledger both measure width 920 at x=517.67 with context closed and x=349.67 with context open. Empty composer height is 107.33 desktop and 99.33 mobile. Mobile widths are 366 at 390 px and 296 at 320 px, x=12; horizontal overflow is 0. The four controls remain within the card without overlap.
+- Colors/tokens: existing purple model treatment and active send state, neutral disabled send state, subtle border/shadow, lighter focus ring. Context is a bordered control rather than unframed text. Focus indicators and status labels remain visible without relying only on color.
+- Image/asset quality: existing Lucide icons, plus library Plus and Layers3 for the new attachment/context affordances. No custom SVG, raster asset, decorative illustration or logo replacement. Existing debug icons are unchanged.
+- Copy/content: attachment menu uses 图片 / 文件 / 文件夹 with brief descriptions; slash mode retains /图片 /文件 /文件夹. Context retains its current selection and full accessible label even when its text is visually hidden on mobile. No backend retrieval claims or extra model options were invented.
+
+### Interaction and verification
+
+- Browser checked: plus opens the menu; ArrowDown/ArrowUp and Home/End move focus; Escape restores focus; click back to textarea closes the manual menu; draft is preserved; slash + ArrowDown opens keyboard navigation; Shift+Enter inserts a newline without sending; Enter submits exactly one synthetic turn. During generation, stop replaces send and the model select is disabled; completion restores empty/disabled send and the model selector.
+- Model selection and knowledge-base selection were exercised through the real controls against the local mock; the mobile context button opens the existing context drawer. The tested model/context choices were restored for final comparison.
+- Browser console warnings/errors: none.
+- Unit suite: 28 files / 162 tests passed. Typecheck and production build passed. `git diff --check` passed (repository line-ending notices only).
+- Updated `v62-unified-attachments.spec.ts` for the explicit attachment button, semantic menu, keyboard/draft behavior, IME guards, mobile controls and short-height focus. Updated `chat-debug-observability.spec.ts` for the composer-position regression. These E2E specifications were not run via a separate Playwright browser; browser interaction evidence above was collected in the in-app browser.
+- Test gaps: native OS file dialogs, upload processing, paste/drag-directory ingestion, real IME composition and production streaming/stop backend were not re-exercised in this local UI pass. Existing upload paths were reused; this report does not claim end-to-end production validation.
+- Checklist complete: preserve shared width; reorganize toolbar; keep mobile context reachable; verify keyboard/draft/stream UI; repair discovered focus overflow; compare final rendering; retain local preview. No push, server cleanup or deployment in this turn.
+
+final result: passed
+
+### Deployment preflight addendum (2026-09-05)
+
+- Explicit deployment authorization now received. Re-ran 162 unit tests and the 21 relevant Chromium E2E cases on isolated port 4193: all passed.
+- Initial E2E run identified three stale locator assertions, not missing UI: the mobile context surface has dialog semantics (two viewport cases), and the project-purpose paragraph includes its label plus body text. Updated these assertions to the actual intended accessible structure and reran the entire two-spec set successfully.
+- Automated mock-backed coverage now includes attachment uploads, picker/paste/drop, folder relative paths, retries, persisted attachment metadata, IME event guards, mobile layout, disclosure persistence, streaming collapse state, keyboard navigation and focus/scroll stability. This does not claim real production upload or native IME device testing.
+
+final result: passed

@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
 
 const NOW = '2026-09-04T08:00:00.000Z'
 
@@ -15,6 +15,7 @@ test('complete historical debug evidence survives refresh and stays behind debug
   await expect(ledger).toBeVisible()
   await expect(ledger).toHaveAttribute('data-debug-state', 'available')
   await expect(ledger.getByText('数据完整')).toBeVisible()
+  await expandLedger(ledger)
   await expect(ledger.getByLabel('本轮执行路径')).toContainText('路由')
   await expect(ledger.getByLabel('本轮执行路径')).toContainText('知识库')
 
@@ -51,7 +52,7 @@ test('complete historical debug evidence survives refresh and stays behind debug
   await expect(agents.locator('.debug-flow-step[data-agent="project_resolver"] > summary')).toContainText('未匹配')
   await expect(agents.locator('.debug-flow-step[data-agent="memory_agent"]').last()).toContainText('记忆整理')
   await agents.locator('.debug-flow-step[data-agent="project_resolver"] > summary').click()
-  await expect(agents.getByText('判断当前问题属于哪个项目', { exact: true })).toBeVisible()
+  await expect(agents.locator('.debug-flow-step[data-agent="project_resolver"] p').filter({ hasText: '判断当前问题属于哪个项目' })).toBeVisible()
   await expect(agents).not.toContainText('已记录执行状态')
 
   await expect(page.getByTestId('debug-memory-summary')).toHaveText('注入 1 条 · 候选 4 条 · 排除 1 条')
@@ -97,6 +98,7 @@ test('complete historical debug evidence survives refresh and stays behind debug
   expect(Math.abs(withContext.ledgerWidth - withContext.composerWidth)).toBeLessThanOrEqual(1)
 
   await page.reload()
+  await expandLedger(page.getByTestId('chat-debug-ledger'))
   await expect(page.getByTestId('debug-memory-section')).toContainText('向量召回片段')
   await expect(page.getByTestId('debug-rag-section')).toContainText('大模型知识原理.docx')
   await expect(page.getByTestId('debug-tools-section')).toContainText('memory_snapshot')
@@ -121,6 +123,7 @@ test('debug ledger distinguishes an executed zero result from legacy missing dat
 
   await expect(page.getByTestId('chat-debug-ledger')).toHaveAttribute('data-debug-state', 'available')
   await expect(page.getByTestId('chat-debug-ledger').getByText('数据完整')).toBeVisible()
+  await expandLedger(page.getByTestId('chat-debug-ledger'))
   await expect(page.getByTestId('debug-memory-summary')).toHaveText('注入 0 条 · 候选 0 条 · 排除 0 条')
   await expect(page.getByTestId('debug-rag-summary')).toHaveText('命中 0 个片段')
   await expect(page.getByTestId('debug-tools-summary')).toHaveText('本轮未调用')
@@ -132,6 +135,7 @@ test('debug ledger distinguishes an executed zero result from legacy missing dat
   const legacyLedger = page.getByTestId('chat-debug-ledger')
   await expect(legacyLedger).toHaveAttribute('data-debug-state', 'legacy')
   await expect(legacyLedger.getByText('历史明细缺失')).toBeVisible()
+  await expandLedger(legacyLedger)
   await expect(legacyLedger).toContainText('无法判断当时是未调用还是数据未记录')
   await expect(legacyLedger.getByTestId('debug-data-notice')).toHaveCount(1)
   await expect(legacyLedger.getByLabel('本轮执行路径').getByText('未记录', { exact: true })).toHaveCount(5)
@@ -148,6 +152,7 @@ test('debug ledger distinguishes an executed zero result from legacy missing dat
   const unsupportedLedger = page.getByTestId('chat-debug-ledger')
   await expect(unsupportedLedger).toHaveAttribute('data-debug-state', 'unsupported')
   await expect(unsupportedLedger.getByText('版本不受支持')).toBeVisible()
+  await expandLedger(unsupportedLedger)
   await expect(unsupportedLedger.getByTestId('debug-data-notice')).toHaveCount(1)
   await expect(unsupportedLedger.getByLabel('本轮执行路径').getByText('不支持', { exact: true })).toHaveCount(5)
   for (const testId of ['debug-memory-summary', 'debug-rag-summary', 'debug-tools-summary', 'debug-agent-summary']) {
@@ -163,6 +168,7 @@ test('live metadata without a debug version is unavailable instead of legacy', a
   const ledger = page.getByTestId('chat-debug-ledger').last()
   await expect(ledger).toHaveAttribute('data-debug-state', 'unavailable')
   await expect(ledger.getByText('本轮明细不可用')).toBeVisible()
+  await expandLedger(ledger)
   for (const testId of ['debug-memory-summary', 'debug-rag-summary', 'debug-tools-summary', 'debug-agent-summary']) {
     await expect(ledger.getByTestId(testId)).toHaveText('快照未返回')
   }
@@ -179,12 +185,15 @@ test('terminal HTTP failure settles pending debug state', async ({ page }) => {
   await expect(ledger).toHaveAttribute('data-debug-state', 'unavailable')
   await expect(ledger).not.toHaveAttribute('data-debug-state', 'pending')
   await expect(ledger.getByText('本轮明细不可用')).toBeVisible()
+  await expect(ledger.getByTestId('debug-ledger-toggle')).toHaveAttribute('aria-expanded', 'false')
+  await expect(ledger.getByTestId('debug-ledger-body')).not.toBeVisible()
 })
 
 test('debug ledger keeps table overflow local and content aligned at responsive widths', async ({ page }) => {
   await page.setViewportSize({ width: 820, height: 900 })
   await page.goto('/?debug=1&conversationId=debug-complete')
   await expect(page.getByTestId('chat-debug-ledger')).toBeVisible()
+  await expandLedger(page.getByTestId('chat-debug-ledger'))
 
   const narrow = await responsiveMetrics(page)
   expect(narrow.pageOverflow).toBeLessThanOrEqual(1)
@@ -201,6 +210,179 @@ test('debug ledger keeps table overflow local and content aligned at responsive 
   expect(mobile.tables.every((table) => table.overflowX === 'auto')).toBe(true)
   expect(mobile.tables.some((table) => table.scrollWidth > table.clientWidth)).toBe(true)
 })
+
+test('expanded debug evidence does not move the mobile composer when typing or opening attachments', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/?debug=1&conversationId=debug-complete')
+  await expandLedger(page.getByTestId('chat-debug-ledger'))
+
+  const readPosition = () => page.locator('.chat-composer').evaluate((element) => {
+    const chatPage = element.closest<HTMLElement>('.page')!
+    return {
+      composerBottom: element.getBoundingClientRect().bottom,
+      pageScrollTop: chatPage.scrollTop,
+      pageOverflow: chatPage.scrollHeight - chatPage.clientHeight,
+      documentScrollTop: document.scrollingElement?.scrollTop || 0,
+      documentOverflow: document.documentElement.scrollHeight - document.documentElement.clientHeight
+    }
+  })
+  const baseline = await readPosition()
+  expect(baseline.pageOverflow).toBeLessThanOrEqual(1)
+  expect(baseline.documentOverflow).toBeLessThanOrEqual(1)
+  expect(baseline.composerBottom).toBeGreaterThan(0)
+  expect(baseline.composerBottom).toBeLessThanOrEqual(844)
+
+  async function expectPositionStable(stage: string) {
+    const position = await readPosition()
+    expect(position.pageOverflow, `${stage}: chat page must not gain vertical overflow`).toBeLessThanOrEqual(1)
+    expect(position.documentOverflow, `${stage}: document must not gain vertical overflow`).toBeLessThanOrEqual(1)
+    expect(Math.abs(position.pageScrollTop - baseline.pageScrollTop), `${stage}: chat page scroll position`).toBeLessThanOrEqual(2)
+    expect(Math.abs(position.documentScrollTop - baseline.documentScrollTop), `${stage}: document scroll position`).toBeLessThanOrEqual(2)
+    expect(Math.abs(position.composerBottom - baseline.composerBottom), `${stage}: composer bottom`).toBeLessThanOrEqual(2)
+  }
+
+  const input = page.getByTestId('chat-input')
+  await input.click()
+  await expect(input).toBeFocused()
+  await expectPositionStable('focus input')
+  await input.fill('输入区保持在底部')
+  await input.press('End')
+  await input.press('Shift+Enter')
+  await expect(input).toHaveValue('输入区保持在底部\n')
+  await expectPositionStable('type and insert newline')
+  await page.getByTestId('chat-attach-trigger').click()
+  await expect(page.getByRole('menu', { name: '附件命令' })).toBeVisible()
+  await expectPositionStable('open attachment menu')
+})
+
+test('debug disclosure is keyboard accessible, keeps nested state and isolates copying and each message', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => undefined }
+    })
+  })
+  await page.goto('/?debug=1&conversationId=debug-multiple')
+
+  const ledgers = page.getByTestId('chat-debug-ledger')
+  await expect(ledgers).toHaveCount(2)
+  const first = ledgers.first()
+  const second = ledgers.last()
+  const toggle = first.getByTestId('debug-ledger-toggle')
+  const body = first.getByTestId('debug-ledger-body')
+  const copy = first.getByTestId('debug-ledger-copy')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(body).not.toBeVisible()
+  await expect(first.getByTestId('debug-memory-section')).not.toBeVisible()
+  await expect(second.getByTestId('debug-ledger-body')).not.toBeVisible()
+  const firstBodyId = await body.getAttribute('id')
+  const secondBodyId = await second.getByTestId('debug-ledger-body').getAttribute('id')
+  expect(firstBodyId).toBeTruthy()
+  expect(secondBodyId).toBeTruthy()
+  expect(firstBodyId).not.toBe(secondBodyId)
+  await expect(toggle).toHaveAttribute('aria-controls', firstBodyId!)
+  await expect(toggle.locator('[data-testid="debug-ledger-copy"]')).toHaveCount(0)
+
+  await copy.click()
+  await expect(copy).toContainText('已复制')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(body).not.toBeVisible()
+
+  await toggle.focus()
+  await page.keyboard.press('Enter')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(body).toBeVisible()
+  await expect(second.getByTestId('debug-ledger-toggle')).toHaveAttribute('aria-expanded', 'false')
+
+  const recall = first.locator('.debug-recall-disclosure')
+  await recall.locator(':scope > summary').press('Enter')
+  await expect(recall).toHaveAttribute('open', '')
+  await expect(recall.locator('.debug-recall-detail')).toBeVisible()
+
+  await copy.focus()
+  await page.keyboard.press('Space')
+  await expect(copy).toContainText('已复制')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(recall).toHaveAttribute('open', '')
+
+  await toggle.focus()
+  await page.keyboard.press('Space')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(body).not.toBeVisible()
+  await expect(recall.locator('.debug-recall-detail')).not.toBeVisible()
+  await expect(first.getByTestId('debug-ledger-collapse')).not.toBeVisible()
+  await page.keyboard.press('Tab')
+  await expect(copy).toBeFocused()
+
+  await toggle.press('Enter')
+  await expect(body).toBeVisible()
+  await expect(recall).toHaveAttribute('open', '')
+  await expect(recall.locator('.debug-recall-detail')).toBeVisible()
+  await second.getByTestId('debug-ledger-toggle').press('Enter')
+  await expect(second.getByTestId('debug-ledger-body')).toBeVisible()
+  await first.getByTestId('debug-ledger-collapse').press('Enter')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(toggle).toBeFocused()
+  await expect(second.getByTestId('debug-ledger-toggle')).toHaveAttribute('aria-expanded', 'true')
+  await expect(second.getByTestId('debug-ledger-body')).toBeVisible()
+})
+
+test('a streaming result does not reopen a manually collapsed debug ledger', async ({ page }) => {
+  let releaseResponse!: () => void
+  const responseReady = new Promise<void>((resolve) => { releaseResponse = resolve })
+  await page.route('**/api/chat/stream', async (route) => {
+    await responseReady
+    const body = [
+      'event: delta',
+      'data: {"text":"本轮回答已完成。"}',
+      '',
+      'event: meta',
+      'data: {"debugVersion":"chat-debug-v1","sources":[],"agentTrace":[],"toolResults":[],"usedMemories":[]}',
+      '',
+      'event: turn.status',
+      'data: {"turnId":"live-collapse-state","phase":"COMPLETED","message":"已完成"}',
+      '',
+      'event: done',
+      'data: {}',
+      '',
+      ''
+    ].join('\n')
+    await route.fulfill({ status: 200, contentType: 'text/event-stream', body })
+  })
+
+  try {
+    await page.goto('/?debug=1&conversationId=debug-complete')
+    const history = page.getByTestId('chat-debug-ledger').first()
+    await expandLedger(history)
+    await page.getByTestId('chat-input').fill('验证流式更新保持折叠')
+    await page.getByTestId('chat-submit').click()
+
+    const live = page.getByTestId('chat-debug-ledger').last()
+    await expect(page.getByTestId('chat-debug-ledger')).toHaveCount(2)
+    await expect(live).toHaveAttribute('data-debug-state', 'pending')
+    await expandLedger(live)
+    await live.getByTestId('debug-ledger-toggle').click()
+    await expect(live.getByTestId('debug-ledger-body')).not.toBeVisible()
+    await expect(history.getByTestId('debug-ledger-toggle')).toHaveAttribute('aria-expanded', 'true')
+
+    releaseResponse()
+    await expect(live).toHaveAttribute('data-debug-state', 'available')
+    await expect(live.getByTestId('debug-ledger-toggle')).toHaveAttribute('aria-expanded', 'false')
+    await expect(live.getByTestId('debug-ledger-body')).not.toBeVisible()
+    await expect(history.getByTestId('debug-ledger-toggle')).toHaveAttribute('aria-expanded', 'true')
+  } finally {
+    releaseResponse()
+  }
+})
+
+async function expandLedger(ledger: Locator) {
+  const toggle = ledger.getByTestId('debug-ledger-toggle')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(ledger.getByTestId('debug-ledger-body')).not.toBeVisible()
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(ledger.getByTestId('debug-ledger-body')).toBeVisible()
+}
 
 async function responsiveMetrics(page: Page) {
   return page.evaluate(() => {
@@ -249,11 +431,13 @@ async function mockApis(page: Page) {
     if (path === '/api/users/me') return json(route, { id: 'debug-user', username: '调试用户', role: 'USER' })
     if (path === '/api/conversations') return json(route, [
       { id: 'debug-complete', title: '完整调试账本', createdAt: NOW, updatedAt: NOW },
+      { id: 'debug-multiple', title: '多轮折叠调试账本', createdAt: NOW, updatedAt: NOW },
       { id: 'debug-zero', title: '零结果调试账本', createdAt: NOW, updatedAt: NOW },
       { id: 'debug-legacy', title: '旧历史', createdAt: NOW, updatedAt: NOW },
       { id: 'debug-unsupported', title: '不支持的调试版本', createdAt: NOW, updatedAt: NOW }
     ])
     if (path === '/api/chat/messages/debug-complete') return json(route, completeMessages())
+    if (path === '/api/chat/messages/debug-multiple') return json(route, multipleMessages())
     if (path === '/api/chat/messages/debug-zero') return json(route, zeroMessages())
     if (path === '/api/chat/messages/debug-legacy') return json(route, legacyMessages())
     if (path === '/api/chat/messages/debug-unsupported') return json(route, unsupportedMessages())
@@ -393,6 +577,14 @@ function completeMessages() {
       }
     }
   ]
+}
+
+function multipleMessages() {
+  return [0, 1].flatMap((turn) => completeMessages().map((message, index) => ({
+    ...message,
+    id: `multi-${turn}-${index}`,
+    conversationId: 'debug-multiple'
+  })))
 }
 
 function zeroMessages() {
