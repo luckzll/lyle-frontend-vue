@@ -158,6 +158,24 @@ describe('chat metadata safety boundary', () => {
     expect(JSON.stringify(traces[2])).not.toContain('LEAKME1234567890')
   })
 
+  it('preserves candidate preparation without turning it into a memory read or completed write', () => {
+    const [candidate, unknownAction] = sanitizeAgentTrace([
+      {
+        agent: 'memory_agent',
+        action: 'candidate_ready',
+        candidateCount: 2,
+        backgroundWriteDeferred: true,
+        rawCandidates: [{ value: 'private source content' }]
+      },
+      { agent: 'memory_agent', action: 'arbitrary_internal_action' }
+    ])
+
+    expect(candidate).toEqual({ agent: 'memory_agent', action: 'candidate_ready', candidateCount: 2 })
+    expect(unknownAction).toEqual({ agent: 'memory_agent' })
+    expect(sanitizeAgentTrace([{ agent: 'memory_agent', action: 'candidate_ready', candidateCount: 0 }])[0])
+      .toEqual({ agent: 'memory_agent', action: 'candidate_ready', candidateCount: 0 })
+  })
+
   it('sanitizes memories, retrieval scope, knowledge ids and RAG sources before page state', () => {
     const memories = sanitizeUsedMemories([{
       memoryId: 'profile:12',

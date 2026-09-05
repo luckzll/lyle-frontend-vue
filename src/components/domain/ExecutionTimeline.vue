@@ -6,7 +6,7 @@ export type ExecutionStep = {
   id: string
   title: string
   detail?: string
-  status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'skipped' | 'unknown'
 }
 
 const props = defineProps<{ steps: ExecutionStep[] }>()
@@ -15,7 +15,9 @@ const iconFor = computed(() => ({
   running: CircleEllipsis,
   waiting: Clock3,
   completed: Check,
-  failed: CircleX
+  failed: CircleX,
+  skipped: Circle,
+  unknown: Circle
 }))
 </script>
 

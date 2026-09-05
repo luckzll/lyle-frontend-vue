@@ -1917,7 +1917,7 @@ pre {
 }
 
 .message.debug-message {
-  width: min(var(--chat-debug-width, 1160px), 100%);
+  width: min(var(--chat-content-width, 920px), 100%);
   max-width: 100%;
 }
 
@@ -2072,7 +2072,7 @@ pre {
 .debug-ledger-section {
   display: grid;
   min-width: 0;
-  grid-template-columns: 245px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   border-bottom: 1px solid var(--border, #dbe3ef);
   background: #fff;
 }
@@ -2080,11 +2080,14 @@ pre {
 .debug-ledger-section:last-child { border-bottom: 0; }
 
 .debug-ledger-section-head {
-  display: grid;
-  align-content: start;
-  gap: 10px;
-  border-right: 1px solid var(--border, #dbe3ef);
-  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  border-bottom: 1px solid var(--border, #dbe3ef);
+  background: var(--surface-muted, #f8fafc);
+  padding: 13px 18px;
 }
 
 .debug-ledger-section-head strong {
@@ -2104,7 +2107,7 @@ pre {
   min-width: 0;
   align-content: start;
   gap: 10px;
-  padding: 14px 20px;
+  padding: 16px 18px;
 }
 
 .debug-section-notes {

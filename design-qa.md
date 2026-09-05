@@ -362,3 +362,48 @@ final result: passed
 - No actionable P0, P1, or P2 findings remain.
 
 final result: passed
+
+---
+
+# 同宽调试卡片、可读流程与折叠来源（2026-09-05，v36）
+
+## Source and browser evidence
+
+- This revision supersedes the earlier 1160 px debug breakout: the user explicitly requested that the ledger itself match the composer.
+- Annotated width reference: `C:/Temp/codex-clipboard-a0a172e9-d2b6-4b87-a071-f29a632cec22.png` (2544 × 1389).
+- Agent-flow reference: `C:/Temp/codex-clipboard-deea0c3c-6fe2-4220-9cca-4a32d060b2d0.png` (1653 × 864, cropped component).
+- Sources reference: `C:/Temp/codex-clipboard-26fb99b4-da77-4bbd-bf44-64709e399833.png` (1653 × 669, cropped component).
+- Implementation URL: `http://127.0.0.1:4173/?debug=1&conversationId=debug-complete`; ordinary mode uses the same conversation without `debug=1`.
+- Implementation screenshot evidence: inline Chrome captures in this task, including final same-input reference/implementation comparisons for width, project details, sources collapsed, and sources expanded. The browser API returned image bytes inline, not a saved screenshot path.
+- Desktop viewport and emitted image: 1707 × 932 CSS/image pixels; browser reports devicePixelRatio 1.5, while the screenshot API normalizes to CSS-sized output. Mobile: 390 × 844. Temporary viewport override was reset afterward.
+- State: local authenticated fixture labelled 界面验收, 9 Agent stages, 3 profile memories, 5 fragments from one LoRA document. Context panel open and closed, project and review details expanded, normal sources collapsed/expanded, and mobile last-fragment expansion were checked.
+- References are annotated before-states, with different crops/density. Comparisons evaluate the requested intentional changes and preserved visual language; they do not claim pixel-identical copying of the old layout or production data.
+
+## Findings and final measurements
+
+- No actionable P0/P1/P2 findings remain.
+- Fonts/typography: retained Lyle font stack and hierarchy; readable Chinese stage titles and sentence summaries replace implementation identifiers and generic execution text. Unknown duration is explained inside details instead of a dash in the main row.
+- Spacing/layout: all debug ledger, answer, composer, ordinary memory trigger and source disclosure share the 920 px track. With context closed, ledger/composer x = 517.67; with context open, x = 349.67; both remain 920 px wide. Mobile ledger/source/composer are 366 px wide at x = 12. Page horizontal overflow is 0.
+- Colors/tokens: retained purple identity, neutral surfaces and semantic success/skip/failure labels. Status uses text as well as color. Section headers use full available width; empty fixed-width left columns were removed.
+- Assets: existing Lucide icons only; no new raster/placeholder assets were necessary.
+- Copy/content: project resolution uses the saved resolver result; memory recall and candidate preparation are distinguished; disabled review is labelled skipped. Image tools retain safe names/counts/status through sanitization. All independent safe review fields remain available in a compact disclosure, including review-only turns.
+- Sources: defaults to one compact row; groups by stable document ID while keeping every original citation index. Multiple recorded retrieval modes aggregate under each document. Expanded fragment text is shown once. Unknown document identity is not merged merely because filenames match.
+- Channels limitation: the current source payload contains knowledge documents and retrieval modes, not website URLs. No web citations or extra information channels were fabricated.
+- Interactions: native details opens/closes via mouse and Enter; closing the root hides all fragment rows. Project purpose, raw safe fields and independent review details are reachable. On mobile, the last fragment and its complete text remain reachable by scrolling above the fixed composer.
+- Browser console warnings/errors: none.
+
+## Comparison and review history
+
+1. Original references: wider debug ledger, raw `project_resolver`, generic status text, and five permanently visible repeated document cards.
+2. Implemented shared axis, compact section headers, expandable Chinese flow rows and grouped source disclosure. Same-input source/implementation comparisons confirmed the intentional layout changes.
+3. Review found two P2 data regressions: independent review fields could disappear, and safe image-tool/status fields were filtered before presentation. Restored complete folded review details with a no-node fallback; added bounded field preservation and sanitize-to-presentation regressions. Independent rereview found no remaining blockers.
+4. Final visual checks confirmed equal desktop/mobile widths, visible project explanation, review details, source grouping, keyboard operation and no horizontal page overflow. Source preview duplication while expanded was removed and the final mobile full-text view was inspected.
+
+## Verification
+
+- Unit suite: 27 files / 150 tests passed, including source grouping/citation identity and sanitized trace presentation.
+- Typecheck and production build passed.
+- Existing browser E2E assertions updated for equal 920 px tracks, context-open geometry, readable project/candidate stages and collapsed sources. This turn used the chosen Chrome browser for interaction verification rather than running a separate Playwright browser.
+- Remaining P3: none required for this scoped revision.
+
+final result: passed
