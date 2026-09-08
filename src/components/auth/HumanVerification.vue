@@ -80,7 +80,7 @@ async function confirm() {
 
 <template>
   <div class="human-verification">
-    <div class="verification-row" :class="{ 'is-solved': modelValue }">
+    <div v-if="!visible" class="verification-row" :class="{ 'is-solved': modelValue }">
       <CheckCircle2 v-if="modelValue" :size="24" aria-hidden="true" /><ShieldCheck v-else :size="24" aria-hidden="true" />
       <div class="verification-copy"><strong>{{ modelValue ? '已完成人机验证' : '安全验证' }}</strong><p>{{ modelValue ? '验证通过，可获取邮箱验证码' : '请完成滑块验证以继续' }}</p></div>
       <button type="button" :disabled="disabled || busy || !options?.configured || !!modelValue" @click="start">{{ modelValue ? '已完成' : busy ? '加载中…' : '点击完成验证' }}</button>
@@ -100,8 +100,8 @@ async function confirm() {
           aria-label="移动拼图位置" :disabled="busy" @pointerdown="begin" @input="move" @pointerup="confirm" @keydown.enter.prevent="confirm" />
         <span class="slider-arrow" aria-hidden="true" :style="{ left: 'calc(' + (maxPosition ? Number(position) / maxPosition * 100 : 0) + '% - ' + (maxPosition ? Number(position) / maxPosition * 54 : 0) + 'px)' }"><MoveRight :size="27" :stroke-width="2.5" /></span>
         </div>
-        <footer><span class="captcha-credit">天爱验证码</span><div class="captcha-actions"><button class="confirm-position" type="button" :disabled="busy || !startedAt" @click="confirm">{{ busy ? '核验中…' : '确认位置' }}</button><button type="button" :disabled="busy" aria-label="换一张" title="换一张" @click="start"><RefreshCw :size="21" /></button><button type="button" aria-label="关闭滑块验证" title="关闭" @click="close"><CircleX :size="21" /></button></div></footer>
-        <p class="keyboard-help">也可用方向键调整，按回车或确认位置完成验证。</p>
+        <footer><span class="captcha-credit">{{ busy ? '正在核验…' : '天爱验证码' }}</span><div class="captcha-actions"><button type="button" :disabled="busy" aria-label="换一张" title="换一张" @click="start"><RefreshCw :size="21" /></button><button type="button" aria-label="关闭滑块验证" title="关闭" @click="close"><CircleX :size="21" /></button></div></footer>
+        <p class="keyboard-help">松手自动验证 · 也可用方向键调整后按回车</p>
       </template>
     </section>
     <p v-if="error" class="verification-error" role="alert">{{ error }} <button type="button" :disabled="busy || disabled" @click="start">重新验证</button></p>
@@ -128,7 +128,6 @@ button:disabled { cursor: not-allowed; opacity: .65; }
 .captcha-panel button:hover:not(:disabled) { color: #4f46e5; background: #f5f6fa; }
 .captcha-actions { display: flex; align-items: center; gap: 0; }
 .captcha-credit { font-size: 12px; color: #64748b; white-space: nowrap; }
-.captcha-panel .confirm-position { font-size: 12px; padding: 6px; }
 .captcha-image { position: relative; overflow: hidden; width: 100%; border-radius: 6px; }
 .captcha-image > img { display: block; width: 100%; height: 100%; user-select: none; }
 .captcha-image > .captcha-piece { position: absolute; top: 0; object-fit: fill; pointer-events: none; }
@@ -142,6 +141,7 @@ button:disabled { cursor: not-allowed; opacity: .65; }
 .captcha-slider::-moz-range-progress { height: 42px; border-radius: 4px; background: #eceff3; }
 .captcha-slider::-moz-range-thumb { box-sizing: border-box; width: 54px; height: 44px; border: 1px solid #e3e7ec; border-radius: 4px; background: #fff; box-shadow: 1px 0 4px #0f172a08; }
 .captcha-slider:disabled { cursor: wait; opacity: .6; }
-.keyboard-help { color: #64748b; font-size: 12px; line-height: 1.5; margin: 12px 0 0; }
+.captcha-panel { margin-top: 0; }
+.keyboard-help { color: #64748b; font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
 @media(max-width: 520px) { .verification-row { gap: 12px; padding: 16px 12px; flex-wrap: wrap; } .verification-copy strong { font-size: 15px; } .verification-row button { margin-left: 36px; } }
 </style>

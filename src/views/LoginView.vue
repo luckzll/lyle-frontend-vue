@@ -42,4 +42,28 @@ import EmailAuthForm from '@/components/auth/EmailAuthForm.vue'
 .mobile-brand { display: none; }
 @media (max-width: 1050px) { .login-story { padding: 40px; } .login-main { padding: 56px 40px; } .login-description { font-size: 16px; } }
 @media (max-width: 760px) { .email-login-page { display: block; } .login-story { display: none; } .login-main { min-height: 100dvh; padding: 40px 24px; } .mobile-brand { display: block; color: #4f46e5; font-size: 25px; font-weight: 750; margin: 0 0 40px; } .login-heading h1 { font-size: 32px; } .login-heading p { font-size: 16px; } .login-heading { margin-bottom: 30px; } }
+.login-main { box-sizing: border-box; align-items: center; padding-top: 28px; padding-bottom: 28px; }
+.login-heading { margin-bottom: 20px; }
+.login-heading h1 { font-size: 36px; }
+.login-heading p { margin-top: 8px; font-size: 16px; }
+.login-story__content { margin-top: 0; }
+.login-content :deep(.email-auth form) { gap: 16px; }
+.login-content :deep(.input-shell), .login-content :deep(.email-submit) { min-height: 48px; }
+.login-content :deep(.captcha-panel) { max-width: 320px; }
+.login-content :deep(.email-footnote) { margin-top: 0; }
+@media (max-height: 800px) {
+  .login-main { padding-top: 16px; padding-bottom: 16px; }
+  .login-heading { margin-bottom: 14px; }
+  .login-heading h1 { font-size: 30px; }
+  .login-content :deep(.email-auth form) { gap: 12px; }
+  .login-content :deep(.captcha-panel) { max-width: 280px; }
+}
+@media (max-width: 760px) {
+  .login-main { align-items: flex-start; padding-top: 16px; padding-bottom: 16px; }
+  .mobile-brand { margin-bottom: 12px; font-size: 21px; }
+  .login-heading h1 { font-size: 28px; }
+  .login-heading { margin-bottom: 14px; }
+  .login-content :deep(.email-auth form) { gap: 12px; }
+  .login-content :deep(.captcha-panel) { max-width: 280px; }
+}
 </style>

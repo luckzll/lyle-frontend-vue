@@ -35,7 +35,7 @@ test('email code login handles cooldown, invalid code, and existing-account redi
   await page.getByLabel('邮箱地址', { exact: true }).fill('user@example.com')
   await page.getByRole('button', { name: '点击完成验证', exact: true }).click()
   await page.getByRole('slider', { name: '移动拼图位置' }).press('ArrowRight')
-  await page.getByRole('button', { name: '确认位置', exact: true }).click()
+  await page.getByRole('slider').press('Enter')
   await expect(page.getByText('已完成人机验证', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '获取验证码' }).click()
   await expect(page.getByRole('button', { name: /秒后重发/ })).toBeDisabled()
