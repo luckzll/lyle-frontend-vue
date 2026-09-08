@@ -1134,3 +1134,20 @@ export interface StructuredMemoryMergeSuggestion {
   reason: string
   items: MemoryItem[]
 }
+export interface MemorySchemaStatus {
+  factsEnabled?: boolean
+  enabled?: boolean
+  status: 'missing' | 'pending' | 'building' | 'ready' | 'failed'
+  version: number
+  slotCount: number
+  engine: string
+  errorCode: string
+}
+
+export interface MemoryFact {
+  factId: string
+  schemaPath: string
+  value: string
+  status: string
+  revision: number
+}

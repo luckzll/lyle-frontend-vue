@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { memoryReasonLabel as reasonLabel, memorySchemaLabel } from '@/domain/memory-presentation'
+import type { MemorySchemaStatus } from '@/api/types'
+import type { MemoryFact } from '@/api/types'
 import {
   AlertTriangle,
   ArrowLeft,
@@ -33,6 +36,10 @@ import {
   getMemoryPurgeJob,
   getMemoryRecord,
   getMemoryRecords,
+  getMemoryFacts,
+  reviseMemoryFact,
+  getMemorySchemaStatus,
+  rebuildMemorySchema,
   governMemoryRecord,
   purgeMemoryRecord,
   resolveMemoryConflict,
@@ -69,6 +76,43 @@ const detailLoading = ref(false)
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
+const facts = ref<MemoryFact[]>([])
+const factError = ref('')
+const migrationConflicts = ref(0)
+const unmappedMemories = ref(0)
+const schemaStatus = ref<MemorySchemaStatus | null>(null)
+const schemaError = ref('')
+const schemaBusy = ref(false)
+let schemaPollTimer: number | undefined
+let disposed = false
+
+async function refreshSchemaStatus() {
+  if (schemaPollTimer) window.clearTimeout(schemaPollTimer)
+  try {
+    const response = await getMemorySchemaStatus()
+    if (disposed) return
+    schemaStatus.value = response.data
+    schemaError.value = ''
+    if (['pending', 'building'].includes(response.data.status)) {
+      schemaPollTimer = window.setTimeout(refreshSchemaStatus, 3000)
+    }
+  } catch {
+    if (!disposed) schemaError.value = '暂时无法获取记忆整理状态'
+  }
+}
+
+async function retrySchemaBuild() {
+  if (schemaBusy.value) return
+  schemaBusy.value = true
+  try {
+    await rebuildMemorySchema()
+    await refreshSchemaStatus()
+  } catch {
+    schemaError.value = '无法开始整理，请稍后重试'
+  } finally {
+    schemaBusy.value = false
+  }
+}
 const correctionOpen = ref(false)
 const correctionValue = ref('')
 const correctionDialog = ref<HTMLDialogElement | null>(null)
@@ -93,6 +137,22 @@ const filteredRecords = computed(() => {
 const selectedConflict = computed(() => selectedInbox.value?.conflict || null)
 const currentRecord = computed(() => selectedRecord.value || filteredRecords.value[0] || null)
 const currentSources = computed(() => currentRecord.value?.sources || [])
+const currentFacts = computed(() => facts.value.filter(item => item.schemaPath === currentRecord.value?.schemaPath))
+
+async function toggleFact(fact: MemoryFact) {
+  if (busy.value) return
+  busy.value = true
+  try {
+    await reviseMemoryFact(fact, fact.status === 'active' ? 'disabled' : 'active')
+    notice.value = '已更新这一条事实，其他条目不受影响。'
+    await refreshWorkspace()
+  } catch {
+    await refreshWorkspace()
+    error.value = '这条事实可能已更新或暂时不可用，请核对最新内容后重试。'
+  } finally {
+    busy.value = false
+  }
+}
 const mobileDetailOpen = computed(() => Boolean(route.query.memory || route.query.inbox))
 
 onMounted(async () => {
@@ -107,18 +167,26 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  if (schemaPollTimer) window.clearTimeout(schemaPollTimer)
   if (purgePollTimer) window.clearTimeout(purgePollTimer)
 })
 
 async function refreshWorkspace(preserveSelection = true) {
+  void refreshSchemaStatus()
   loading.value = true
   error.value = ''
   try {
-    const [recordResponse, inboxResponse, eventResponse] = await Promise.all([
+    const [recordResponse, inboxResponse, eventResponse, factResponse] = await Promise.all([
       getMemoryRecords({ limit: 300 }),
       getMemoryInbox(),
-      getMemoryGovernanceEvents()
+      getMemoryGovernanceEvents(),
+      getMemoryFacts().catch(() => null)
     ])
+    facts.value = factResponse?.data.items || []
+    migrationConflicts.value = factResponse?.data.migration.conflicts.length || 0
+    unmappedMemories.value = factResponse?.data.migration.unmappedKeys?.length || 0
+    factError.value = factResponse ? '' : '逐条事实暂不可用，请刷新后重试。'
     records.value = recordResponse.data.items
     inbox.value = inboxResponse.data.items
     events.value = eventResponse.data.items
@@ -355,14 +423,6 @@ function relationLabel(relation: string) {
   }[relation] || '来源'
 }
 
-function reasonLabel(reasonCode: string) {
-  return {
-    QUESTION_RELEVANT: '与你的问题直接相关',
-    USER_REQUESTED_RECALL: '你明确要求回忆',
-    PROJECT_CONTEXT: '当前项目上下文需要'
-  }[reasonCode] || '与你的问题相关'
-}
-
 function eventLabel(event: MemoryGovernanceEvent) {
   const labels: Record<string, string> = {
     CORRECT: '已纠正记忆', DISABLE: '已停用记忆', RESTORE: '已恢复记忆', FORGET: '已遗忘记忆',
@@ -419,6 +479,22 @@ function confirmDescription() {
         {{ advancedMode ? '退出高级模式' : '高级模式' }}
       </button>
     </header>
+
+    <div v-if="schemaStatus || schemaError" class="workspace-notice" role="status">
+      <span>{{ schemaError || (schemaStatus && memorySchemaLabel(schemaStatus)) }}</span>
+      <button v-if="schemaError" type="button" @click="refreshSchemaStatus">刷新状态</button>
+      <button v-else-if="schemaStatus?.enabled !== false && ['missing', 'failed'].includes(schemaStatus?.status || '')"
+        type="button" :disabled="schemaBusy" @click="retrySchemaBuild">
+        {{ schemaBusy ? '正在提交…' : schemaStatus?.status === 'failed' ? '重新整理' : '开始整理' }}
+      </button>
+    </div>
+
+    <p v-if="migrationConflicts" class="workspace-error" role="alert">
+      {{ migrationConflicts }} 类旧记忆存在不同的确认值，已暂停使用，请在对应记忆中核对并纠正。
+    </p>
+    <p v-if="unmappedMemories" class="workspace-error" role="alert">
+      {{ unmappedMemories }} 类旧记忆尚未匹配到现有字段，原记录已保留，暂不参与召回。
+    </p>
 
     <nav class="memory-tabs" aria-label="记忆页面">
       <button :class="{ active: activeTab === 'mine' }" type="button" @click="setTab('mine')">我的记忆</button>
@@ -532,6 +608,19 @@ function confirmDescription() {
           <section class="detail-section">
             <h3>使用方式</h3>
             <p>{{ currentRecord.usageDescription }}</p>
+          </section>
+
+          <section v-if="advancedMode && schemaStatus?.factsEnabled" class="detail-section">
+            <h3>独立事实</h3>
+            <p>画像由以下事实汇总。可单独停用某一项，不影响其他内容。</p>
+            <p v-if="factError" role="alert">{{ factError }}</p>
+            <div v-for="fact in currentFacts" :key="fact.factId" class="source-row">
+              <span>{{ fact.value }} · {{ fact.status === 'active' ? '使用中' : fact.status === 'disabled' ? '已停用' : '暂不使用' }}</span>
+              <button v-if="['active', 'disabled'].includes(fact.status)" class="secondary-action"
+                type="button" :disabled="busy" @click="toggleFact(fact)">
+                {{ fact.status === 'active' ? '停用这一项' : '恢复这一项' }}
+              </button>
+            </div>
           </section>
 
           <section class="detail-section sources-section">
