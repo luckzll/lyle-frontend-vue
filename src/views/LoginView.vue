@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue'
+import EmailAuthForm from '@/components/auth/EmailAuthForm.vue'
+import { publicHttp } from '@/api/http'
 import { Eye, EyeOff } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import { login, register, trackProductEvent, trackPublicProductEvent } from '@/api/app'
@@ -14,6 +16,8 @@ const PRODUCTION_AMBIENT_URL = 'https://common-prod-object.tos-cn-shanghai.volce
 const route = useRoute()
 const router = useRouter()
 const mode = ref<'login' | 'register'>('login')
+const emailLogin = ref(false)
+const emailEnabled = ref(false)
 const runtimeFeatures = useRuntimeFeatures()
 const demoEnabled = import.meta.env.DEV && import.meta.env.VITE_DEMO_CREDENTIALS_ENABLED === 'true'
 const username = ref(demoEnabled ? (import.meta.env.VITE_DEMO_USERNAME || '') : '')
@@ -62,6 +66,9 @@ function tabKeydown(event: KeyboardEvent) {
 }
 
 onMounted(() => {
+  void publicHttp.get<{ enabled: boolean }>('/auth/email/options').then(({ data }) => {
+    emailEnabled.value = data.enabled === true
+  }).catch(() => undefined)
   void trackPublicProductEvent({ eventType: 'auth_view_total', page: 'login', actionType: mode.value, status: 'succeeded' }).catch(() => undefined)
 })
 
@@ -167,7 +174,12 @@ async function submit() {
         <p>{{ mode === 'login' ? '继续推进你的工作' : '开始使用你的 AI 工作台' }}</p>
       </div>
 
-      <div class="auth-tabs" role="tablist" aria-label="账号操作">
+      <div v-if="emailEnabled" class="auth-tabs" aria-label="登录方式">
+        <button type="button" :disabled="loading" :aria-pressed="emailLogin" @click="emailLogin = true">邮箱验证码</button>
+        <button type="button" :disabled="loading" :aria-pressed="!emailLogin" @click="emailLogin = false">用户名与密码</button>
+      </div>
+      <EmailAuthForm v-if="emailLogin" />
+      <div v-if="!emailLogin" class="auth-tabs" role="tablist" aria-label="账号操作">
         <button
           ref="loginTab"
           id="login-tab"
@@ -196,7 +208,7 @@ async function submit() {
         >注册</button>
       </div>
 
-      <form id="auth-panel" class="auth-form" role="tabpanel" :aria-labelledby="`${mode}-tab`" novalidate @submit.prevent="submit">
+      <form v-if="!emailLogin" id="auth-panel" class="auth-form" role="tabpanel" :aria-labelledby="`${mode}-tab`" novalidate @submit.prevent="submit">
         <p
           v-if="errorMessage"
           ref="errorSummary"
@@ -250,7 +262,7 @@ async function submit() {
         </button>
       </form>
 
-      <p class="auth-switch">
+      <p v-if="!emailLogin" class="auth-switch">
         {{ mode === 'login' ? '没有账号？' : '已有账号？' }}
         <button type="button" :disabled="loading" @click="switchMode(mode === 'login' ? 'register' : 'login')">
           {{ mode === 'login' ? '注册' : '登录' }}
@@ -270,7 +282,7 @@ async function submit() {
 .auth-heading p { margin: 9px 0 0; color: #71717a; }
 .auth-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #e4e4e7; }
 .auth-tabs button { min-height: 44px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: #71717a; padding: 0 12px; }
-.auth-tabs button[aria-selected="true"] { border-color: #4f46e5; color: #27272a; font-weight: 700; }
+.auth-tabs button[aria-selected="true"], .auth-tabs button[aria-pressed="true"] { border-color: #4f46e5; color: #27272a; font-weight: 700; }
 .auth-form { display: grid; gap: 18px; }
 .auth-field { display: grid; gap: 8px; color: #3f3f46; font-size: 14px; font-weight: 650; }
 .auth-field input { width: 100%; height: 48px; border: 1px solid #d4d4d8; border-radius: 8px; outline: 0; background: rgba(255,255,255,.82); color: #18181b; padding: 0 13px; font: inherit; font-weight: 450; }
