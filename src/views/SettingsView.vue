@@ -17,6 +17,15 @@ import {
   type UserPreferences
 } from '@/domain/user-preferences'
 import SettingsFrame from '@/components/settings/SettingsFrame.vue'
+import EmailAuthForm from '@/components/auth/EmailAuthForm.vue'
+import { publicHttp } from '@/api/http'
+
+const emailEnabled = ref(false)
+onMounted(() => {
+  void publicHttp.get<{ enabled: boolean }>('/auth/email/options').then(({ data }) => {
+    emailEnabled.value = data.enabled === true
+  }).catch(() => undefined)
+})
 
 const user = ref<User | null>(null)
 const session = ref<AuthSessionInfo | null>(null)
@@ -161,6 +170,8 @@ function formatDateTime(value?: string | null) {
           </button>
         </article>
       </div>
+
+      <article v-if="emailEnabled" class="security-card"><EmailAuthForm binding /></article>
 
       <article class="security-card password-card">
         <div class="password-card__heading">
