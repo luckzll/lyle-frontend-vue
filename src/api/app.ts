@@ -1,4 +1,6 @@
 import { http, publicHttp } from './http'
+import type { MemorySchemaStatus } from './types'
+import type { MemoryFact } from './types'
 import { getAuthToken } from '@/auth'
 import type { AttachmentFolderMetadata, ChatAttachment, ChatAttachmentKind } from '@/domain/chat-attachment'
 import type {
@@ -466,6 +468,24 @@ export function getMemoryRecords(params: { status?: string; query?: string; limi
   return http.get<{ items: MemoryRecord[]; nextCursor?: string | null }>('/memory/records', {
     params: { ...params, limit: params.limit ?? 100 }
   })
+}
+
+export function getMemorySchemaStatus() {
+  return http.get<MemorySchemaStatus>('/memory/schema')
+}
+
+export function getMemoryFacts() {
+  return http.get<{ items: MemoryFact[]; migration: { conflicts: string[]; unmappedKeys?: string[] } }>('/memory/facts')
+}
+
+export function reviseMemoryFact(fact: MemoryFact, status: 'active' | 'disabled') {
+  return http.put<MemoryFact>(`/memory/facts/${encodeURIComponent(fact.factId)}`, {
+    expectedRevision: fact.revision, status
+  })
+}
+
+export function rebuildMemorySchema() {
+  return http.post<MemorySchemaStatus>('/memory/schema/rebuild', {})
 }
 
 export function getMemoryRecord(memoryId: string) {

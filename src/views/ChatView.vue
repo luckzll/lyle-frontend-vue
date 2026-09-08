@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { memoryReasonLabel, memoryTargetKey, setCandidateTargetKey } from '@/domain/memory-presentation'
 import { ArrowDown, ArrowRight, BrainCircuit, ChevronRight, Circle, Database, GitBranch, PanelRightOpen, Sparkles, Wrench } from '@lucide/vue'
 import {
   createConversation,
@@ -18,7 +19,6 @@ import {
   listKnowledgeBases,
   listProjects,
   listPendingOperations,
-  purgeStructuredMemory,
   saveStructuredMemory,
   rejectPendingOperation,
   streamMessage,
@@ -1699,14 +1699,6 @@ function usedMemoryItems(message: Message): DebugMemoryItem[] {
   })
 }
 
-function memoryReasonLabel(reason: string) {
-  return ({
-    QUESTION_RELEVANT: '与问题相关',
-    USER_REQUESTED_RECALL: '用户主动要求回忆',
-    PROJECT_CONTEXT: '项目上下文'
-  } as Record<string, string>)[reason] || reason || '召回使用'
-}
-
 function memoryReliabilityLabel(reliability: string) {
   return ({
     RELIABLE: '可靠',
@@ -1843,18 +1835,6 @@ function memorySourceText(item: MemoryItem) {
   return (match?.[1] || item.sourceText || '').trim()
 }
 
-function memoryTargetKey(item: MemoryItem) {
-  const key = item.schemaPath || item.targetKey || item.key || ''
-  if (key.startsWith('pending:')) {
-    return key.split(':').slice(2).join(':') || key
-  }
-  return key
-}
-
-function setCandidateTargetKey(item: MemoryItem, value: string) {
-  item.targetKey = value.trim()
-}
-
 function setCandidateValue(item: MemoryItem, value: string) {
   item.value = value
 }
@@ -1877,7 +1857,7 @@ async function confirmCandidateMemory(message: Message, item: MemoryItem) {
   try {
     await saveStructuredMemory(targetKey, value, item.confidence ?? 0.8, item.source || 'chat_candidate')
     if (item.key && item.key !== targetKey) {
-      await purgeStructuredMemory(item.key)
+      await changeStructuredMemoryStatus(item.key, 'disabled')
     }
     item.status = 'active'
     item.targetKey = targetKey

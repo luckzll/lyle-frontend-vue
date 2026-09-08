@@ -4,6 +4,7 @@ import { BrainCircuit, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Lo
 import { getMemoryRecord, governMemoryRecord } from '@/api/app'
 import type { MemoryRecord, UsedMemory } from '@/api/types'
 import ContextPanel from '@/components/layout/ContextPanel.vue'
+import { memoryReasonLabel as reasonLabel } from '@/domain/memory-presentation'
 
 const props = withDefaults(defineProps<{
   open: boolean
@@ -62,14 +63,6 @@ async function disableMemory(memoryId: string) {
 
 function reliabilityLabel(value: string) {
   return { RELIABLE: '可靠', BASIC: '基本可靠', REVIEW_REQUIRED: '待确认' }[value] || '待确认'
-}
-
-function reasonLabel(value: string) {
-  return {
-    QUESTION_RELEVANT: '与你的问题直接相关',
-    USER_REQUESTED_RECALL: '你明确要求回忆',
-    PROJECT_CONTEXT: '当前项目上下文需要'
-  }[value] || '与你的问题相关'
 }
 
 function formatDate(value?: string | null) {
