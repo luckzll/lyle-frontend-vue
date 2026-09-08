@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { KeyRound, Laptop, LogOut, ShieldCheck, UserRound } from '@lucide/vue'
+import { Laptop, LogOut, ShieldCheck, UserRound } from '@lucide/vue'
 import {
-  changePassword,
   getAuthSession,
   getMe,
   type AuthSessionInfo
 } from '@/api/app'
 import type { User } from '@/api/types'
-import { logoutAllDevices, logoutCurrentDevice, setAuth } from '@/auth'
+import { logoutAllDevices, logoutCurrentDevice } from '@/auth'
 import { useToast } from '@/composables/useToast'
 import { formatBeijingTimeShort } from '@/domain/date-time'
 import {
@@ -18,27 +17,15 @@ import {
 } from '@/domain/user-preferences'
 import SettingsFrame from '@/components/settings/SettingsFrame.vue'
 import EmailAuthForm from '@/components/auth/EmailAuthForm.vue'
-import { publicHttp } from '@/api/http'
 
-const emailEnabled = ref(false)
-onMounted(() => {
-  void publicHttp.get<{ enabled: boolean }>('/auth/email/options').then(({ data }) => {
-    emailEnabled.value = data.enabled === true
-  }).catch(() => undefined)
-})
 
 const user = ref<User | null>(null)
 const session = ref<AuthSessionInfo | null>(null)
 const loading = ref(true)
 const accountLoadError = ref(false)
 const sessionLoadError = ref(false)
-const passwordSubmitting = ref(false)
 const logoutAllSubmitting = ref(false)
 const logoutCurrentSubmitting = ref(false)
-const currentPassword = ref('')
-const newPassword = ref('')
-const confirmPassword = ref('')
-const passwordError = ref('')
 const preferences = ref<UserPreferences>(loadUserPreferences())
 const preferenceNotice = ref('')
 const { show } = useToast()
@@ -56,38 +43,6 @@ onMounted(async () => {
   else sessionLoadError.value = true
   loading.value = false
 })
-
-async function submitPassword() {
-  passwordError.value = ''
-  if (!currentPassword.value || !newPassword.value) {
-    passwordError.value = '请输入当前密码和新密码。'
-    return
-  }
-  if (newPassword.value.length < 8 || newPassword.value.length > 128) {
-    passwordError.value = '新密码需为 8～128 个字符。'
-    return
-  }
-  if (newPassword.value !== confirmPassword.value) {
-    passwordError.value = '两次输入的新密码不一致。'
-    return
-  }
-  passwordSubmitting.value = true
-  try {
-    const response = await changePassword(currentPassword.value, newPassword.value)
-    setAuth(response.data.user, response.data.accessToken, response.data.expiresInSeconds)
-    user.value = response.data.user
-    currentPassword.value = ''
-    newPassword.value = ''
-    confirmPassword.value = ''
-    show('密码已更新', { message: '其他设备已退出，当前设备可继续使用。' })
-  } catch (error: any) {
-    passwordError.value = error?.response?.data?.detail
-      || error?.response?.data?.message
-      || '密码修改失败，请核对当前密码后重试。'
-  } finally {
-    passwordSubmitting.value = false
-  }
-}
 
 async function logoutEverywhere() {
   if (!window.confirm('退出全部设备后，当前设备也需要重新登录。确定继续吗？')) return
@@ -126,7 +81,7 @@ function formatDateTime(value?: string | null) {
       <header class="security-heading">
         <div>
           <h2 id="security-title">账号与安全</h2>
-          <p>管理密码、当前登录状态和设备会话。</p>
+          <p>管理登录邮箱、当前登录状态和设备会话。</p>
         </div>
         <span class="security-status" :class="{ loading, error: accountLoadError }">
           <ShieldCheck :size="16" aria-hidden="true" />
@@ -142,7 +97,7 @@ function formatDateTime(value?: string | null) {
             <p>你的登录身份和最近登录记录。</p>
           </div>
           <dl>
-            <div><dt>用户名</dt><dd>{{ accountLoadError ? '读取失败' : user?.username || '正在读取' }}</dd></div>
+            <div><dt>账号名称</dt><dd>{{ accountLoadError ? '读取失败' : user?.username || '正在读取' }}</dd></div>
             <div><dt>账号状态</dt><dd><span class="account-active" :class="{ unknown: accountLoadError }">{{ accountStatus }}</span></dd></div>
             <div><dt>最近登录</dt><dd>{{ accountLoadError ? '读取失败' : formatDateTime(user?.lastLoginAt) }}</dd></div>
           </dl>
@@ -171,35 +126,7 @@ function formatDateTime(value?: string | null) {
         </article>
       </div>
 
-      <article v-if="emailEnabled" class="security-card"><EmailAuthForm binding /></article>
-
-      <article class="security-card password-card">
-        <div class="password-card__heading">
-          <div class="security-card__icon"><KeyRound :size="20" aria-hidden="true" /></div>
-          <div>
-            <h3>修改密码</h3>
-            <p>修改后会退出其他设备，当前设备将重新签发登录凭据。</p>
-          </div>
-        </div>
-        <form class="password-form" @submit.prevent="submitPassword">
-          <label>
-            <span>当前密码</span>
-            <input v-model="currentPassword" type="password" autocomplete="current-password" />
-          </label>
-          <label>
-            <span>新密码</span>
-            <input v-model="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" />
-          </label>
-          <label>
-            <span>确认新密码</span>
-            <input v-model="confirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" />
-          </label>
-          <p v-if="passwordError" class="form-error" role="alert">{{ passwordError }}</p>
-          <button type="submit" :disabled="passwordSubmitting">
-            {{ passwordSubmitting ? '正在更新…' : '更新密码' }}
-          </button>
-        </form>
-      </article>
+      <article class="security-card email-method-card"><EmailAuthForm binding /></article>
 
       <article class="security-card danger-card">
         <div>
@@ -274,13 +201,7 @@ function formatDateTime(value?: string | null) {
 .account-active, .current-device { border-radius: 99px; background: var(--success-soft); color: var(--success-strong); padding: 3px 7px; font-size: 11px; font-weight: 700; }
 .account-active.unknown { background: var(--warning-soft); color: var(--warning-strong); }
 .current-device { margin-left: 5px; background: var(--primary-soft); color: var(--primary); }
-.password-card { display: grid; gap: 18px; }
-.password-card__heading { display: flex; align-items: flex-start; gap: 12px; }
-.password-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 12px; }
-.password-form label { display: grid; gap: 7px; color: var(--foreground); font-size: 12px; font-weight: 650; }
-.password-form input { height: 40px; }
-.password-form button { min-height: 40px; white-space: nowrap; }
-.form-error { grid-column: 1 / -1; margin: 0 !important; color: var(--danger-strong) !important; }
+.email-method-card { padding: 26px; }
 .danger-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-color: var(--danger-border); background: var(--danger-soft); }
 .danger-card p { color: var(--foreground); }
 .danger-action { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; border: 1px solid var(--danger-border); background: var(--surface); color: var(--danger-strong); }
@@ -300,14 +221,10 @@ function formatDateTime(value?: string | null) {
 .developer-tools { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px; }
 .developer-tools h3 { margin: 0; color: var(--foreground); font-size: 14px; }
 .developer-tools .button-link { display: inline-flex; margin-top: 8px; text-decoration: none; }
-@media (max-width: 980px) {
-  .password-form { grid-template-columns: 1fr 1fr; }
-  .password-form button { width: fit-content; }
-}
 @media (max-width: 680px) {
   .security-heading, .danger-card { align-items: stretch; flex-direction: column; }
-  .security-grid, .password-form, .preference-fields { grid-template-columns: 1fr; }
+  .security-grid, .preference-fields { grid-template-columns: 1fr; }
   .security-status { align-self: flex-start; }
-  .danger-action, .password-form button { width: 100%; justify-content: center; }
+  .danger-action { width: 100%; justify-content: center; }
 }
 </style>
