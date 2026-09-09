@@ -10,7 +10,7 @@ import { isValidEmail, maskEmail, normalizeEmail } from '@/domain/email'
 import HumanVerification from './HumanVerification.vue'
 import type { CaptchaOptions, CaptchaProof } from '@/domain/captcha'
 
-const props = defineProps<{ binding?: boolean }>()
+const props = defineProps<{ binding?: boolean; wechatLink?: boolean; legacyLink?: boolean }>()
 const email = ref(''), code = ref(''), boundEmail = ref(''), notice = ref(''), error = ref('')
 const busy = ref(false), loading = ref(true), revealed = ref(false), enabled = ref(false)
 const cooldown = ref(0), proof = ref<CaptchaProof | null>(null)
@@ -19,7 +19,7 @@ const emailInput = ref<HTMLInputElement | null>(null), codeInput = ref<HTMLInput
 const router = useRouter(), route = useRoute()
 let timer: ReturnType<typeof setInterval> | undefined
 let expiresAt = 0
-const prefix = () => props.binding ? '/auth/email/binding' : '/auth/email'
+const prefix = () => props.binding ? '/auth/email/binding' : props.wechatLink ? '/auth/wechat/email' : props.legacyLink ? '/auth/migration/email' : '/auth/email'
 const displayedEmail = computed(() => revealed.value ? boundEmail.value : maskEmail(boundEmail.value))
 watch(email, () => { proof.value = null; code.value = ''; error.value = ''; notice.value = '' })
 function message(e: unknown) {
@@ -71,9 +71,13 @@ async function submit() {
       boundEmail.value = (await http.post<{ email: string }>(prefix(), body)).data.email
       notice.value = '绑定成功。后续可使用邮箱验证码登录此账号。'
     } else {
-      const { data } = await http.post<AuthResponse>('/auth/email/login', body)
+      const { data } = await http.post<AuthResponse>(`${prefix()}/login`, body)
       setAuth(data.user, data.accessToken || data.token || '', data.expiresInSeconds)
-      await router.replace(resolveAuthRedirect(route.query.redirect).target)
+      let target: unknown = route.query.redirect
+      if (props.wechatLink) {
+        try { target = sessionStorage.getItem('lyle-wechat-return') || target; sessionStorage.removeItem('lyle-wechat-return') } catch { /* optional redirect preference */ }
+      }
+      await router.replace(resolveAuthRedirect(target).target)
     }
   } catch (e) { error.value = message(e) }
   finally { code.value = ''; busy.value = false }
@@ -104,8 +108,8 @@ async function submit() {
         <label :for="binding ? 'binding-code' : 'login-code'">邮箱验证码</label>
         <div class="input-shell"><KeyRound :size="20" aria-hidden="true" /><input :id="binding ? 'binding-code' : 'login-code'" ref="codeInput" v-model="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="请输入 6 位验证码" :disabled="busy" /><button class="send-code" type="button" :disabled="busy || cooldown > 0" @click="send">{{ cooldown ? `${cooldown} 秒后重发` : '获取验证码' }}</button></div>
       </div>
-      <button class="email-submit" type="submit" :disabled="busy">{{ busy ? '处理中…' : binding ? '验证并绑定' : '登录 / 注册' }}</button>
-      <p v-if="!binding" class="email-footnote">首次验证邮箱将自动创建账号</p>
+      <button class="email-submit" type="submit" :disabled="busy">{{ busy ? '处理中…' : binding ? '验证并绑定' : wechatLink ? '关联微信并登录' : legacyLink ? '绑定邮箱并进入原账号' : '登录 / 注册' }}</button>
+      <p v-if="!binding" class="email-footnote">{{ legacyLink ? '只绑定原账号，不创建新账号，原有数据保留' : wechatLink ? '验证邮箱后关联微信；新邮箱将创建账号' : '首次验证邮箱将自动创建账号' }}</p>
     </form>
     <p v-if="error" class="email-error" role="alert">{{ error }}</p>
     <button v-if="!loading && !enabled && !boundEmail" class="retry-config" type="button" @click="load">重新加载</button>
