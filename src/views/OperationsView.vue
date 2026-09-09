@@ -43,7 +43,7 @@ async function confirmOperation(item: PendingOperationItem) {
   notice.value = ''
   try {
     const response = await confirmPendingOperation(item.id)
-    notice.value = response.data.idempotentReplay ? '该操作已经执行过，本次没有重复执行。' : '操作已确认执行。'
+    notice.value = String(response.data.result?.content || (response.data.idempotentReplay ? '该操作已处理，本次未重复执行。' : '操作已确认。'))
     await refresh()
   } catch {
     error.value = '操作确认失败，可能已经被处理或不存在。'

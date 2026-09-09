@@ -2119,6 +2119,15 @@ async function confirmOperation(message: Message, item: PendingOperationItem) {
   try {
     const response = await confirmPendingOperation(item.id)
     item.status = response.data.operation.status
+    const next = response.data.result?.operation as PendingOperationItem | undefined
+    if (response.data.result?.requiresConfirmation && next?.id) {
+      message.toolResults = [...(message.toolResults || []), {
+        tool: next.toolName, ok: true, requiresConfirmation: true, operation: next,
+      } as ToolResult]
+    }
+    if (response.data.result?.ok === false) {
+      item.error = String(response.data.result.content || '操作未完成，请查看执行记录。')
+    }
     message.toolResults = [...(message.toolResults || [])]
     await refreshBrief()
   } catch (exception) {

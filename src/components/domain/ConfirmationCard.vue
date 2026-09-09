@@ -26,7 +26,7 @@ function formatTime(value?: string | null) {
 }
 
 function riskLabel(value: string) {
-  if (value === 'high' || value === 'high_risk') return '高风险'
+  if (value === 'high' || value === 'high_risk' || value === 'write_high') return '高风险'
   if (value === 'write') return '写操作'
   if (value === 'read') return '只读'
   return value || '未分级'
