@@ -573,11 +573,15 @@ async function executeHistoryAction(item: OperationHistoryItem, action: 'confirm
   historyActionLoading.value = { ...historyActionLoading.value, [item.id]: true }
   feedback.value = ''
   try {
-    if (action === 'confirm') await confirmPendingOperation(item.id)
+    let resultMessage = ''
+    if (action === 'confirm') {
+      const response = await confirmPendingOperation(item.id)
+      resultMessage = String(response.data.result?.content || '')
+    }
     else await rejectPendingOperation(item.id)
     trackExecutionEvent('confirmation_completed', action, action === 'confirm' ? 'confirmed' : 'rejected')
     if (action === 'confirm') trackEffectiveProgress('confirmation', 'confirmed', item.projectId)
-    feedback.value = action === 'confirm' ? '操作已确认执行。' : '操作已拒绝。'
+    feedback.value = action === 'confirm' ? resultMessage || '操作已确认。' : '操作已拒绝。'
     highRiskTarget.value = null
     await Promise.all([load(), ensureHistoryLoaded(true)])
   } catch (error: any) {
