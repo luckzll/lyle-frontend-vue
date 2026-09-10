@@ -1,39 +1,62 @@
-# 登录与账号关联界面 QA
+# Email-only login — design QA
 
-final result: passed
+Date: 2026-09-08. Selected target: Product Design option 1.
 
 ## Evidence
 
-- Source visual truth: `docs/login-qa/before.png`，修改前本地登录页截图。
-- Implementation screenshot: `docs/login-qa/after.png`，`http://127.0.0.1:4192/login`。
-- Viewport: 1280 × 720 CSS px；两张截图均 1280 × 720；同一浅色、未登录、邮箱表单初始状态。
-- 两张截图在同一个浏览器工具结果中共同展示并对比。后截图的浏览器捕获存在整体软化，不能据此判定网站字体或素材质量下降；未做图像插值伪装。
-- 全图可判断主要比例与控件位置，AX 同时核对按钮、标题、表单标签。没有额外聚焦裁切：本次改动仅涉及切换条、提示和迁移入口，全部在全图可见。
+- Target: C:/Users/zhl20/.codex/generated_images/01a06a24-6132-78a0-800b-0fec2f0c97da/exec-adecba0f-6442-4759-8ad3-cd6eaa7686c0.png
+- Desktop: docs/email-ui/login-desktop.png (1488 × 1058)
+- Mobile: docs/email-ui/login-mobile.png (390 × 844)
+- Settings: docs/email-ui/settings-desktop.png (synthetic preview user)
+- Target and rendered desktop were emitted together for direct visual comparison twice; target and settings capture were compared together.
 
-## Required fidelity surfaces
+## Findings and resolutions
 
-- Typography: 保留原字体、标题层级和表单标签权重；新的副标题说明两种登录方式。抗锯齿精细差异受捕获软化限制，不做像素级一致声明。
-- Spacing/layout: 左侧 42% 品牌区保持不变；右侧增加切换条及底部旧账号入口，标题整体上移是有意调整。1280 × 720 下常用表单和按钮无需滚动。
-- Colors/tokens: 保留紫色主按钮、灰色说明、白色表单和淡紫背景；选中项使用原紫色。
-- Image quality/assets: 复用同一波浪 PNG 和 Lucide 品牌标记，微信使用 Iconify 品牌图标，无重绘占位素材。
-- Copy/content: 明确首次微信需确认邮箱，旧账号仅绑定不重新注册；未显示邮箱服务商清单或虚假的扫码成功。
+- First pass: login title and left brand sat too low. Corrected right top padding and left content offset; second capture matches target hierarchy.
+- Preserved 42/58 split, lavender raster waves, indigo actions, rounded fields and Lucide icons. Generated wave detail and native Chinese font rasterization differ slightly from the concept.
+- Intentional product adaptation: bound identity belongs in authenticated settings, not the public login screen. Settings retains its existing navigation and card system.
+- Added provider-neutral email help per user request. This shifts the CAPTCHA and later controls slightly down relative to the mock.
+- Mobile login hides decorative story, retains brand and stacks usable form. Invalid-address message wraps without overlapping controls at 390 px.
+- Bound email masks by default; clicking “查看完整邮箱” reveals synthetic address and changes action to “隐藏”. Password UI is absent. Account/session cards remain.
+- Mail icon, code icon and verification icon are library icons; wave background is raster, not CSS illustration. Explicit input labels, one-time-code autocomplete, visible focus styles and role=alert/status are present.
 
-## Interaction and comparison history
+## Validation
 
-- 邮箱/微信切换、微信不可用提示和返回邮箱已检查。
-- 首次微信授权后的邮箱关联视图以本地模拟响应检查，不会调用真实微信或 SMTP。
-- 旧账号入口显示原用户名、原密码、人机验证及继续绑定按钮；返回正常登录正常。
-- 初次对比无 P0/P1/P2 视觉问题；最终加入旧账号入口后重新在相同视口与原截图共同对比，无布局遮挡。
-- 此前 390 × 844 移动端检查 DOM 无横向溢出，截图捕获缩放异常，不能声明移动端像素级验收通过。
-- 前期浏览器控制台错误检查为空；最终页面 AX 和可见截图未发现错误提示。
+- Frontend unit suite: 182 passing tests in 30 files.
+- Backend targeted regression suite: 79 passing, zero failures/errors.
+- Frontend production build passed before final tiny guard adjustment; final build checked separately.
+- Browser checked malformed QQ suffix and missing CAPTCHA proof; no mail was sent. Mock API has no real credentials.
+- E2E specs updated for email-only controls and provider SDK stubbing. Playwright CLI suite was not run this turn.
 
-## Residual test gaps
+## Remaining gates
 
-真实微信二维码、拒绝授权、生产 HTTPS 回调及实际邮件投递需审核通过后的凭据联调；当前本地是 UI 预览服务，不代表真实登录可用。未自动完成真实 CAPTCHA。旧账号绑定服务由后端单元测试验证，浏览器未执行真实账号迁移。
+- Real CAPTCHA success/error/expiry and SMTP round-trip require selected provider credentials and an actual human challenge.
+- Settings mobile full-page screenshot failed in browser capture; mobile settings visual acceptance remains pending.
+- Formal automated accessibility scan and all-browser E2E remain pending.
 
-## Checklist
+Overall result at the original cloud-provider pass: blocked for complete release acceptance.
 
-- [x] 保留原有品牌设计，增加双登录入口。
-- [x] 初次关联与旧账号迁移有独立文案。
-- [x] 前端构建及单元测试通过。
-- [ ] 正式微信凭据与生产数据库迁移联调，部署另行授权。
+## Tianai implementation follow-up (2026-09-08)
+
+This supersedes the external-provider configuration gate above. The user selected self-hosted Tianai, and requested removal of the email-provider helper line.
+
+- No cloud CAPTCHA keys or external browser scripts are required now.
+- Actual Tianai images were inspected in the in-app browser at 1488 × 1058 and 390 × 844; captures: docs/email-ui/tianai-desktop.png and tianai-mobile.png. Expanded puzzle scrolls vertically on small screens without horizontal overflow.
+- Local preview uses the real Java image engine with an expiring TEST memory cache. It does not access production or send mail.
+- Fixed keyboard interaction: starting the range control now reactively enables the confirmation button.
+- Frontend: 183 unit tests, 6 Chromium E2E tests, and production build passed.
+- Backend: 80 targeted tests passed; real image generation and answer matching are exercised with mocked Redis.
+- E2E covers the CAPTCHA proof-to-email flow, invalid OTP, cooldown, redirect, failed challenge/retry, changing email, outage, keyboard use, mobile width and no serious/critical axe violations on login.
+- Production Redis/SMTP round-trip and human completion on the deployed site remain release checks, not missing cloud credentials.
+
+Result for the Tianai implementation: passed local checks; not deployed. Previous settings-mobile and all-browser review gaps are not claimed resolved.
+
+## Reference slider refinement (2026-09-08)
+
+- Visual source: user screenshot `C:/Temp/codex-clipboard-b32204a9-6ffd-426c-a8ce-e71f01ed3925.png`, specifically its red-box slider cards. Source and rendered desktop screenshot were viewed together for comparison of the component, not the unrelated GitHub page.
+- Matched white compact card, bold instruction, 5:3 image, broad light-gray track, white arrow handle, and bottom refresh/close controls. Surrounding login design is unchanged.
+- Intentional differences: Lucide arrow instead of the dotted upstream arrow; text attribution instead of recreating the logo; keyboard help and an explicit confirmation control retained for accessibility. Background artwork is independent of the screenshot.
+- Browser checks: real Java preview changed cat → generated mountain lake → cat through the refresh control. No CAPTCHA was solved through browser automation and no mail was sent.
+- Captures: `captcha-reference-desktop.png` (1488 × 1058), `captcha-reference-mobile.png` (390 × 1100). Mobile card and footer fit the available width; page scrolls vertically.
+- Frontend production build passed. Backend's 65 targeted service/controller tests passed, including refresh background exclusion and real-engine matching of a refreshed challenge. Existing full E2E suite was not rerun in this refinement.
+- Scoped visual result: passed, no blocking layout issues observed. This is a local preview, not a production deployment or SMTP acceptance.

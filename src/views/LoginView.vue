@@ -1,35 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { Mail, Sparkle } from '@lucide/vue'
-import { Icon } from '@iconify/vue'
-import wechatIcon from '@iconify-icons/simple-icons/wechat'
+import { Sparkle } from '@lucide/vue'
 import EmailAuthForm from '@/components/auth/EmailAuthForm.vue'
-import WechatAuthForm from '@/components/auth/WechatAuthForm.vue'
-import LegacyMigrationForm from '@/components/auth/LegacyMigrationForm.vue'
-import { publicHttp } from '@/api/http'
-const route = useRoute(), router = useRouter()
-const method = ref<'email' | 'wechat'>(route.query.wechat ? 'wechat' : 'email')
-const migrating = ref(false)
-async function migrationMode(value: boolean) {
-  try { await publicHttp.post('/auth/wechat/cancel', {}); if (!value) await publicHttp.post('/auth/migration/cancel', {}) } catch { /* bounded expiry */ }
-  migrating.value = value
-}
-async function selectMethod(value: 'email' | 'wechat') {
-  if (method.value === value) return
-  if (value === 'email') {
-    // Invalidate QR/link flow before switching, so an old scan cannot replace an email login.
-    try { await publicHttp.post('/auth/wechat/cancel', {}) } catch { /* expiry still bounds an unavailable service */ }
-    await router.replace({ query: { ...route.query, wechat: undefined } })
-  }
-  method.value = value
-}
-function tabKey(event: KeyboardEvent) {
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-  event.preventDefault()
-  const next = event.key === 'Home' ? 'email' : event.key === 'End' ? 'wechat' : method.value === 'email' ? 'wechat' : 'email'
-  void selectMethod(next).then(() => document.getElementById(`login-tab-${next}`)?.focus())
-}
 </script>
 
 <template>
@@ -46,31 +17,16 @@ function tabKey(event: KeyboardEvent) {
       <div class="login-content">
         <p class="mobile-brand">Lyle AI</p>
         <header class="login-heading">
-          <h1 id="login-heading">{{ migrating ? '继续使用原账号' : '欢迎回来' }}</h1>
-          <p>{{ migrating ? '绑定新的登录方式，保留熟悉的一切' : '选择你习惯的方式，继续你的工作' }}</p>
+          <h1 id="login-heading">欢迎回来</h1>
+          <p>使用邮箱验证码，安全登录 Lyle</p>
         </header>
-        <div v-if="!migrating" class="login-methods" role="tablist" aria-label="登录方式" @keydown="tabKey">
-          <button id="login-tab-email" type="button" role="tab" aria-controls="login-panel-email" :aria-selected="method === 'email'" :tabindex="method === 'email' ? 0 : -1" @click="selectMethod('email')"><Mail :size="18" />邮箱登录</button>
-          <button id="login-tab-wechat" type="button" role="tab" aria-controls="login-panel-wechat" :aria-selected="method === 'wechat'" :tabindex="method === 'wechat' ? 0 : -1" @click="selectMethod('wechat')"><Icon :icon="wechatIcon" width="19" />微信登录</button>
-        </div>
-        <LegacyMigrationForm v-if="migrating" />
-        <template v-else>
-          <div v-if="method === 'email'" id="login-panel-email" role="tabpanel" aria-labelledby="login-tab-email"><EmailAuthForm /></div>
-          <div v-if="method === 'wechat'" id="login-panel-wechat" role="tabpanel" aria-labelledby="login-tab-wechat"><WechatAuthForm @email="selectMethod('email')" /></div>
-        </template>
-        <button class="legacy-entry" type="button" @click="migrationMode(!migrating)">{{ migrating ? '返回邮箱 / 微信登录' : '旧用户名账号？绑定登录方式' }}</button>
+        <EmailAuthForm />
       </div>
     </section>
   </main>
 </template>
 
 <style scoped>
-.legacy-entry { display:block; margin:18px auto 0; padding:6px; border:0; background:transparent; color:#64748b; font-size:12px; }
-.legacy-entry:focus-visible { outline:3px solid #a5b4fc; outline-offset:2px; }
-.login-methods { display: flex; padding: 4px; gap: 4px; background: #f1f3f9; border: 1px solid #e9edf5; border-radius: 12px; margin: 0 0 22px; }
-.login-methods button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 42px; padding: 8px 12px; border: 0; border-radius: 8px; color: #64748b; background: transparent; font-size: 15px; font-weight: 600; }
-.login-methods button[aria-selected="true"] { background: #fff; color: #4f46e5; box-shadow: 0 1px 4px #0f172a0c; }
-.login-methods button:focus-visible { outline: 3px solid #a5b4fc; outline-offset: 2px; }
 .email-login-page { display: grid; grid-template-columns: 42% minmax(0, 1fr); min-height: 100dvh; background: #fff; color: #0f172a; }
 .login-story { position: relative; display: flex; align-items: center; background: #eef2ff url('@/assets/auth/lyle-email-login-waves.png') center / cover no-repeat; padding: 64px clamp(40px, 7.5vw, 116px); }
 .login-story__content { position: relative; margin-top: -220px; }
