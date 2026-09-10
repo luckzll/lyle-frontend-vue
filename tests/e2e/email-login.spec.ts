@@ -32,6 +32,8 @@ test('email code login handles cooldown, invalid code, and existing-account redi
   })
   await page.goto('/login?redirect=%2Fsettings')
   await expect(page.getByTestId('username-input')).toHaveCount(0)
+  await expect(page.getByText('微信登录', { exact: true })).toHaveCount(0)
+  await expect(page.locator('iframe')).toHaveCount(0)
   await page.getByLabel('邮箱地址', { exact: true }).fill('user@example.com')
   await page.getByRole('button', { name: '点击完成验证', exact: true }).click()
   await page.getByRole('slider', { name: '移动拼图位置' }).press('ArrowRight')
