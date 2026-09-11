@@ -18,7 +18,7 @@ import EmailAuthForm from '@/components/auth/EmailAuthForm.vue'
         <p class="mobile-brand">Lyle AI</p>
         <header class="login-heading">
           <h1 id="login-heading">欢迎回来</h1>
-          <p>使用邮箱验证码，安全登录 Lyle</p>
+          <p>选择你习惯的方式，登录 Lyle</p>
         </header>
         <EmailAuthForm />
       </div>

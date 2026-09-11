@@ -38,8 +38,8 @@ test('360px user can confirm a pending operation', async ({ page }) => {
   await page.route('**/api/experience/execution/needs-attention', (route) => json(route, { items: [] }))
 
   await page.goto('/execution-center?view=confirmations')
-  await expect(page.getByRole('combobox', { name: '执行中心分区' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '筛选结果' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: '执行中心分区' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '筛选', exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: '筛选条件' })).toBeHidden()
   const card = page.getByRole('article').filter({ hasText: '更新项目周报' })
   await expect(card).toBeVisible()
@@ -47,7 +47,7 @@ test('360px user can confirm a pending operation', async ({ page }) => {
 
   await expect.poll(() => confirmCalls).toBe(1)
   await expect(page.getByText('操作已确认执行。')).toBeVisible()
-  await expect(page.getByText('没有等待确认的操作')).toBeVisible()
+  await expect(page.getByText('暂时没有需要你确认的事')).toBeVisible()
   expect(await hasHorizontalOverflow(page)).toBe(false)
 })
 

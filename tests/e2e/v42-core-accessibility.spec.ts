@@ -11,12 +11,12 @@ type CorePage = {
 const corePages: CorePage[] = [
   { path: '/dashboard', heading: '工作台', readyText: '这里还很安静' },
   { path: '/', heading: 'AI 聊天', readyTestId: 'chat-input' },
-  { path: '/tasks', heading: '任务', readyText: '暂无提醒。' },
-  { path: '/projects', heading: '项目', readyText: '暂无项目' },
+  { path: '/tasks', heading: '任务', readyText: '从一件小事，开始推进' },
+  { path: '/projects', heading: '项目', readyText: '把一个想法，变成一个项目' },
   { path: '/automations', heading: '自动化', readyText: '还没有启用的自动化' },
-  { path: '/execution-center', heading: '执行中心', readyText: '没有等待确认的操作' },
+  { path: '/execution-center', heading: '执行中心', readyText: '暂时没有需要你确认的事' },
   { path: '/connections', heading: '连接', readyText: '暂无推荐连接' },
-  { path: '/knowledge-bases', heading: '知识库', readyText: '暂无知识库' },
+  { path: '/knowledge-bases', heading: '知识库', readyText: '把你的资料，变成回答的依据' },
   { path: '/memory', heading: '记忆', readyText: 'Lyle 还没有保存长期记忆' },
   { path: '/settings', heading: '设置', readyText: '保存偏好' }
 ]

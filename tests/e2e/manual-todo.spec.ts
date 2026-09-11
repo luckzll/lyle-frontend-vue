@@ -14,6 +14,7 @@ test('user can create a todo directly from the task page', async ({ page }) => {
   await expect(page).toHaveURL('/dashboard')
 
   await page.getByRole('link', { name: '任务', exact: true }).click()
+  await page.getByRole('button', { name: '新建待办', exact: true }).first().click()
   await page.getByTestId('manual-todo-title').fill(title)
   await page.getByTestId('manual-todo-submit').click()
 

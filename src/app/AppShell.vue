@@ -10,6 +10,7 @@ import AppHeader from './AppHeader.vue'
 import AppSidebar from './AppSidebar.vue'
 import MobileNavigation from './MobileNavigation.vue'
 import AuthRequiredDialog from '@/components/auth/AuthRequiredDialog.vue'
+import { isSettingsLocation } from './settings-navigation'
 
 const SIDEBAR_PREFERENCE_KEY = 'lyle-ui:v4.2:sidebar-collapsed'
 
@@ -36,9 +37,7 @@ const pageContext = computed(() => (
     ? '个人 AI 工作台 / 设置'
     : '个人 AI 工作台'
 ))
-const isSettingsRoute = computed(() => (
-  ['settings', 'usage', 'billing', 'billing-order'].includes(String(route.name || ''))
-))
+const isSettingsRoute = computed(() => isSettingsLocation(route))
 const isChatRoute = computed(() => route.name === 'chat')
 
 const {
@@ -105,10 +104,11 @@ watch(
     class="lyle-shell"
     :class="{
       'lyle-shell--collapsed': sidebarCollapsed,
-      'lyle-shell--chat': isChatRoute
+      'lyle-shell--chat': isChatRoute,
+      'lyle-shell--settings': isSettingsRoute
     }"
   >
-    <div class="lyle-shell__sidebar-frame">
+    <div v-if="!isSettingsRoute" class="lyle-shell__sidebar-frame">
       <AppSidebar
         :collapsed="sidebarCollapsed"
         :user="currentUser"
@@ -120,6 +120,7 @@ watch(
 
     <div class="lyle-shell__workspace" :class="{ 'lyle-shell__workspace--chat': isChatRoute }">
       <AppHeader
+        v-if="!isSettingsRoute"
         :title="pageTitle"
         :context-label="pageContext"
         :collapsed="sidebarCollapsed"
@@ -137,7 +138,7 @@ watch(
           'lyle-shell__main--chat': isChatRoute
         }"
       >
-        <section v-if="reminders.length > 0" class="lyle-reminder" aria-live="polite">
+        <section v-if="!isSettingsRoute && reminders.length > 0" class="lyle-reminder" aria-live="polite">
           <div class="lyle-reminder__message">
             <span class="lyle-reminder__icon" aria-hidden="true">
               <BellRing :size="18" :stroke-width="1.8" />
@@ -175,6 +176,7 @@ watch(
     </div>
 
     <MobileNavigation
+      v-if="!isSettingsRoute"
       :open="mobileNavigationOpen"
       :user="currentUser"
       :reminder-count="reminders.length"
@@ -200,6 +202,11 @@ watch(
 
 .lyle-shell--collapsed {
   grid-template-columns: var(--lyle-sidebar-width-collapsed) minmax(0, 1fr);
+}
+
+.lyle-shell--settings {
+  grid-template-columns: minmax(0, 1fr);
+  background: var(--surface-muted);
 }
 
 .lyle-shell--chat {
@@ -239,6 +246,7 @@ watch(
 }
 
 .lyle-shell__main--settings {
+  min-height: 100dvh;
   padding: 0;
 }
 

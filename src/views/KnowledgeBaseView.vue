@@ -11,14 +11,16 @@ import {
   FileText,
   FileUp,
   FolderOpen,
+  LibraryBig,
   MessageSquareText,
   MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Trash2
 } from '@lucide/vue'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   createKnowledgeBase,
@@ -35,12 +37,28 @@ import {
 } from '@/api/app'
 import type { KnowledgeBase, KnowledgeFile, RagChunkResponse, RagDebugResponse } from '@/api/types'
 import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
+import DetailDrawer from '@/components/layout/DetailDrawer.vue'
+import AppButton from '@/components/ui/AppButton.vue'
+import ErrorState from '@/components/feedback/ErrorState.vue'
+import LoadingState from '@/components/feedback/LoadingState.vue'
 import { isKnowledgeFileSupported, KNOWLEDGE_FILE_ACCEPT } from '@/domain/knowledge-file'
 
 const name = ref('')
 const router = useRouter()
 const loading = ref(false)
+const uploading = ref(false)
+const querying = ref(false)
 const pageLoading = ref(true)
+const listLoaded = ref(false)
+const listError = ref('')
+const filesLoading = ref(false)
+const filesError = ref('')
+const knowledgeSearch = ref('')
+let active = true
+let listRequest = 0
+let fileRequest = 0
+let chunkRequest = 0
+let viewGeneration = 0
 const error = ref('')
 const notice = ref('')
 const memoryNotice = ref('')
@@ -54,10 +72,16 @@ const rebuildingFileIds = ref<Set<string>>(new Set())
 const pendingKnowledgeBaseDelete = ref<KnowledgeBase | null>(null)
 const pendingFileDelete = ref<KnowledgeFile | null>(null)
 const pendingRebuildAll = ref(false)
-const showRetrievalTest = ref(true)
+const confirmationError = ref('')
+const showRetrievalTest = ref(false)
 const showTechnicalDetails = ref(false)
 const dragActive = ref(false)
 const showCreateForm = ref(false)
+const knowledgeNameInput = ref<HTMLInputElement | null>(null)
+const renameInput = ref<HTMLInputElement | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+const createError = ref('')
+let createFormTrigger: HTMLElement | null = null
 const knowledgeMenuOpen = ref(false)
 const openFileMenuId = ref<string>()
 const renamingKnowledgeBase = ref(false)
@@ -66,85 +90,130 @@ const renameSaving = ref(false)
 const selectedKnowledgeBase = computed(() =>
   knowledgeBases.value.find((item) => item.id === selectedKnowledgeBaseId.value)
 )
+const isEmpty = computed(() => listLoaded.value && !listError.value && !knowledgeBases.value.length)
+const visibleKnowledgeBases = computed(() => knowledgeBases.value.filter((item) => item.name.toLocaleLowerCase().includes(knowledgeSearch.value.trim().toLocaleLowerCase())))
+const readyFiles = computed(() => files.value.filter((file) => file.parseStatus === 'completed'))
+const busy = computed(() => loading.value || renameSaving.value || rebuildingFileIds.value.size > 0)
+const hasEmptyFiles = computed(() => !filesLoading.value && !filesError.value && !files.value.length)
+
+function currentView(id: string, generation: number) {
+  return active && selectedKnowledgeBaseId.value === id && viewGeneration === generation
+}
 
 async function refreshKnowledgeBases() {
-  error.value = ''
+  const request = ++listRequest
+  pageLoading.value = true
+  listError.value = ''
   try {
     const response = await listKnowledgeBases()
+    if (!active || request !== listRequest) return
     knowledgeBases.value = response.data
-    if (!selectedKnowledgeBaseId.value && response.data.length > 0) {
-      selectedKnowledgeBaseId.value = response.data[0].id
+    listLoaded.value = true
+    if (!response.data.some((item) => item.id === selectedKnowledgeBaseId.value)) {
+      await selectKnowledgeBase(response.data[0]?.id)
+    } else {
       await refreshFiles()
     }
   } catch {
-    error.value = '知识库列表加载失败，请确认后端服务已经启动。'
+    if (active && request === listRequest) listError.value = '知识库列表加载失败，请稍后重试。'
   } finally {
-    pageLoading.value = false
+    if (active && request === listRequest) pageLoading.value = false
   }
 }
 
+async function openCreateForm(event?: Event) {
+  if (busy.value) return
+  createFormTrigger = event?.currentTarget instanceof HTMLElement ? event.currentTarget : document.activeElement as HTMLElement | null
+  showCreateForm.value = true
+  createError.value = ''
+  notice.value = ''
+  await nextTick()
+  await nextTick()
+  knowledgeNameInput.value?.focus({ preventScroll: true })
+  knowledgeNameInput.value?.scrollIntoView({ block: 'center', inline: 'nearest' })
+}
+
+async function cancelCreate() {
+  if (loading.value) return
+  showCreateForm.value = false
+  createError.value = ''
+  await nextTick()
+  if (createFormTrigger?.isConnected) createFormTrigger.focus()
+}
+
 async function create() {
-  if (!name.value.trim()) return
+  if (busy.value || !name.value.trim()) return
+  const needsListReload = !listLoaded.value || Boolean(listError.value)
   loading.value = true
+  createError.value = ''
   error.value = ''
   notice.value = ''
   try {
     const response = await createKnowledgeBase(name.value.trim())
-    selectedKnowledgeBaseId.value = response.data.id
+    if (!active) return
+    listRequest += 1
+    pageLoading.value = false
+    knowledgeBases.value = [response.data, ...knowledgeBases.value.filter((item) => item.id !== response.data.id)]
+    knowledgeSearch.value = ''
     name.value = ''
     showCreateForm.value = false
     notice.value = '知识库已创建。'
-    await refreshKnowledgeBases()
-    await refreshFiles()
+    await selectKnowledgeBase(response.data.id)
+    if (active && needsListReload) await refreshKnowledgeBases()
   } catch {
-    error.value = '知识库创建失败，请稍后重试。'
+    if (active) createError.value = '知识库创建失败，请稍后重试。'
   } finally {
     loading.value = false
   }
 }
 
-async function refreshFiles() {
-  if (!selectedKnowledgeBaseId.value) {
-    files.value = []
-    ragChunks.value = []
-    return
-  }
-  error.value = ''
+async function refreshFiles(id = selectedKnowledgeBaseId.value, generation = viewGeneration) {
+  if (!id || !currentView(id, generation)) return
+  const request = ++fileRequest
+  filesLoading.value = true
   try {
-    const response = await listKnowledgeFiles(selectedKnowledgeBaseId.value)
+    const response = await listKnowledgeFiles(id)
+    if (!currentView(id, generation) || request !== fileRequest) return
     files.value = response.data
+    filesError.value = ''
   } catch {
-    error.value = '文件列表加载失败。'
+    if (currentView(id, generation) && request === fileRequest) filesError.value = '文件列表加载失败，请重试。'
+  } finally {
+    if (currentView(id, generation) && request === fileRequest) filesLoading.value = false
   }
 }
 
 async function removeKnowledgeBase(id: string) {
+  if (busy.value) return
   loading.value = true
   error.value = ''
+  confirmationError.value = ''
   notice.value = ''
   try {
     await deleteKnowledgeBase(id)
+    if (!active) return
+    knowledgeBases.value = knowledgeBases.value.filter((item) => item.id !== id)
     if (selectedKnowledgeBaseId.value === id) {
-      selectedKnowledgeBaseId.value = undefined
-      files.value = []
-      ragChunks.value = []
-      ragDebug.value = null
+      await selectKnowledgeBase(knowledgeBases.value[0]?.id)
     }
     notice.value = '知识库已删除。'
     pendingKnowledgeBaseDelete.value = null
     await refreshKnowledgeBases()
   } catch {
-    error.value = '知识库删除失败。'
+    if (active) confirmationError.value = '知识库删除失败，请重试。'
   } finally {
     loading.value = false
   }
 }
 
-function startRenameKnowledgeBase() {
-  if (!selectedKnowledgeBase.value) return
+async function startRenameKnowledgeBase() {
+  if (!selectedKnowledgeBase.value || busy.value) return
   renameDraft.value = selectedKnowledgeBase.value.name
   renamingKnowledgeBase.value = true
   knowledgeMenuOpen.value = false
+  await nextTick()
+  renameInput.value?.focus()
+  renameInput.value?.select()
 }
 
 function cancelRenameKnowledgeBase() {
@@ -155,7 +224,8 @@ function cancelRenameKnowledgeBase() {
 async function renameKnowledgeBase() {
   const id = selectedKnowledgeBaseId.value
   const nextName = renameDraft.value.trim()
-  if (!id || !nextName || renameSaving.value) return
+  const generation = viewGeneration
+  if (!id || !nextName || busy.value) return
   if (nextName === selectedKnowledgeBase.value?.name) {
     cancelRenameKnowledgeBase()
     return
@@ -166,11 +236,15 @@ async function renameKnowledgeBase() {
   notice.value = ''
   try {
     const response = await updateKnowledgeBase(id, nextName)
+    if (!active) return
+    listRequest += 1
+    pageLoading.value = false
     knowledgeBases.value = knowledgeBases.value.map((item) => item.id === id ? response.data : item)
+    if (!currentView(id, generation)) return
     notice.value = '知识库名称已更新。'
     cancelRenameKnowledgeBase()
   } catch {
-    error.value = '知识库重命名失败，请稍后重试。'
+    if (currentView(id, generation)) error.value = '知识库重命名失败，请稍后重试。'
   } finally {
     renameSaving.value = false
   }
@@ -182,17 +256,21 @@ async function openChatWithKnowledgeBase() {
 }
 
 async function removeFile(fileId: string) {
-  if (!selectedKnowledgeBaseId.value) return
+  const id = selectedKnowledgeBaseId.value
+  const generation = viewGeneration
+  if (!id || busy.value) return
   loading.value = true
   error.value = ''
+  confirmationError.value = ''
   notice.value = ''
   try {
-    await deleteKnowledgeFile(selectedKnowledgeBaseId.value, fileId)
+    await deleteKnowledgeFile(id, fileId)
+    if (!currentView(id, generation)) return
     notice.value = '文件已删除。'
     pendingFileDelete.value = null
-    await refreshFiles()
+    await refreshFiles(id, generation)
   } catch {
-    error.value = '文件删除失败。'
+    if (currentView(id, generation)) confirmationError.value = '文件删除失败，请重试。'
   } finally {
     loading.value = false
   }
@@ -211,7 +289,9 @@ async function dropFiles(event: DragEvent) {
 }
 
 async function uploadFiles(selectedFiles: File[]) {
-  if (!selectedFiles.length || !selectedKnowledgeBaseId.value || loading.value) return
+  const id = selectedKnowledgeBaseId.value
+  const generation = viewGeneration
+  if (!selectedFiles.length || !id || busy.value) return
 
   const unsupported = selectedFiles.filter((file) => !isKnowledgeFileSupported(file.name))
   if (unsupported.length) {
@@ -220,30 +300,37 @@ async function uploadFiles(selectedFiles: File[]) {
   }
 
   loading.value = true
+  uploading.value = true
   error.value = ''
   notice.value = ''
   memoryNotice.value = ''
   let completed = 0
+  let readyCount = 0
   let candidateMemoryCount = 0
   const failures: string[] = []
   for (const file of selectedFiles) {
     try {
-      const response = await uploadKnowledgeFile(selectedKnowledgeBaseId.value, file)
+      const response = await uploadKnowledgeFile(id, file)
       completed += 1
+      if (response.data.parseStatus === 'completed') readyCount += 1
       candidateMemoryCount += response.data.candidateMemories?.length || 0
     } catch (exception) {
       failures.push(`${file.name}：${uploadFailureMessage(exception)}`)
     }
   }
+  if (!currentView(id, generation)) { loading.value = false; uploading.value = false; return }
   if (completed) {
-    notice.value = completed === 1 ? '文件已上传并完成入库。' : `${completed} 个文件已上传并完成入库。`
+    notice.value = readyCount === completed
+      ? completed === 1 ? '文件已上传并完成入库。' : `${completed} 个文件已上传并完成入库。`
+      : completed === 1 ? '文件已上传，请留意处理状态。' : `${completed} 个文件已上传，请留意处理状态。`
     setMemoryNotice(candidateMemoryCount)
-    await refreshFiles()
+    await refreshFiles(id, generation)
   }
-  if (failures.length) {
+  if (failures.length && currentView(id, generation)) {
     error.value = failures.join('；')
   }
   loading.value = false
+  uploading.value = false
 }
 
 function uploadFailureMessage(exception: unknown) {
@@ -262,11 +349,13 @@ function leaveDropZone(event: DragEvent) {
 
 function preventDropDefaults(event: DragEvent) {
   event.preventDefault()
-  if (!loading.value) dragActive.value = true
+  if (!busy.value) dragActive.value = true
 }
 
 async function rebuildFile(fileId: string) {
-  if (!selectedKnowledgeBaseId.value) return
+  const id = selectedKnowledgeBaseId.value
+  const generation = viewGeneration
+  if (!id || busy.value) return
   const next = new Set(rebuildingFileIds.value)
   next.add(fileId)
   rebuildingFileIds.value = next
@@ -274,12 +363,13 @@ async function rebuildFile(fileId: string) {
   notice.value = ''
   memoryNotice.value = ''
   try {
-    const response = await rebuildKnowledgeFile(selectedKnowledgeBaseId.value, fileId)
+    const response = await rebuildKnowledgeFile(id, fileId)
+    if (!currentView(id, generation)) return
     notice.value = '文件索引已重建。'
     setMemoryNotice(response.data.candidateMemories?.length || 0)
-    await refreshFiles()
+    await refreshFiles(id, generation)
   } catch {
-    error.value = '文件索引重建失败。'
+    if (currentView(id, generation)) error.value = '文件索引重建失败。'
   } finally {
     const remaining = new Set(rebuildingFileIds.value)
     remaining.delete(fileId)
@@ -288,62 +378,82 @@ async function rebuildFile(fileId: string) {
 }
 
 async function rebuildAllFiles() {
-  if (!selectedKnowledgeBaseId.value || files.value.length === 0) return
+  const id = selectedKnowledgeBaseId.value
+  const generation = viewGeneration
+  if (!id || busy.value || files.value.length === 0) return
   loading.value = true
   error.value = ''
+  confirmationError.value = ''
   notice.value = ''
   memoryNotice.value = ''
   try {
-    const response = await rebuildKnowledgeBaseFiles(selectedKnowledgeBaseId.value)
+    const response = await rebuildKnowledgeBaseFiles(id)
+    if (!currentView(id, generation)) return
     notice.value = '知识库索引已重建。'
     const count = response.data.reduce((total, item) => total + (item.candidateMemories?.length || 0), 0)
     setMemoryNotice(count)
     pendingRebuildAll.value = false
-    await refreshFiles()
+    await refreshFiles(id, generation)
   } catch {
-    error.value = '知识库索引重建失败。'
+    if (currentView(id, generation)) confirmationError.value = '文件重新处理失败，请重试。'
   } finally {
     loading.value = false
   }
 }
 
 async function runRagDebug() {
-  if (!selectedKnowledgeBaseId.value || !ragQuestion.value.trim()) return
+  const id = selectedKnowledgeBaseId.value
+  const generation = viewGeneration
+  if (!id || busy.value || !ragQuestion.value.trim()) return
   loading.value = true
+  querying.value = true
   error.value = ''
   try {
-    const response = await debugRag(ragQuestion.value.trim(), [selectedKnowledgeBaseId.value])
-    ragDebug.value = response.data
+    const response = await debugRag(ragQuestion.value.trim(), [id])
+    if (currentView(id, generation)) ragDebug.value = response.data
   } catch {
-    error.value = '检索测试失败，请稍后重试。'
+    if (currentView(id, generation)) error.value = '检索测试失败，请稍后重试。'
   } finally {
     loading.value = false
+    querying.value = false
   }
 }
 
 async function refreshChunks() {
-  if (!selectedKnowledgeBaseId.value) return
-  const response = await listRagChunks(selectedKnowledgeBaseId.value, 20)
-  ragChunks.value = response.data.items
+  const id = selectedKnowledgeBaseId.value
+  const generation = viewGeneration
+  const request = ++chunkRequest
+  if (!id) return
+  try {
+    const response = await listRagChunks(id, 20)
+    if (currentView(id, generation) && request === chunkRequest) ragChunks.value = response.data.items
+  } catch {
+    if (currentView(id, generation) && request === chunkRequest) error.value = '技术检索详情暂时无法加载。'
+  }
 }
 
 async function toggleTechnicalDetails() {
   showTechnicalDetails.value = !showTechnicalDetails.value
   if (showTechnicalDetails.value && ragChunks.value.length === 0) {
-    try {
-      await refreshChunks()
-    } catch {
-      error.value = '技术检索详情暂时无法加载。'
-    }
+    await refreshChunks()
   }
 }
 
-async function selectKnowledgeBase(id: string) {
+async function selectKnowledgeBase(id?: string) {
+  viewGeneration += 1
   selectedKnowledgeBaseId.value = id
+  files.value = []
+  filesLoading.value = Boolean(id)
+  filesError.value = ''
+  error.value = ''
+  memoryNotice.value = ''
+  pendingFileDelete.value = null
+  pendingRebuildAll.value = false
+  confirmationError.value = ''
   cancelRenameKnowledgeBase()
   ragDebug.value = null
   ragChunks.value = []
-  showRetrievalTest.value = true
+  showRetrievalTest.value = false
   showTechnicalDetails.value = false
   knowledgeMenuOpen.value = false
   openFileMenuId.value = undefined
@@ -407,101 +517,84 @@ onMounted(() => {
   window.addEventListener('click', closeMenus)
 })
 
-onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
+onBeforeUnmount(() => {
+  active = false
+  viewGeneration += 1
+  window.removeEventListener('click', closeMenus)
+})
 </script>
 
 <template>
-  <section class="page kb-page">
+  <section class="page kb-page" :class="{ 'kb-page--empty': isEmpty }">
+    <header class="kb-page-header">
+      <div :class="{ 'visually-hidden': isEmpty }"><h1>知识库</h1><p>把常用资料整理好，让每次回答都有依据。</p></div>
+      <div class="kb-page-actions">
+        <AppButton variant="ghost" :loading="pageLoading" :disabled="busy" @click="refreshKnowledgeBases"><RefreshCw v-if="!pageLoading" :size="16" aria-hidden="true" />刷新</AppButton>
+        <AppButton v-if="!isEmpty" :disabled="busy" aria-controls="knowledge-create-form" :aria-expanded="showCreateForm" @click="openCreateForm"><Plus :size="17" aria-hidden="true" />新建知识库</AppButton>
+      </div>
+    </header>
     <p v-if="error" class="alert danger" role="alert">{{ error }}</p>
-    <p v-if="notice" class="alert success" role="status">{{ notice }}</p>
+    <p v-if="notice" class="kb-notice" role="status"><CheckCircle2 :size="16" aria-hidden="true" />{{ notice }}</p>
     <p v-if="memoryNotice" class="alert success" role="status">
       {{ memoryNotice }}
       <a class="inline-link" href="/memory">查看待确认记忆</a>
     </p>
 
-    <div class="kb-layout">
+    <LoadingState v-if="!listLoaded && pageLoading" label="正在加载知识库" :cards="1" />
+    <ErrorState v-else-if="listError && !knowledgeBases.length" title="知识库暂时无法加载" :message="listError" :retrying="pageLoading" @retry="refreshKnowledgeBases" />
+    <template v-else-if="isEmpty">
+      <section class="kb-welcome" aria-label="知识库空状态">
+        <span class="welcome-icon"><LibraryBig :size="38" :stroke-width="1.6" aria-hidden="true" /></span>
+        <h2 id="kb-welcome-title"><span>把你的资料，</span><span>变成回答的依据</span></h2>
+        <p>收集文档、笔记和常用资料，<br class="desktop-break" />让 Lyle 带着你的知识回答问题。</p>
+        <div class="welcome-actions">
+          <AppButton class="welcome-primary" :disabled="busy" aria-controls="knowledge-create-form" :aria-expanded="showCreateForm" @click="openCreateForm"><Plus :size="19" aria-hidden="true" />新建知识库</AppButton>
+          <RouterLink class="text-action" to="/">先和 Lyle 聊聊<ArrowRight :size="17" aria-hidden="true" /></RouterLink>
+        </div>
+      </section>
+      <section class="kb-capabilities" aria-label="知识库可以帮你做什么">
+        <article><span class="capability-icon"><FileUp :size="23" aria-hidden="true" /></span><div><h3>集中整理资料</h3><p>上传文档和笔记，把同一主题的资料放在一起。</p></div></article>
+        <article><span class="capability-icon"><Search :size="23" aria-hidden="true" /></span><div><h3>找到相关内容</h3><p>用一个问题，从资料中找出有用的信息。</p></div></article>
+        <article><span class="capability-icon"><MessageSquareText :size="23" aria-hidden="true" /></span><div><h3>带着资料对话</h3><p>在聊天中引用知识库，让回答贴近你的背景。</p></div></article>
+      </section>
+    </template>
+    <div v-else class="kb-layout">
       <aside class="kb-sidebar" aria-label="知识库列表">
         <div class="kb-sidebar__header">
-          <h2>知识库</h2>
+          <h2>我的知识库</h2><span class="kb-count">{{ knowledgeBases.length }}</span>
+        </div>
+        <p v-if="listError" class="kb-inline-error" role="alert">{{ listError }}</p>
+        <label class="kb-search"><Search :size="16" aria-hidden="true" /><input v-model="knowledgeSearch" type="search" aria-label="搜索知识库" placeholder="搜索知识库" /></label>
+        <div class="kb-list">
           <button
-            class="icon-action"
-            type="button"
-            aria-label="新建知识库"
-            title="新建知识库"
-            @click.stop="showCreateForm = !showCreateForm"
-          >
-            <Plus :size="18" aria-hidden="true" />
-          </button>
-        </div>
-
-        <form
-          v-if="showCreateForm || (!pageLoading && knowledgeBases.length === 0)"
-          class="kb-create"
-          @submit.prevent="create"
-        >
-          <label for="knowledge-name">知识库名称</label>
-          <input
-            id="knowledge-name"
-            v-model="name"
-            data-testid="knowledge-name-input"
-            placeholder="例如：产品资料"
-            maxlength="255"
-            autofocus
-          />
-          <div class="kb-create__actions">
-            <button
-              v-if="knowledgeBases.length > 0"
-              class="secondary"
-              type="button"
-              @click="showCreateForm = false"
-            >
-              取消
-            </button>
-            <button data-testid="create-knowledge-button" type="submit" :disabled="loading || !name.trim()">
-              创建
-            </button>
-          </div>
-        </form>
-
-        <div v-if="pageLoading" class="empty-state compact">
-          <strong>正在加载</strong>
-          <span>读取知识库列表。</span>
-        </div>
-        <div v-else-if="knowledgeBases.length === 0" class="empty-state compact">
-          <strong>暂无知识库</strong>
-          <span>创建一个知识库后即可上传文件。</span>
-        </div>
-        <div v-else class="kb-list">
-          <button
-            v-for="item in knowledgeBases"
+            v-for="item in visibleKnowledgeBases"
             :key="item.id"
             class="kb-list-item"
             :class="{ active: item.id === selectedKnowledgeBaseId }"
             type="button"
+            :aria-pressed="item.id === selectedKnowledgeBaseId"
+            :disabled="busy"
             @click="selectKnowledgeBase(item.id)"
           >
             <span class="kb-list-item__icon"><FolderOpen :size="18" aria-hidden="true" /></span>
             <span class="kb-list-item__copy">
               <strong>{{ item.name }}</strong>
-              <small>{{ item.id === selectedKnowledgeBaseId ? `${files.length} 个文件` : '点击打开' }}</small>
+              <small>{{ item.id === selectedKnowledgeBaseId ? (filesLoading ? '正在加载资料' : filesError ? '资料暂未加载' : `${files.length} 个文件`) : '查看资料' }}</small>
             </span>
             <ChevronRight :size="17" aria-hidden="true" />
           </button>
         </div>
-
-        <button class="kb-refresh" type="button" :disabled="pageLoading" @click="refreshKnowledgeBases">
-          <RefreshCw :size="15" aria-hidden="true" />
-          {{ pageLoading ? '正在刷新' : '刷新列表' }}
-        </button>
+        <div v-if="!visibleKnowledgeBases.length" class="kb-filter-empty"><strong>没有匹配的知识库</strong><button class="text-action" type="button" @click="knowledgeSearch = ''">清除搜索</button></div>
       </aside>
 
-      <section v-if="selectedKnowledgeBaseId" class="kb-workspace" aria-label="知识库详情">
+      <section v-if="selectedKnowledgeBase" class="kb-workspace" aria-label="知识库详情">
         <header class="kb-workspace__header">
           <div>
             <form v-if="renamingKnowledgeBase" class="kb-title-edit" @submit.prevent="renameKnowledgeBase">
               <label class="visually-hidden" for="knowledge-rename">知识库名称</label>
               <input
                 id="knowledge-rename"
+                ref="renameInput"
                 v-model="renameDraft"
                 data-testid="knowledge-rename-input"
                 maxlength="255"
@@ -514,7 +607,7 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
               <button class="secondary" type="button" :disabled="renameSaving" @click="cancelRenameKnowledgeBase">取消</button>
             </form>
             <div v-else class="kb-title-row">
-              <h1>{{ selectedKnowledgeBase?.name || '选择知识库' }}</h1>
+              <h2>{{ selectedKnowledgeBase.name }}</h2>
               <div class="action-menu" @click.stop>
                 <button
                   class="icon-action"
@@ -527,7 +620,7 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
                   <MoreHorizontal :size="19" aria-hidden="true" />
                 </button>
                 <div v-if="knowledgeMenuOpen" class="action-menu__popover" role="menu">
-                  <button type="button" role="menuitem" :disabled="loading" @click="startRenameKnowledgeBase">
+                  <button type="button" role="menuitem" :disabled="busy" @click="startRenameKnowledgeBase">
                     <Pencil :size="15" aria-hidden="true" />
                     重命名
                   </button>
@@ -535,8 +628,8 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
                     v-if="files.length > 0"
                     type="button"
                     role="menuitem"
-                    :disabled="loading"
-                    @click="knowledgeMenuOpen = false; pendingRebuildAll = true"
+                    :disabled="busy || filesLoading || Boolean(filesError)"
+                    @click="knowledgeMenuOpen = false; error = ''; confirmationError = ''; pendingRebuildAll = true"
                   >
                     <RefreshCw :size="15" aria-hidden="true" />
                     重建全部索引
@@ -545,8 +638,8 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
                     class="danger-action"
                     type="button"
                     role="menuitem"
-                    :disabled="loading"
-                    @click="knowledgeMenuOpen = false; pendingKnowledgeBaseDelete = selectedKnowledgeBase || null"
+                    :disabled="busy"
+                    @click="knowledgeMenuOpen = false; error = ''; confirmationError = ''; pendingKnowledgeBaseDelete = selectedKnowledgeBase || null"
                   >
                     <Trash2 :size="15" aria-hidden="true" />
                     删除知识库
@@ -554,12 +647,12 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
                 </div>
               </div>
             </div>
-            <p>{{ files.length }} 个文件 · 回答时按需引用</p>
+            <p>{{ filesLoading ? '正在加载资料…' : filesError ? '资料列表暂未加载' : `${files.length} 个文件 · ${readyFiles.length} 个已就绪` }}</p>
           </div>
 
           <div class="kb-workspace__actions">
             <button
-              v-if="files.length > 0"
+              v-if="readyFiles.length > 0 && !filesLoading && !filesError"
               class="secondary use-in-chat-button"
               type="button"
               @click="openChatWithKnowledgeBase"
@@ -569,29 +662,32 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
             </button>
             <input
               id="knowledge-file-input"
+              ref="fileInput"
               class="visually-hidden"
               type="file"
               :accept="KNOWLEDGE_FILE_ACCEPT"
               data-testid="knowledge-file-input"
-              :disabled="loading"
+              :disabled="busy"
               multiple
               @change="upload"
             />
-            <label
+            <button
+              v-if="!hasEmptyFiles"
               class="primary-upload-button"
-              :class="{ disabled: loading }"
-              for="knowledge-file-input"
-              :aria-disabled="loading"
+              type="button"
+              :disabled="busy"
+              @click="fileInput?.click()"
             >
               <FileUp :size="17" aria-hidden="true" />
               {{ loading ? '处理中…' : '添加资料' }}
-            </label>
+            </button>
           </div>
         </header>
 
         <div
           class="upload-zone"
-          :class="{ 'is-dragging': dragActive, 'is-busy': loading }"
+          :class="{ 'is-dragging': dragActive, 'is-busy': busy, 'upload-zone--empty': hasEmptyFiles }"
+          v-if="!filesLoading && !filesError"
           @dragenter="preventDropDefaults"
           @dragover="preventDropDefaults"
           @dragleave="leaveDropZone"
@@ -599,39 +695,21 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
         >
           <div class="upload-zone__icon"><FileUp :size="21" aria-hidden="true" /></div>
           <div class="upload-zone__copy">
-            <strong>{{ loading ? '正在解析并建立索引…' : '拖入文件到这里上传' }}</strong>
-            <span>支持文本型 PDF、Word、Excel、PowerPoint 和常见文本文件，可一次选择多个。</span>
+            <strong>{{ uploading ? '正在上传并处理资料…' : hasEmptyFiles ? '从第一份资料开始' : '拖入文件，添加更多资料' }}</strong>
+            <span>{{ hasEmptyFiles ? '把文档放进来，让 Lyle 在回答时找到相关内容。' : '支持 PDF、Word、Excel、PowerPoint 和文本文件。' }}</span>
+            <small v-if="hasEmptyFiles">支持文本型 PDF、DOCX、XLS/XLSX、PPTX 和文本文件，可多选。</small>
           </div>
-          <label class="upload-zone__link" :class="{ disabled: loading }" for="knowledge-file-input">
-            {{ loading ? '处理中' : '选择文件' }}
-          </label>
+          <AppButton v-if="hasEmptyFiles" :disabled="busy" @click="fileInput?.click()"><FileUp :size="17" aria-hidden="true" />{{ uploading ? '上传中…' : '选择文件' }}</AppButton>
         </div>
 
-        <section v-if="files.length > 0" class="kb-usage-guide" aria-label="知识库使用说明">
-          <div class="kb-usage-guide__copy">
-            <span class="kb-usage-guide__icon"><CheckCircle2 :size="18" aria-hidden="true" /></span>
-            <div>
-              <strong>资料已经可以在聊天中使用</strong>
-              <p>进入聊天后，此知识库会持续用于后续提问；需要停用时，可在“当前上下文”中切换为不使用。</p>
-            </div>
-          </div>
-          <button class="secondary" type="button" @click="openChatWithKnowledgeBase">
-            去聊天提问
-            <ArrowRight :size="16" aria-hidden="true" />
-          </button>
-        </section>
-
-        <section class="file-section" aria-labelledby="file-section-title">
+        <LoadingState v-if="filesLoading" label="正在加载资料" :cards="1" />
+        <ErrorState v-else-if="filesError" title="资料暂时无法加载" :message="filesError" @retry="refreshFiles()" />
+        <section v-else-if="files.length" class="file-section" aria-labelledby="file-section-title">
           <div class="file-section__header">
             <h2 id="file-section-title">文件</h2>
             <span>{{ files.length }} 个文件</span>
           </div>
-          <div v-if="files.length === 0" class="empty-state compact">
-            <strong>这个知识库还是空的</strong>
-            <span>上传 PDF、DOCX、XLS/XLSX、PPTX 或文本文件后会自动入库。</span>
-          </div>
-
-          <div v-else class="file-table" role="table" aria-label="知识库文件">
+          <div class="file-table" role="table" aria-label="知识库文件">
             <div class="file-table__head" role="row">
               <span role="columnheader">文件名称</span>
               <span role="columnheader">状态</span>
@@ -674,7 +752,7 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
                   <button
                     type="button"
                     role="menuitem"
-                    :disabled="loading || rebuildingFileIds.has(file.id)"
+                    :disabled="busy"
                     @click="openFileMenuId = undefined; rebuildFile(file.id)"
                   >
                     <RefreshCw :size="15" aria-hidden="true" />
@@ -684,8 +762,8 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
                     class="danger-action"
                     type="button"
                     role="menuitem"
-                    :disabled="loading"
-                    @click="openFileMenuId = undefined; pendingFileDelete = file"
+                    :disabled="busy"
+                    @click="openFileMenuId = undefined; error = ''; confirmationError = ''; pendingFileDelete = file"
                   >
                     <Trash2 :size="15" aria-hidden="true" />
                     删除文件
@@ -696,8 +774,8 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
           </div>
         </section>
 
-        <section class="retrieval-test">
-          <button class="retrieval-test__summary" type="button" @click="showRetrievalTest = !showRetrievalTest">
+        <section v-if="files.length && !filesLoading && !filesError" class="retrieval-test">
+          <button class="retrieval-test__summary" type="button" :aria-expanded="showRetrievalTest" @click="showRetrievalTest = !showRetrievalTest">
             <div>
               <h2>检索测试</h2>
               <p>用一个问题验证 Lyle 能否从当前资料中找到答案。</p>
@@ -711,9 +789,9 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
 
           <div v-if="showRetrievalTest" class="retrieval-test__body">
             <div class="row retrieval-question">
-              <input v-model="ragQuestion" data-testid="rag-question-input" placeholder="例如：这份文档的主要结论是什么？" />
-              <button data-testid="rag-debug-button" type="button" :disabled="loading" @click="runRagDebug">
-                {{ loading ? '测试中' : '测试检索' }}
+              <input v-model="ragQuestion" aria-label="检索问题" data-testid="rag-question-input" placeholder="例如：这份文档的主要结论是什么？" />
+              <button data-testid="rag-debug-button" type="button" :disabled="busy || !ragQuestion.trim()" @click="runRagDebug">
+                {{ querying ? '测试中' : '测试检索' }}
               </button>
             </div>
 
@@ -758,14 +836,17 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
         </section>
       </section>
 
-      <section v-else-if="!pageLoading" class="kb-workspace kb-workspace--empty" aria-label="知识库空状态">
-        <FolderOpen :size="30" aria-hidden="true" />
-        <h1>知识库</h1>
-        <h2>创建第一个知识库</h2>
-        <p>建立知识库后，就可以上传资料并让 Lyle 在回答时引用。</p>
-        <button type="button" @click="showCreateForm = true">新建知识库</button>
-      </section>
     </div>
+
+    <DetailDrawer v-if="showCreateForm" :open="showCreateForm" title="新建知识库" description="为一组相关资料取个名字，接着就能上传文件。" @update:open="(open) => { if (!open) cancelCreate() }">
+      <form id="knowledge-create-form" class="kb-create" :aria-busy="loading" @submit.prevent="create" @keydown.esc.prevent="cancelCreate">
+        <label for="knowledge-name">知识库名称</label>
+        <input id="knowledge-name" ref="knowledgeNameInput" v-model="name" data-testid="knowledge-name-input" placeholder="例如：产品资料" maxlength="255" :aria-describedby="createError ? 'knowledge-create-hint knowledge-create-error' : 'knowledge-create-hint'" :disabled="loading" />
+        <p id="knowledge-create-hint" class="kb-create__hint">按主题整理，例如产品资料、学习笔记或工作手册。</p>
+        <p v-if="createError" id="knowledge-create-error" class="kb-create__error" role="alert">{{ createError }}</p>
+        <div class="kb-create__actions"><AppButton variant="secondary" :disabled="loading" @click="cancelCreate">取消</AppButton><AppButton data-testid="create-knowledge-button" type="submit" :disabled="loading || !name.trim()">{{ loading ? '创建中…' : '创建' }}</AppButton></div>
+      </form>
+    </DetailDrawer>
 
     <ConfirmActionDialog
       :open="Boolean(pendingKnowledgeBaseDelete)"
@@ -774,9 +855,9 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
       confirm-label="确认删除"
       danger
       :busy="loading"
-      @update:open="(open) => { if (!open) pendingKnowledgeBaseDelete = null }"
+      @update:open="(open) => { if (!open) { pendingKnowledgeBaseDelete = null; confirmationError = '' } }"
       @confirm="pendingKnowledgeBaseDelete && removeKnowledgeBase(pendingKnowledgeBaseDelete.id)"
-    />
+    ><template v-if="confirmationError" #default><p class="kb-confirm-error" role="alert">{{ confirmationError }}</p></template></ConfirmActionDialog>
     <ConfirmActionDialog
       :open="Boolean(pendingFileDelete)"
       title="删除文件"
@@ -784,35 +865,62 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
       confirm-label="确认删除"
       danger
       :busy="loading"
-      @update:open="(open) => { if (!open) pendingFileDelete = null }"
+      @update:open="(open) => { if (!open) { pendingFileDelete = null; confirmationError = '' } }"
       @confirm="pendingFileDelete && removeFile(pendingFileDelete.id)"
-    />
+    ><template v-if="confirmationError" #default><p class="kb-confirm-error" role="alert">{{ confirmationError }}</p></template></ConfirmActionDialog>
     <ConfirmActionDialog
       :open="pendingRebuildAll"
       title="重新处理全部文件"
       :description="`将重新处理“${selectedKnowledgeBase?.name || ''}”中的 ${files.length} 个文件，期间检索结果可能短暂变化。`"
       confirm-label="开始处理"
       :busy="loading"
-      @update:open="pendingRebuildAll = $event"
+      @update:open="(open) => { pendingRebuildAll = open; if (!open) confirmationError = '' }"
       @confirm="rebuildAllFiles"
-    />
+    ><template v-if="confirmationError" #default><p class="kb-confirm-error" role="alert">{{ confirmationError }}</p></template></ConfirmActionDialog>
   </section>
 </template>
 
 <style scoped>
 .kb-page {
-  gap: 12px;
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  gap: 24px;
 }
+.kb-page--empty { gap: 0; }
+.kb-page-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 52px; }
+.kb-page-header h1 { margin: 0; font-size: 28px; line-height: 1.4; font-weight: 750; letter-spacing: -.035em; }
+.kb-page-header p { margin: 7px 0 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.6; }
+.kb-page-actions { display: flex; flex-shrink: 0; align-items: center; gap: 10px; margin-left: auto; }
+.kb-notice { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--success-strong); font-size: 14px; }
+.kb-welcome { display: flex; flex-direction: column; align-items: center; padding: 48px 20px 56px; text-align: center; }
+.welcome-icon { display: grid; place-items: center; width: 78px; height: 78px; margin-bottom: 25px; border-radius: 20px; background: var(--primary-soft); color: var(--primary); }
+.kb-welcome h2 { margin: 0; color: var(--foreground); font-size: 34px; line-height: 1.4; font-weight: 750; letter-spacing: -.035em; }
+.kb-welcome h2 span { display: inline-block; }
+.kb-welcome > p { margin: 15px 0 0; color: var(--muted-foreground); font-size: 17px; line-height: 1.75; }
+.welcome-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 24px; margin-top: 29px; }
+.welcome-primary { min-height: 50px; padding: 12px 22px; border-radius: 10px; font-size: 16px; }
+.text-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: fit-content; border: 0; background: transparent; padding: 6px 0; color: var(--primary); font-size: 14px; font-weight: 650; text-decoration: none; }
+.text-action:hover { color: var(--primary-hover); }
+.kb-capabilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; border-top: 1px solid var(--border); padding: 32px 0; }
+.kb-capabilities article { display: flex; min-width: 0; gap: 15px; align-items: flex-start; }
+.capability-icon { display: grid; place-items: center; flex: 0 0 46px; height: 46px; border-radius: 12px; color: var(--primary); background: var(--primary-soft); }
+.kb-capabilities h3 { margin: 2px 0 6px; color: var(--foreground); font-size: 16px; line-height: 1.5; }
+.kb-capabilities p { max-width: 250px; margin: 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.7; }
+.kb-count { color: var(--muted-foreground); font-size: 12px; }
+.kb-search { display: flex; align-items: center; gap: 7px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; color: var(--muted-foreground); background: var(--surface); }
+.kb-search input { min-width: 0; width: 100%; border: 0; background: transparent; min-height: 40px; padding: 6px 0; font-size: 13px; }
+.kb-search:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
+.kb-search input:focus { outline: none; box-shadow: none; }
+.kb-filter-empty { display: grid; gap: 8px; justify-items: center; padding: 25px 8px; font-size: 13px; color: var(--muted-foreground); text-align: center; }
+.kb-inline-error { margin: 0; color: var(--danger-strong); font-size: 12px; line-height: 1.6; }
+.kb-confirm-error { margin: 0; color: var(--danger-strong); font-size: 14px; line-height: 1.6; }
 
 .kb-layout {
   display: grid;
-  min-height: calc(100dvh - var(--lyle-header-height, 68px) - 48px);
-  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
-  gap: 0;
-  align-items: stretch;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: var(--radius-xl, 12px);
-  background: var(--surface, #fff);
+  grid-template-columns: minmax(240px, 260px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
 }
 
 .kb-sidebar {
@@ -820,7 +928,8 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
   min-width: 0;
   flex-direction: column;
   gap: 14px;
-  border-right: 1px solid var(--border, #e2e8f0);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
   background: var(--surface, #fff);
   padding: 20px 16px;
 }
@@ -876,16 +985,12 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
 .kb-create {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 8px;
-  border: 1px solid var(--primary-border, #c7d2fe);
-  border-radius: var(--radius-lg, 10px);
-  background: var(--primary-soft, #eef2ff);
-  padding: 12px;
+  gap: 10px;
 }
 
 .kb-create label {
   color: var(--foreground, #0f172a);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -894,10 +999,30 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
   background: var(--surface, #fff);
 }
 
+.kb-create:focus-within {
+  outline: none;
+}
+
+.kb-create__hint,
+.kb-create__error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.kb-create__hint {
+  color: var(--muted-foreground, #64748b);
+}
+
+.kb-create__error {
+  color: var(--danger-strong, #dc2626);
+}
+
 .kb-create__actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: 14px;
 }
 
 .kb-create__actions button {
@@ -986,32 +1111,35 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
 .kb-workspace {
   display: flex;
   min-width: 0;
-  min-height: 680px;
   flex-direction: column;
   background: var(--surface, #fff);
-  padding: 32px 32px 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
 }
 
 .kb-workspace__header {
-  gap: 24px;
-  margin-bottom: 26px;
+  gap: 18px;
+  margin-bottom: 24px;
 }
+.kb-workspace__header > div:first-child { min-width: 0; }
 
 .kb-title-row {
   gap: 8px;
 }
 
-.kb-title-row h1 {
+.kb-title-row h2 {
   margin: 0;
   color: var(--foreground, #0f172a);
-  font-size: clamp(24px, 2.2vw, 30px);
+  font-size: 23px;
   font-weight: 740;
   letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
 }
 
 .kb-title-edit {
   display: flex;
-  min-width: min(560px, 58vw);
+  min-width: 0;
   align-items: center;
   gap: 8px;
 }
@@ -1127,14 +1255,14 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
 
 .upload-zone {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 14px;
   align-items: center;
   border: 1px dashed var(--primary-border, #c7d2fe);
   border-radius: var(--radius-lg, 10px);
   background: color-mix(in srgb, var(--primary-soft, #eef2ff) 32%, var(--surface, #fff));
-  min-height: 112px;
-  padding: 22px 24px;
+  min-height: 76px;
+  padding: 14px 16px;
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
 
@@ -1145,11 +1273,18 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
 }
 
 .upload-zone.is-busy { opacity: .72; }
+.upload-zone--empty { display: flex; min-height: 320px; flex-direction: column; justify-content: center; gap: 19px; padding: 38px 22px; text-align: center; background: var(--surface-muted); }
+.upload-zone--empty .upload-zone__icon { width: 56px; height: 56px; border-radius: 14px; }
+.upload-zone--empty .upload-zone__icon svg { width: 26px; height: 26px; }
+.upload-zone--empty .upload-zone__copy { gap: 8px; }
+.upload-zone--empty .upload-zone__copy strong { font-size: 23px; letter-spacing: -.025em; }
+.upload-zone--empty .upload-zone__copy span { font-size: 14px; }
+.upload-zone__copy small { max-width: 420px; color: var(--muted-foreground); font-size: 12px; line-height: 1.7; }
 
 .upload-zone__icon {
   display: grid;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   place-items: center;
   border-radius: var(--radius-lg, 10px);
   background: var(--primary-soft, #eef2ff);
@@ -1183,12 +1318,12 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
   min-width: 0;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 14px;
   margin-top: 14px;
-  border: 1px solid var(--primary-border, #c7d2fe);
+  border: 0;
   border-radius: var(--radius-lg, 10px);
-  background: color-mix(in srgb, var(--primary-soft, #eef2ff) 58%, var(--surface, #fff));
-  padding: 14px 16px;
+  background: var(--surface-muted);
+  padding: 12px 14px;
 }
 
 .kb-usage-guide__copy {
@@ -1356,7 +1491,7 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
 }
 
 .retrieval-test {
-  margin-top: auto;
+  margin-top: 24px;
   border: 1px solid var(--border, #e2e8f0);
   border-radius: var(--radius-lg, 10px);
   background: var(--surface, #fff);
@@ -1364,8 +1499,8 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
 
 .retrieval-test__summary {
   width: 100%;
-  min-height: 86px;
-  gap: 20px;
+  min-height: 76px;
+  gap: 14px;
   border: 0;
   background: transparent;
   color: var(--foreground, #0f172a);
@@ -1464,12 +1599,15 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
 
 @media (max-width: 960px) {
   .kb-layout {
-    grid-template-columns: minmax(190px, 220px) minmax(0, 1fr);
+    grid-template-columns: minmax(170px, 200px) minmax(0, 1fr);
+    gap: 16px;
   }
 
   .kb-workspace {
-    padding: 28px 24px 24px;
+    padding: 22px 20px;
   }
+  .kb-workspace__header { align-items: flex-start; flex-wrap: wrap; }
+  .kb-capabilities { gap: 18px; }
 }
 
 @media (max-width: 760px) {
@@ -1479,15 +1617,13 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
   }
 
   .kb-sidebar {
-    border-right: 0;
-    border-bottom: 1px solid var(--border, #e2e8f0);
+    padding: 16px;
   }
 
   .kb-list {
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(190px, 1fr);
-    overflow-x: auto;
-    padding-bottom: 4px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: 200px;
+    overflow-y: auto;
   }
 
   .kb-refresh {
@@ -1495,13 +1631,34 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
   }
 
   .kb-workspace {
-    min-height: 620px;
+    min-height: 0;
   }
 }
 
 @media (max-width: 680px) {
+  .kb-page { gap: 18px; }
+  .kb-page--empty { gap: 0; }
+  .kb-page-header { flex-wrap: wrap; gap: 12px; }
+  .kb-page-header h1 { font-size: 24px; }
+  .kb-page-header p { font-size: 13px; }
+  .kb-page-actions { gap: 6px; }
+  .kb-welcome { padding: 30px 0 36px; }
+  .welcome-icon { width: 64px; height: 64px; margin-bottom: 20px; border-radius: 18px; }
+  .welcome-icon svg { width: 31px; height: 31px; }
+  .kb-welcome h2 { max-width: 310px; font-size: 27px; }
+  .kb-welcome > p { max-width: 290px; font-size: 15px; }
+  .welcome-actions { gap: 15px; margin-top: 24px; }
+  .welcome-primary { min-height: 46px; padding: 11px 16px; font-size: 14px; }
+  .kb-capabilities { grid-template-columns: minmax(0, 1fr); gap: 22px; padding: 26px 0; }
+  .kb-capabilities h3 { font-size: 15px; margin-bottom: 4px; }
+  .kb-capabilities p { max-width: none; font-size: 13px; }
+  .capability-icon { flex-basis: 42px; height: 42px; border-radius: 11px; }
+  .kb-list-item { grid-template-columns: auto minmax(0, 1fr); padding: 9px 7px; gap: 8px; }
+  .kb-list-item > svg { display: none; }
+  .kb-list-item__copy strong { font-size: 12px; }
+  .kb-list-item__copy small { font-size: 11px; }
   .kb-workspace {
-    min-height: 560px;
+    min-height: 0;
     padding: 22px 16px 16px;
   }
 
@@ -1534,6 +1691,10 @@ onBeforeUnmount(() => window.removeEventListener('click', closeMenus))
     grid-template-columns: auto minmax(0, 1fr);
     padding: 16px;
   }
+  .upload-zone > .app-button { grid-column: 1 / -1; }
+  .upload-zone--empty { min-height: 290px; padding: 28px 14px; }
+  .upload-zone--empty .upload-zone__copy strong { font-size: 21px; }
+  .upload-zone--empty .upload-zone__copy span { font-size: 13px; }
 
   .upload-zone__link {
     grid-column: 1 / -1;

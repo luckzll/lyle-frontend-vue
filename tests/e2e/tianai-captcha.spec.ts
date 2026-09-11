@@ -33,7 +33,7 @@ test('challenge outage presents retry instead of granting a proof', async ({ pag
   await page.goto('/login')
   await page.getByRole('button', { name: '点击完成验证' }).click()
   await expect(page.getByRole('alert')).toContainText('安全验证服务暂不可用')
-  await expect(page.getByText('已完成人机验证', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('安全验证已通过', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '重新验证', exact: true })).toBeEnabled()
 })
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { Bell, CalendarDays, CheckCheck, ChevronDown, ClipboardList, MessageSquare, Plus, RefreshCw } from '@lucide/vue'
 import {
   createAgentTodo,
   deleteAgentCalendar,
@@ -18,6 +19,8 @@ import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
 import { formatSourceReference } from '@/domain/source-reference'
 import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
+import DetailDrawer from '@/components/layout/DetailDrawer.vue'
+import AppButton from '@/components/ui/AppButton.vue'
 import { useAsyncAction } from '@/composables/useAsyncAction'
 import { toAppError } from '@/api/errors'
 
@@ -44,6 +47,11 @@ const dueEdits = ref<Record<number, string>>({})
 const notice = ref('')
 const newTodoTitle = ref('')
 const newTodoDueAt = ref('')
+const showCreateTodo = ref(false)
+const createTodoError = ref('')
+const newTodoInput = ref<HTMLInputElement | null>(null)
+const todoListHeading = ref<HTMLElement | null>(null)
+let createTodoTrigger: HTMLElement | null = null
 const selectedDate = ref(startOfDay(new Date()).toISOString())
 const calendarWindowStart = ref(startOfWeek(new Date()).toISOString())
 const calendarScope = ref<'day' | 'week'>('day')
@@ -59,6 +67,24 @@ const failedSourceLabel = computed(() => failedSources.value.map((source) => TAS
 const allFailureMessage = computed(() => Array.from(new Set(failedSources.value
   .map((source) => sourceErrors.value[source])
   .filter(Boolean))).join('；') || '任务数据暂时无法加载，请稍后重试。')
+const hasAnyData = computed(() => todos.value.length + calendar.value.length + reminders.value.length > 0)
+const isEmpty = computed(() => hasLoaded.value && !loading.value && !failedSources.value.length && !hasAnyData.value)
+const todoFilters = [
+  { value: 'open', label: '进行中' }, { value: 'today', label: '今日' },
+  { value: 'upcoming', label: '即将到期' }, { value: 'overdue', label: '逾期' },
+  { value: 'done', label: '已完成' }, { value: 'cancelled', label: '已取消' }, { value: 'all', label: '全部' }
+] as const
+const todoEmptyState = computed(() => {
+  if (!todos.value.length) return { title: '先记下一件待办', description: '把要做的事记在这里，也可以在聊天里让 Lyle 帮你整理。', target: null }
+  if (activeTab.value === 'open' && todos.value.every((item) => item.status === 'done')) {
+    return { title: '待办都完成了', description: '已完成的事项都保留着，随时可以回顾。', target: 'done' as const }
+  }
+  const titles = {
+    open: '当前没有进行中的待办', today: '今天没有到期待办', upcoming: '近期没有到期待办',
+    overdue: '没有逾期待办', done: '还没有已完成的待办', cancelled: '没有已取消的待办', all: '暂无待办'
+  }
+  return { title: titles[activeTab.value], description: '这个筛选下暂时没有事项，可以切换筛选查看其他待办。', target: 'all' as const }
+})
 
 const visibleTodos = computed(() => {
   const source = activeTab.value === 'open'
@@ -84,8 +110,6 @@ const overdueTodos = computed(() => todos.value.filter((item) => isOverdue(item)
 const todayTodos = computed(() => todos.value.filter((item) => item.status === 'open' && isToday(item.dueAt)))
 const upcomingTodos = computed(() => todos.value.filter((item) => isUpcoming(item)))
 const duplicateTodoCount = computed(() => todos.value.length - dedupeTodos(todos.value).length)
-const nextTodo = computed(() => sortTodos(openTodos.value)[0])
-const unreadReminderPreview = computed(() => unreadReminders.value[0])
 const calendarDays = computed(() => buildCalendarDays())
 const todayCalendarDay = computed(() => calendarDayStats(new Date()))
 const tomorrowCalendarDay = computed(() => calendarDayStats(dateOffset(1)))
@@ -153,20 +177,43 @@ function sourceLoadError(error: unknown, fallback: string) {
 async function createTodoManually() {
   const title = newTodoTitle.value.trim()
   if (!title || isCreatingTodo()) return
+  createTodoError.value = ''
   try {
     const created = await runAction('todo-create', async () => {
-      await createAgentTodo(title, newTodoDueAt.value ? new Date(newTodoDueAt.value).toISOString() : null)
-      return true
+      const response = await createAgentTodo(title, newTodoDueAt.value ? new Date(newTodoDueAt.value).toISOString() : null)
+      return response.data
     })
     if (!created) return
+    todos.value = [created, ...todos.value.filter((item) => item.id !== created.id)]
     newTodoTitle.value = ''
     newTodoDueAt.value = ''
+    showCreateTodo.value = false
     activeTab.value = 'open'
     showNotice('待办已创建')
     await refresh(false)
+    await nextTick()
+    todoListHeading.value?.focus({ preventScroll: true })
   } catch (exception) {
-    showNotice(toAppError(exception, '待办创建失败，请稍后重试。').message)
+    createTodoError.value = toAppError(exception, '待办创建失败，请稍后重试。').message
   }
+}
+
+async function openTodoCreator() {
+  createTodoTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  createTodoError.value = ''
+  showCreateTodo.value = true
+  await nextTick()
+  await nextTick()
+  newTodoInput.value?.focus()
+}
+
+async function setTodoCreatorOpen(open: boolean) {
+  if (isCreatingTodo() || open === showCreateTodo.value) return
+  if (open) { await openTodoCreator(); return }
+  showCreateTodo.value = false
+  await nextTick()
+  await nextTick()
+  if (createTodoTrigger?.isConnected) createTodoTrigger.focus()
 }
 
 async function setTodoStatus(id: number, status: string) {
@@ -179,25 +226,28 @@ async function setTodoStatus(id: number, status: string) {
 }
 
 async function saveTodoDueAt(item: AgentTodoItem) {
+  const hasEdit = Object.prototype.hasOwnProperty.call(dueEdits.value, item.id)
   const value = dueEdits.value[item.id]
-  await runTodoAction(
+  const saved = await runTodoAction(
     item.id,
-    async () => updateAgentTodoDueAt(item.id, value ? new Date(value).toISOString() : null),
+    async () => updateAgentTodoDueAt(item.id, hasEdit ? (value ? new Date(value).toISOString() : null) : item.dueAt ?? null),
     '截止时间已保存',
     'task_reschedule'
   )
+  if (saved) delete dueEdits.value[item.id]
 }
 
 async function postponeTodoToTomorrow(item: AgentTodoItem) {
   const next = new Date()
   next.setDate(next.getDate() + 1)
   next.setHours(9, 0, 0, 0)
-  await runTodoAction(
+  const saved = await runTodoAction(
     item.id,
     async () => updateAgentTodoDueAt(item.id, next.toISOString()),
     '已顺延到明天 9 点',
     'task_reschedule'
   )
+  if (saved) delete dueEdits.value[item.id]
 }
 
 async function removeTodo(id: number) {
@@ -544,17 +594,20 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
 </script>
 
 <template>
-  <section class="page" :aria-busy="loading">
-    <div class="toolbar">
-      <div>
+  <section class="tasks-page" :class="{ 'tasks-page--empty': isEmpty }" :aria-busy="loading">
+    <header class="tasks-header" :class="{ 'tasks-header--empty': isEmpty }">
+      <div :class="{ 'sr-only': isEmpty }">
         <h1>任务</h1>
-        <p class="muted">查看智能体创建的待办、日历事件和到期提醒，持续追踪可靠执行状态。</p>
+        <p>整理待办，安排时间，让每一步都有进展。</p>
       </div>
-      <button :disabled="loading" type="button" @click="refresh()">刷新</button>
-    </div>
-    <p v-if="notice" class="toast" role="status" aria-live="polite">{{ notice }}</p>
+      <div class="header-actions">
+        <AppButton variant="ghost" :disabled="loading" :loading="loading" @click="refresh()"><RefreshCw v-if="!loading" :size="16" aria-hidden="true" />刷新</AppButton>
+        <AppButton v-if="!isEmpty" @click="openTodoCreator"><Plus :size="17" aria-hidden="true" />新建待办</AppButton>
+      </div>
+    </header>
+    <p v-if="notice" class="task-notice" role="status" aria-live="polite">{{ notice }}</p>
 
-    <LoadingState v-if="loading && !hasLoaded" label="正在加载任务、日历和提醒" :cards="3" />
+    <LoadingState v-if="loading && (!hasLoaded || !hasAnyData)" label="正在加载任务、日历和提醒" :cards="3" />
     <ErrorState
       v-else-if="allSourcesFailed"
       title="任务加载失败"
@@ -562,173 +615,94 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
       :retrying="loading"
       @retry="refresh()"
     />
-
     <template v-else-if="hasLoaded">
-      <section v-if="partialSourcesFailed" class="task-partial-warning" role="status">
-        <div>
-          <strong>部分任务信息未能加载</strong>
-          <p>{{ failedSourceLabel }}暂时不可用；其余已加载内容仍可继续处理。</p>
+      <section v-if="isEmpty" class="tasks-welcome" aria-labelledby="tasks-welcome-title">
+        <span class="welcome-icon"><ClipboardList :size="38" :stroke-width="1.6" aria-hidden="true" /></span>
+        <h2 id="tasks-welcome-title">从一件小事，开始推进</h2>
+        <p>把待办记下来，或让 Lyle 帮你整理。</p>
+        <div class="welcome-actions">
+          <AppButton class="welcome-primary" @click="openTodoCreator"><Plus :size="19" aria-hidden="true" />新建待办</AppButton>
+          <RouterLink class="text-action" to="/"><MessageSquare :size="18" aria-hidden="true" />让 Lyle 帮我梳理</RouterLink>
         </div>
-        <button type="button" :disabled="loading" @click="refresh()">重试加载</button>
+      </section>
+      <section v-if="isEmpty" class="task-capabilities" aria-label="任务可以帮你做什么">
+        <article>
+          <span class="capability-icon"><ClipboardList :size="23" aria-hidden="true" /></span>
+          <div><h3>待办清单</h3><p>记录事项与截止时间，随时更新进度。</p></div>
+        </article>
+        <article>
+          <span class="capability-icon"><CalendarDays :size="23" aria-hidden="true" /></span>
+          <div><h3>日历安排</h3><p>按日期查看待办和聊天创建的日历事件。</p></div>
+        </article>
+        <article>
+          <span class="capability-icon"><Bell :size="23" aria-hidden="true" /></span>
+          <div><h3>到期提醒</h3><p>集中查看待办、日历与跟进产生的提醒。</p></div>
+        </article>
       </section>
 
-    <article v-if="nextTodo || unreadReminderPreview || duplicateTodoCount > 0" class="item task-command-center">
-      <div class="section-title">
-        <div>
-          <h2>执行焦点</h2>
-          <p class="muted">优先展示当前最应该处理的任务、提醒和重复项。</p>
-        </div>
-        <span class="badge" :class="{ danger: overdueTodos.length > 0, pending: todayTodos.length > 0 && overdueTodos.length === 0, success: overdueTodos.length === 0 && todayTodos.length === 0 }">
-          {{ overdueTodos.length > 0 ? `${overdueTodos.length} 个逾期` : todayTodos.length > 0 ? `${todayTodos.length} 个今日` : '状态稳定' }}
-        </span>
-      </div>
-      <div class="task-focus-grid">
-        <section v-if="nextTodo" class="task-focus-card" :class="{ danger: isOverdue(nextTodo), pending: isToday(nextTodo.dueAt) }">
-          <small class="memory-meta">优先待办</small>
-          <strong>{{ nextTodo.title }}</strong>
-          <span>{{ statusText(nextTodo.status) }} · {{ todoTimeText(nextTodo) }}</span>
-          <small v-if="goalLinkText(nextTodo)" class="memory-meta">关联目标：{{ goalLinkText(nextTodo) }}</small>
-          <span class="row">
-            <button class="inline secondary" type="button" :disabled="isTodoBusy(nextTodo.id)" @click="postponeTodoToTomorrow(nextTodo)">明天 9 点</button>
-            <button class="inline" type="button" :disabled="isTodoBusy(nextTodo.id)" @click="setTodoStatus(nextTodo.id, 'done')">
-              {{ isTodoBusy(nextTodo.id) ? '处理中…' : '完成' }}
-            </button>
-          </span>
-        </section>
-        <section v-if="unreadReminderPreview" class="task-focus-card pending">
-          <small class="memory-meta">未读提醒</small>
-          <strong>{{ unreadReminderPreview.title }}</strong>
-          <span>{{ unreadReminderPreview.message }}</span>
-          <button class="inline" type="button" :disabled="isReminderBusy(unreadReminderPreview.id)" @click="readReminder(unreadReminderPreview.id)">
-            {{ isReminderBusy(unreadReminderPreview.id) ? '处理中…' : '标记已读' }}
-          </button>
-        </section>
-        <section v-if="duplicateTodoCount > 0" class="task-focus-card pending">
-          <small class="memory-meta">重复提醒</small>
-          <strong>已隐藏 {{ duplicateTodoCount }} 个重复待办</strong>
-          <span>列表按标题、状态和截止时间去重展示，避免测试数据干扰执行判断。</span>
-        </section>
-      </div>
-    </article>
-
-    <div class="status-grid" aria-label="任务状态摘要">
-      <div>
-        <span class="metric">{{ sourceErrors.todos ? '—' : openTodos.length }}</span>
-        <span class="muted">进行中待办</span>
-      </div>
-      <div>
-        <span class="metric">{{ sourceErrors.todos ? '—' : todayTodos.length }}</span>
-        <span class="muted">今日到期</span>
-      </div>
-      <div>
-        <span class="metric">{{ sourceErrors.todos ? '—' : overdueTodos.length }}</span>
-        <span class="muted">已逾期</span>
-      </div>
-      <div>
-        <span class="metric">{{ sourceErrors.reminders ? '—' : unreadReminders.length }}</span>
-        <span class="muted">未读提醒</span>
-      </div>
-    </div>
-
-    <article class="item collapsible-section">
-      <div class="section-title">
-        <div>
-          <h2>提醒</h2>
-          <p class="muted">展示由待办、日历和 Agent 跟进产生的提醒。</p>
-        </div>
-        <span class="badge">{{ sourceErrors.reminders ? '—' : unreadReminders.length }} 未读</span>
-      </div>
-      <ErrorState
-        v-if="sourceErrors.reminders"
-        title="提醒加载失败"
-        :message="sourceErrors.reminders"
-        :retrying="loading"
-        @retry="refresh()"
-      />
       <template v-else>
-        <p v-if="reminders.length === 0" class="muted">暂无提醒。</p>
-        <div
-          v-for="item in reminders"
-          :key="item.id"
-          class="memory-row stacked"
-          :class="{ disabled: item.status === 'read' }"
-        >
-          <strong>{{ item.title }}</strong>
-          <span>{{ item.message }} · {{ reminderTimeText(item.createdAt) }}</span>
-          <span class="row">
-            <button
-              v-if="item.status !== 'read'"
-              class="inline"
-              type="button"
-              :disabled="isReminderBusy(item.id)"
-              @click="readReminder(item.id)"
-            >
-              {{ isReminderBusy(item.id) ? '处理中…' : '标记已读' }}
-            </button>
-            <small v-else class="memory-meta">已读</small>
-          </span>
-        </div>
-      </template>
-    </article>
+        <section v-if="partialSourcesFailed" class="task-partial-warning" role="status">
+          <div><strong>部分任务信息未能加载</strong><p>{{ failedSourceLabel }}暂时不可用；其余已加载内容仍可继续处理。</p></div>
+          <AppButton variant="secondary" :disabled="loading" @click="refresh()">重试加载</AppButton>
+        </section>
+        <dl class="task-summary" aria-label="任务状态摘要">
+          <div><dt>进行中</dt><dd>{{ sourceErrors.todos ? '—' : openTodos.length }}</dd></div>
+          <div><dt>今日到期</dt><dd>{{ sourceErrors.todos ? '—' : todayTodos.length }}</dd></div>
+          <div><dt>已逾期</dt><dd :class="{ 'count-danger': !sourceErrors.todos && overdueTodos.length > 0 }">{{ sourceErrors.todos ? '—' : overdueTodos.length }}</dd></div>
+          <div><dt>未读提醒</dt><dd>{{ sourceErrors.reminders ? '—' : unreadReminders.length }}</dd></div>
+        </dl>
 
-    <div class="grid">
-      <article class="item todo-panel">
-        <div class="section-title">
-          <h2>待办</h2>
-          <div v-if="!sourceErrors.todos" class="segmented todo-filter-tabs" aria-label="待办状态筛选">
-            <button :class="{ active: activeTab === 'open' }" type="button" @click="activeTab = 'open'">进行中 {{ tabCount('open') }}</button>
-            <button :class="{ active: activeTab === 'today' }" type="button" @click="activeTab = 'today'">今日 {{ tabCount('today') }}</button>
-            <button :class="{ active: activeTab === 'upcoming' }" type="button" @click="activeTab = 'upcoming'">即将到期 {{ tabCount('upcoming') }}</button>
-            <button :class="{ active: activeTab === 'overdue' }" type="button" @click="activeTab = 'overdue'">逾期 {{ tabCount('overdue') }}</button>
-            <button :class="{ active: activeTab === 'done' }" type="button" @click="activeTab = 'done'">已完成 {{ tabCount('done') }}</button>
-            <button :class="{ active: activeTab === 'cancelled' }" type="button" @click="activeTab = 'cancelled'">已取消 {{ tabCount('cancelled') }}</button>
-            <button :class="{ active: activeTab === 'all' }" type="button" @click="activeTab = 'all'">全部 {{ tabCount('all') }}</button>
+        <article class="task-panel todo-panel" aria-labelledby="todo-list-heading">
+          <div class="todo-panel-heading"><h2 id="todo-list-heading" ref="todoListHeading" tabindex="-1">我的待办</h2><span v-if="!sourceErrors.todos" class="panel-count">{{ todos.length }} 项</span></div>
+          <div v-if="!sourceErrors.todos" class="todo-filter-tabs" role="group" aria-label="待办状态筛选">
+            <button v-for="filter in todoFilters" :key="filter.value" :class="{ active: activeTab === filter.value }" :aria-pressed="activeTab === filter.value" type="button" @click="activeTab = filter.value">{{ filter.label }} <span>{{ tabCount(filter.value) }}</span></button>
           </div>
-        </div>
-        <ErrorState
-          v-if="sourceErrors.todos"
-          title="待办加载失败"
-          :message="sourceErrors.todos"
-          :retrying="loading"
-          @retry="refresh()"
-        />
-        <template v-else>
-          <form class="manual-todo-form" @submit.prevent="createTodoManually">
-            <input v-model="newTodoTitle" data-testid="manual-todo-title" placeholder="输入待办标题" aria-label="待办标题" :disabled="isCreatingTodo()" />
-            <input v-model="newTodoDueAt" data-testid="manual-todo-due-at" type="datetime-local" aria-label="截止时间" :disabled="isCreatingTodo()" />
-            <button data-testid="manual-todo-submit" type="submit" :disabled="isCreatingTodo() || !newTodoTitle.trim()">
-              {{ isCreatingTodo() ? '创建中…' : '新建待办' }}
-            </button>
-          </form>
-          <p v-if="visibleTodos.length === 0" class="muted">暂无待办。可以在这里直接新建，也可以通过聊天生成候选待办。</p>
+          <ErrorState v-if="sourceErrors.todos" title="待办加载失败" :message="sourceErrors.todos" :retrying="loading" @retry="refresh()" />
+          <template v-else>
+            <p v-if="duplicateTodoCount > 0" class="duplicate-note">已合并展示 {{ duplicateTodoCount }} 个标题、状态和截止时间相同的待办。</p>
+            <section v-if="visibleTodos.length === 0" class="todo-empty" role="status">
+              <CheckCheck v-if="activeTab === 'open' && todos.length && todos.every(item => item.status === 'done')" :size="30" aria-hidden="true" />
+              <ClipboardList v-else :size="30" aria-hidden="true" />
+              <h3>{{ todoEmptyState.title }}</h3>
+              <p>{{ todoEmptyState.description }}</p>
+              <button v-if="todoEmptyState.target" class="text-action" type="button" @click="activeTab = todoEmptyState.target || 'all'">{{ todoEmptyState.target === 'done' ? '查看已完成' : '查看全部待办' }}</button>
+              <button v-else class="text-action" type="button" @click="openTodoCreator">新建待办</button>
+            </section>
+            <div v-else class="todo-list">
           <div v-for="item in visibleTodos" :key="item.id" class="task-row" :class="{ disabled: item.status !== 'open', danger: isOverdue(item), pending: isToday(item.dueAt) }">
-          <strong>
-            {{ item.title }}
-            <span v-if="isOverdue(item)" class="badge danger">逾期</span>
-            <span v-else-if="isToday(item.dueAt)" class="badge pending">今日</span>
-          </strong>
-          <span>{{ statusText(item.status) }} · {{ todoTimeText(item) }}</span>
-          <small v-if="formatSourceReference(item.sourceRef)" class="memory-meta">来源：{{ formatSourceReference(item.sourceRef) }}</small>
-          <small v-if="goalLinkText(item)" class="memory-meta">
-            关联目标：{{ goalLinkText(item) }}
-          </small>
-          <span v-if="item.status === 'open'" class="row">
-            <input
-              class="inline-input"
-              type="datetime-local"
-              :value="todoDueInputValue(item)"
-              :disabled="isTodoBusy(item.id)"
-              @input="setTodoDueEdit(item, $event)"
-            />
-            <button class="inline secondary" type="button" :disabled="isTodoBusy(item.id)" @click="saveTodoDueAt(item)">保存时间</button>
-            <button class="inline secondary" type="button" :disabled="isTodoBusy(item.id)" @click="postponeTodoToTomorrow(item)">明天 9 点</button>
-          </span>
-          <span class="row">
-            <button v-if="item.status !== 'done'" class="inline" type="button" :disabled="isTodoBusy(item.id)" @click="setTodoStatus(item.id, 'done')">完成</button>
-            <button v-if="item.status !== 'open'" class="inline secondary" type="button" :disabled="isTodoBusy(item.id)" @click="setTodoStatus(item.id, 'open')">重新打开</button>
-            <button v-if="item.status !== 'cancelled'" class="inline secondary" type="button" :disabled="isTodoBusy(item.id)" @click="setTodoStatus(item.id, 'cancelled')">取消</button>
-            <button class="inline danger" type="button" :disabled="isTodoBusy(item.id)" @click="pendingDeleteTodoId = item.id">删除</button>
-          </span>
+          <div class="task-copy">
+            <strong>
+              {{ item.title }}
+              <span v-if="isOverdue(item)" class="badge danger">逾期</span>
+              <span v-else-if="item.status === 'open' && isToday(item.dueAt)" class="badge pending">今日</span>
+            </strong>
+            <span>{{ statusText(item.status) }} · {{ todoTimeText(item) }}</span>
+            <small v-if="formatSourceReference(item.sourceRef)" class="memory-meta">来源：{{ formatSourceReference(item.sourceRef) }}</small>
+            <small v-if="goalLinkText(item)" class="memory-meta">关联目标：{{ goalLinkText(item) }}</small>
+          </div>
+          <div class="task-row-controls">
+            <span class="row task-status-actions">
+              <button v-if="item.status !== 'done'" class="inline" type="button" :disabled="isTodoBusy(item.id)" @click="setTodoStatus(item.id, 'done')">完成</button>
+              <button v-if="item.status !== 'open'" class="inline secondary" type="button" :disabled="isTodoBusy(item.id)" @click="setTodoStatus(item.id, 'open')">重新打开</button>
+              <button v-if="item.status !== 'cancelled'" class="inline secondary" type="button" :disabled="isTodoBusy(item.id)" @click="setTodoStatus(item.id, 'cancelled')">取消</button>
+              <button class="inline danger" type="button" :disabled="isTodoBusy(item.id)" @click="pendingDeleteTodoId = item.id">删除</button>
+            </span>
+            <details v-if="item.status === 'open'" class="task-time-editor">
+              <summary>调整时间<ChevronDown :size="14" aria-hidden="true" /></summary>
+              <div class="task-time-fields">
+                <input
+                  class="inline-input"
+                  type="datetime-local"
+                  :aria-label="`调整 ${item.title} 的截止时间`"
+                  :value="todoDueInputValue(item)"
+                  :disabled="isTodoBusy(item.id)"
+                  @input="setTodoDueEdit(item, $event)"
+                />
+                <button class="inline secondary" type="button" :disabled="isTodoBusy(item.id)" @click="saveTodoDueAt(item)">保存时间</button>
+                <button class="inline secondary" type="button" :disabled="isTodoBusy(item.id)" @click="postponeTodoToTomorrow(item)">明天 9 点</button>
+              </div>
+            </details>
+          </div>
           <ConfirmActionDialog
             :open="pendingDeleteTodoId === item.id"
             title="删除待办"
@@ -740,18 +714,14 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
             @confirm="removeTodo(item.id)"
           />
           </div>
-        </template>
-      </article>
+            </div>
+          </template>
+        </article>
 
-      <article class="item execution-calendar">
-        <div class="section-title">
-          <div>
-            <h2>执行日历</h2>
-            <p class="muted">点击日期查看当天待办、日历事件和提醒。</p>
-          </div>
-          <span class="badge">{{ sourceErrors.calendar ? '—' : calendarTotal }} 项</span>
-        </div>
-
+        <section class="task-secondary" aria-label="日历与提醒">
+          <details class="task-panel execution-calendar" :open="Boolean(sourceErrors.calendar || partialSourcesFailed || upcomingEvents.length || weekDueTodos.length)">
+            <summary><span class="secondary-icon"><CalendarDays :size="20" aria-hidden="true" /></span><span class="secondary-heading"><strong>执行日历</strong><small>按日期查看待办、事件和提醒</small></span><span class="panel-count">{{ sourceErrors.calendar ? '加载失败' : `${upcomingEvents.length} 个事件` }}</span><ChevronDown :size="17" class="disclosure-chevron" aria-hidden="true" /></summary>
+            <div class="secondary-content">
         <ErrorState
           v-if="sourceErrors.calendar"
           title="日历加载失败"
@@ -800,6 +770,7 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
             class="calendar-day"
             :class="{ active: isSameDate(day.value, selectedDate), today: isCurrentDay(day.value) }"
             type="button"
+            :aria-pressed="isSameDate(day.value, selectedDate)"
             @click="selectCalendarDate(day.value)"
           >
             <span>周{{ weekdayText(day.value) }}</span>
@@ -810,7 +781,7 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
 
         <div class="calendar-day-detail">
           <div class="section-title">
-            <strong>{{ calendarScope === 'week' ? '未来 7 天到期' : selectedDateText() }}</strong>
+            <strong>{{ calendarScope === 'week' ? '本周到期' : selectedDateText() }}</strong>
             <small v-if="calendarScope === 'day'" class="memory-meta">待办 {{ selectedDayTodos.length }} · 事件 {{ selectedDayEvents.length }} · 提醒 {{ selectedDayReminders.length }}</small>
             <small v-else class="memory-meta">待办 {{ weekDueTodos.length }}</small>
           </div>
@@ -897,118 +868,240 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
           </section>
 
           <div v-if="calendarTotal === 0 && weekDueTodos.length === 0" class="empty-state compact">
-            <strong>{{ calendarScope === 'week' ? '已加载的数据中，未来 7 天暂无到期待办' : '已加载的数据中，当天暂无安排' }}</strong>
+            <strong>{{ calendarScope === 'week' ? '本周暂无到期待办' : '当天暂无安排' }}</strong>
             <span>可以在聊天里说“创建日历：明天 10 点开会”，或给待办设置截止时间。</span>
           </div>
         </div>
         </template>
-      </article>
-    </div>
+            </div>
+          </details>
+          <details class="task-panel reminders-panel" :open="Boolean(reminders.length || partialSourcesFailed)">
+            <summary><span class="secondary-icon"><Bell :size="20" aria-hidden="true" /></span><span class="secondary-heading"><strong>提醒</strong><small>待办、日历与 Agent 的跟进</small></span><span class="panel-count">{{ sourceErrors.reminders ? '加载失败' : `${unreadReminders.length} 未读` }}</span><ChevronDown :size="17" class="disclosure-chevron" aria-hidden="true" /></summary>
+            <div class="secondary-content">
+      <ErrorState
+        v-if="sourceErrors.reminders"
+        title="提醒加载失败"
+        :message="sourceErrors.reminders"
+        :retrying="loading"
+        @retry="refresh()"
+      />
+      <template v-else>
+        <p v-if="reminders.length === 0" class="muted">暂无提醒。</p>
+        <div
+          v-for="item in reminders"
+          :key="item.id"
+          class="memory-row stacked"
+          :class="{ disabled: item.status === 'read' }"
+        >
+          <strong>{{ item.title }}</strong>
+          <span>{{ item.message }} · {{ reminderTimeText(item.createdAt) }}</span>
+          <span class="row">
+            <button
+              v-if="item.status !== 'read'"
+              class="inline"
+              type="button"
+              :disabled="isReminderBusy(item.id)"
+              @click="readReminder(item.id)"
+            >
+              {{ isReminderBusy(item.id) ? '处理中…' : '标记已读' }}
+            </button>
+            <small v-else class="memory-meta">已读</small>
+          </span>
+        </div>
+      </template>
+            </div>
+          </details>
+        </section>
+      </template>
     </template>
+
+    <DetailDrawer :open="showCreateTodo" title="新建待办" description="先记下要做的事，时间可以稍后再安排。" @update:open="setTodoCreatorOpen">
+      <form id="manual-todo-form" class="manual-todo-form" @submit.prevent="createTodoManually">
+        <p v-if="createTodoError" class="create-todo-error" role="alert">{{ createTodoError }}</p>
+        <label for="manual-todo-title">待办标题</label>
+        <input id="manual-todo-title" ref="newTodoInput" v-model="newTodoTitle" data-testid="manual-todo-title" placeholder="例如：整理本周的项目进展" autofocus :disabled="isCreatingTodo()" />
+        <label for="manual-todo-due-at">截止时间 <span>选填</span></label>
+        <input id="manual-todo-due-at" v-model="newTodoDueAt" data-testid="manual-todo-due-at" type="datetime-local" :disabled="isCreatingTodo()" aria-describedby="todo-due-hint" />
+        <p id="todo-due-hint" class="form-hint">设置时间后，可以在执行日历中一起查看。</p>
+      </form>
+      <template #footer>
+        <AppButton variant="secondary" :disabled="isCreatingTodo()" @click="setTodoCreatorOpen(false)">取消</AppButton>
+        <AppButton form="manual-todo-form" data-testid="manual-todo-submit" type="submit" :loading="isCreatingTodo()" :disabled="!newTodoTitle.trim()">{{ isCreatingTodo() ? '创建中…' : '创建待办' }}</AppButton>
+      </template>
+    </DetailDrawer>
   </section>
 </template>
 
 <style scoped>
-.task-partial-warning {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  border: 1px solid var(--warning-border);
-  border-radius: var(--radius-lg);
-  background: var(--warning-soft);
-  padding: var(--space-4);
-  color: var(--warning-strong);
+.tasks-page { display: grid; gap: 24px; width: min(100%, 1180px); min-width: 0; margin: 0 auto; }
+.tasks-page--empty { gap: 0; }
+.tasks-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.tasks-header--empty { min-height: 40px; justify-content: flex-end; }
+.tasks-header h1 { margin: 0; font-size: 32px; line-height: 1.3; letter-spacing: -.025em; }
+.tasks-header p { margin: 8px 0 0; color: var(--muted-foreground); line-height: 1.6; }
+.header-actions { display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.tasks-welcome { display: flex; flex-direction: column; align-items: center; padding: 52px 24px 58px; text-align: center; }
+.welcome-icon { display: grid; place-items: center; width: 84px; height: 84px; margin-bottom: 26px; border-radius: 20px; background: var(--primary-soft, #eef2ff); color: var(--primary); }
+.tasks-welcome h2 { margin: 0; color: var(--foreground); font-size: clamp(28px, 2.7vw, 40px); font-weight: 750; line-height: 1.4; letter-spacing: -.035em; }
+.tasks-welcome > p { margin: 15px 0 0; color: var(--muted-foreground); font-size: 18px; line-height: 1.7; }
+.welcome-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 26px; margin-top: 30px; }
+.welcome-actions .welcome-primary { min-height: 52px; padding: 13px 23px; border-radius: 10px; font-size: 16px; }
+.text-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; border: 0; border-radius: 4px; padding: 4px 0; background: transparent; color: var(--primary); font-size: 14px; font-weight: 600; text-decoration: none; box-shadow: none; }
+.welcome-actions .text-action { font-size: 16px; }
+.text-action:hover { background: transparent; color: var(--primary-hover); text-decoration: underline; text-underline-offset: 4px; }
+.tasks-page button:focus-visible, .text-action:focus-visible, summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+.task-capabilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; padding: 32px 0; border-top: 1px solid var(--border); }
+.task-capabilities article { display: flex; align-items: flex-start; gap: 16px; min-width: 0; }
+.capability-icon { display: grid; place-items: center; flex: 0 0 48px; height: 48px; border-radius: 12px; color: var(--primary); background: var(--primary-soft, #eef2ff); }
+.task-capabilities h3 { margin: 2px 0 7px; font-size: 16px; line-height: 1.5; }
+.task-capabilities p { max-width: 240px; margin: 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.7; }
+.task-notice { margin: 0; padding: 12px 16px; border: 1px solid var(--success-border); border-radius: 10px; background: var(--success-soft); color: var(--success-strong); font-size: 14px; line-height: 1.6; }
+.task-partial-warning { display: flex; align-items: center; justify-content: space-between; gap: 20px; border: 1px solid var(--warning-border); border-radius: 12px; background: var(--warning-soft); padding: 16px 20px; color: var(--warning-strong); }
+.task-partial-warning p { margin: 5px 0 0; color: var(--foreground); font-size: 14px; line-height: 1.6; }
+.task-partial-warning button { flex: 0 0 auto; }
+.task-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 36px; margin: 0; padding: 2px 0; }
+.task-summary > div { display: flex; align-items: baseline; gap: 10px; }
+.task-summary dt { color: var(--muted-foreground); font-size: 13px; }
+.task-summary dd { margin: 0; color: var(--foreground); font-size: 20px; font-weight: 700; }
+.task-summary .count-danger { color: var(--danger-strong); }
+.task-panel { min-width: 0; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.todo-panel { padding: 22px 24px 8px; }
+.todo-panel-heading { display: flex; align-items: center; gap: 12px; }
+.todo-panel-heading h2 { margin: 0; color: var(--foreground); font-size: 19px; line-height: 1.5; }
+.todo-panel-heading h2:focus { outline: none; }
+.panel-count { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.todo-filter-tabs { display: flex; gap: 8px; width: 100%; max-width: 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; margin-top: 18px; border-bottom: 1px solid var(--border); padding: 0 0 10px; -webkit-overflow-scrolling: touch; }
+.todo-filter-tabs button { flex: 0 0 auto; min-height: 34px; border: 0; border-radius: 7px; background: transparent; padding: 7px 10px; color: var(--muted-foreground); font-size: 13px; font-weight: 550; white-space: nowrap; box-shadow: none; }
+.todo-filter-tabs button span { margin-left: 5px; font-size: 12px; opacity: .75; }
+.todo-filter-tabs button.active { background: var(--primary-soft, #eef2ff); color: var(--primary); font-weight: 650; }
+.todo-filter-tabs button:hover { background: var(--surface-muted); color: var(--foreground); }
+.todo-filter-tabs button.active:hover { background: var(--primary-soft, #eef2ff); color: var(--primary); }
+.duplicate-note { margin: 14px 0 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.7; }
+.todo-list { display: grid; min-width: 0; }
+.task-row { grid-template-columns: minmax(0, 1fr) auto; align-items: center; min-width: 0; gap: 16px 28px; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; padding: 18px 0; }
+.task-row:first-child { border-top: 0; }
+.task-row.pending, .task-row.danger { border-color: var(--border); background: transparent; }
+.task-copy { display: grid; min-width: 0; gap: 5px; }
+.task-copy > strong { color: var(--foreground); font-size: 15px; font-weight: 650; line-height: 1.65; overflow-wrap: anywhere; }
+.task-copy > span, .task-row .memory-meta { color: var(--muted-foreground); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.task-copy > strong .badge { margin-left: 6px; padding: 2px 7px; font-size: 11px; }
+.task-row-controls { display: grid; justify-items: end; min-width: 0; gap: 7px; }
+.task-row .row { display: flex; min-width: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+.task-time-editor { min-width: 0; max-width: 100%; }
+.task-time-editor[open] { width: 290px; }
+.task-time-editor summary { display: flex; align-items: center; justify-content: flex-end; gap: 5px; min-height: 26px; width: fit-content; margin-left: auto; border-radius: 4px; color: var(--muted-foreground); font-size: 12px; list-style: none; cursor: pointer; }
+.task-time-editor summary::-webkit-details-marker { display: none; }
+.task-time-editor summary:hover { color: var(--primary); }
+.task-time-editor[open] summary svg { transform: rotate(180deg); }
+.task-time-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-muted); }
+.task-row .inline-input { grid-column: 1 / -1; width: 100%; min-width: 0; max-width: 100%; min-height: 34px; box-sizing: border-box; padding: 6px 9px; font-size: 12px; }
+.task-row .inline, .calendar-agenda-item .inline { min-height: 32px; padding: 6px 10px; font-size: 12px; }
+.task-row.disabled { opacity: .72; }
+.todo-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 42px 16px; text-align: center; }
+.todo-empty > svg { margin-bottom: 3px; color: var(--primary); opacity: .7; }
+.todo-empty h3 { margin: 0; font-size: 17px; }
+.todo-empty p { max-width: 420px; margin: 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.7; }
+.todo-empty .text-action { margin-top: 2px; }
+.task-secondary { display: grid; min-width: 0; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.task-secondary summary { display: flex; min-width: 0; align-items: center; gap: 12px; padding: 19px 20px; list-style: none; cursor: pointer; }
+.task-secondary summary::-webkit-details-marker { display: none; }
+.secondary-icon { display: grid; place-items: center; flex: 0 0 40px; height: 40px; border-radius: 10px; color: var(--primary); background: var(--primary-soft, #eef2ff); }
+.secondary-heading { display: grid; min-width: 0; gap: 4px; }
+.secondary-heading strong { color: var(--foreground); font-size: 15px; }
+.secondary-heading small { color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.task-secondary summary > .panel-count { margin-left: auto; }
+.disclosure-chevron { flex-shrink: 0; color: var(--muted-foreground); transition: transform .15s; }
+.task-secondary details[open] > summary .disclosure-chevron { transform: rotate(180deg); }
+.secondary-content { min-width: 0; padding: 0 20px 20px; }
+.secondary-content > .muted { margin: 0; font-size: 14px; }
+.task-source-note { margin: 0; border: 1px solid var(--warning-border); border-radius: 8px; background: var(--warning-soft); padding: 10px 12px; color: var(--warning-strong); font-size: 12px; line-height: 1.65; }
+.calendar-quick-actions { gap: 6px; margin-top: 0; }
+.calendar-quick-actions button { min-width: 0; min-height: 52px; padding: 9px; border-color: var(--border); background: var(--surface-muted); font-size: 12px; }
+.calendar-quick-actions small { font-size: 11px; }
+.calendar-legend { margin-top: 14px; }
+.calendar-legend span { border: 0; background: transparent; padding: 0 8px 0 0; color: var(--muted-foreground); font-size: 11px; font-weight: 450; }
+.calendar-week-nav { min-width: 0; margin-top: 16px; gap: 6px; }
+.calendar-week-nav strong { font-size: 13px; }
+.calendar-week-nav .secondary { min-height: 32px; padding: 6px 8px; font-size: 12px; }
+.calendar-week-nav .row { min-width: 0; gap: 6px; }
+.calendar-strip { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.calendar-day { min-width: 0; min-height: 72px; border-color: var(--border); border-radius: 8px; background: transparent; padding: 7px 2px; }
+.calendar-day span, .calendar-day small { font-size: 10px; }
+.calendar-day strong { font-size: 13px; }
+.calendar-day.active { border-color: var(--primary); background: var(--primary-soft, #eef2ff); }
+.calendar-day.active strong { color: var(--primary); }
+.calendar-day.today:not(.active) { border-color: var(--primary-border, #c7d2fe); }
+.calendar-day-detail { gap: 14px; }
+.calendar-day-detail .section-title { display: flex; flex-wrap: wrap; gap: 7px; }
+.calendar-day-detail .section-title > strong { font-size: 14px; }
+.calendar-day-detail .memory-meta { font-size: 11px; }
+.calendar-agenda-item { min-width: 0; background: var(--surface); border-color: var(--border); }
+.calendar-agenda-item > div { min-width: 0; }
+.calendar-agenda-item strong { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.calendar-agenda-item span { font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.calendar-agenda-item .row { flex-wrap: wrap; gap: 6px; }
+.calendar-agenda-item.pending, .calendar-agenda-item.danger { background: transparent; border-color: var(--border); }
+.calendar-day-detail .empty-state { padding: 24px 8px; border: 0; background: transparent; }
+.calendar-day-detail .empty-state strong { font-size: 14px; }
+.calendar-day-detail .empty-state span { font-size: 12px; }
+.reminders-panel .memory-row { display: grid; gap: 8px; min-width: 0; margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 16px 0; background: transparent; }
+.reminders-panel .memory-row:first-of-type { border-top: 0; }
+.reminders-panel .memory-row strong { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.reminders-panel .memory-row > span { color: var(--muted-foreground); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.reminders-panel .memory-row .inline { min-height: 32px; padding: 6px 10px; font-size: 12px; }
+.manual-todo-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 0; }
+.manual-todo-form > label { margin-top: 10px; color: var(--foreground); font-size: 14px; font-weight: 650; }
+.manual-todo-form > label span { margin-left: 5px; color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
+.manual-todo-form input { width: 100%; min-width: 0; max-width: 100%; min-height: 44px; box-sizing: border-box; }
+.form-hint { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.7; }
+.create-todo-error { margin: 0; padding: 12px; border-radius: 8px; background: var(--danger-soft); color: var(--danger-strong); font-size: 14px; line-height: 1.6; }
+@media (max-width: 1000px) {
+  .task-secondary { grid-template-columns: minmax(0, 1fr); }
+  .task-capabilities { gap: 18px; }
+  .task-capabilities article { gap: 12px; }
 }
-
-.task-partial-warning p {
-  margin: 4px 0 0;
-  color: var(--foreground);
-}
-
-.task-partial-warning button {
-  flex: 0 0 auto;
-}
-
-.task-source-note {
-  margin: 0;
-  border: 1px solid var(--warning-border);
-  border-radius: var(--radius-md);
-  background: var(--warning-soft);
-  padding: var(--space-3);
-  color: var(--warning-strong);
-}
-
-.todo-panel .section-title {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-}
-
-.todo-filter-tabs {
-  display: flex;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
-  scrollbar-width: thin;
-  -webkit-overflow-scrolling: touch;
-}
-
-.todo-filter-tabs button {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-@media (max-width: 560px) {
-  .page {
-    gap: 10px;
-  }
-
-  .toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
-    gap: 8px;
-  }
-
-  .toolbar .muted,
-  .task-command-center .section-title p {
-    display: none;
-  }
-
-  .toolbar > button {
-    min-height: 36px;
-    padding: 7px 10px;
-  }
-
-  .task-command-center {
-    padding: 12px;
-  }
-
-  .status-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-  }
-
-  .status-grid > div {
-    min-height: 0;
-    padding: 8px 10px;
-  }
-
-  .status-grid .metric {
-    font-size: 18px;
-  }
-
-  .task-partial-warning {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .task-partial-warning button {
-    width: 100%;
-  }
+@media (max-width: 680px) {
+  .tasks-page { gap: 18px; }
+  .tasks-page--empty { gap: 0; }
+  .tasks-header { align-items: flex-start; gap: 12px; }
+  .tasks-header h1 { font-size: 26px; }
+  .tasks-header p { display: none; }
+  .header-actions { gap: 4px; }
+  .header-actions :deep(.app-button) { padding: 8px 10px; font-size: 13px; }
+  .tasks-welcome { padding: 30px 4px 36px; }
+  .welcome-icon { width: 64px; height: 64px; border-radius: 18px; margin-bottom: 20px; }
+  .welcome-icon > svg { width: 31px; height: 31px; }
+  .tasks-welcome h2 { max-width: 310px; font-size: 27px; }
+  .tasks-welcome > p { max-width: 285px; font-size: 15px; margin-top: 12px; }
+  .welcome-actions { gap: 14px; margin-top: 24px; }
+  .welcome-actions .welcome-primary { min-height: 46px; padding: 11px 16px; font-size: 14px; }
+  .welcome-actions .text-action { font-size: 14px; }
+  .task-capabilities { grid-template-columns: minmax(0, 1fr); gap: 22px; padding-top: 26px; }
+  .task-capabilities article { gap: 15px; }
+  .task-capabilities h3 { margin-bottom: 4px; font-size: 15px; }
+  .task-capabilities p { max-width: 100%; font-size: 13px; }
+  .capability-icon { flex-basis: 42px; height: 42px; border-radius: 11px; }
+  .task-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; }
+  .task-summary > div { gap: 8px; }
+  .task-summary dt { font-size: 12px; }
+  .task-summary dd { font-size: 18px; }
+  .todo-panel { padding: 18px 16px 4px; }
+  .task-row { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 18px 0; }
+  .task-row-controls { width: 100%; justify-items: start; gap: 8px; }
+  .task-time-editor[open] { width: 100%; }
+  .task-time-editor summary { margin-left: 0; justify-content: flex-start; }
+  .todo-empty { padding: 32px 4px; }
+  .todo-empty p { font-size: 13px; }
+  .task-secondary summary { padding: 16px; gap: 10px; }
+  .secondary-heading small { font-size: 11px; }
+  .secondary-content { padding: 0 16px 16px; }
+  .calendar-week-nav { grid-template-columns: auto minmax(0, 1fr); }
+  .calendar-week-nav strong { grid-column: 1 / -1; grid-row: 1; }
+  .calendar-week-nav > .row { justify-content: flex-end; }
+  .calendar-agenda-item { grid-template-columns: minmax(0, 1fr); }
+  .calendar-agenda-item > .inline { justify-self: start; }
+  .task-partial-warning { flex-direction: column; align-items: stretch; gap: 12px; padding: 14px; }
+  .task-partial-warning button { align-self: flex-start; }
 }
 </style>

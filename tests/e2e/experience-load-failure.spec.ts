@@ -34,7 +34,7 @@ test('Product experience pages distinguish API failures from real empty states',
   await page.goto('/execution-center')
   await expect(page.getByRole('heading', { name: '执行中心加载失败' })).toBeVisible()
   await expect(page.getByText('AI 服务暂时不可用')).toBeVisible()
-  await expect(page.getByText('没有等待确认的操作')).toHaveCount(0)
+  await expect(page.getByText('暂时没有需要你确认的事')).toHaveCount(0)
   await expect(page.getByText('还没有执行结果')).toHaveCount(0)
 
   await page.goto('/connections')
