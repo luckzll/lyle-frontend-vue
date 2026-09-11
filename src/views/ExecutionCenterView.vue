@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ArrowRight, CheckCircle2, ClipboardList, History, MessageSquare, RefreshCw, Search, ShieldCheck, SlidersHorizontal, X } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   confirmOperation,
@@ -26,12 +27,10 @@ import ConfirmationCard from '@/components/domain/ConfirmationCard.vue'
 import ResultSummaryCard from '@/components/domain/ResultSummaryCard.vue'
 import StatusBadge from '@/components/domain/StatusBadge.vue'
 import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
-import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
 import DetailDrawer from '@/components/layout/DetailDrawer.vue'
 import FilterBar from '@/components/layout/FilterBar.vue'
-import PageHeader from '@/components/layout/PageHeader.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import { createQueuedRefresh } from '@/composables/createQueuedRefresh'
 import { notifyExecutionAttentionChanged } from '@/composables/useExecutionBadgePolling'
@@ -73,6 +72,10 @@ const agentTasks = ref<AgentTask[]>([])
 const pageLoading = ref(false)
 const loadError = ref('')
 const partialError = ref('')
+const confirmationSourceError = ref('')
+const resultSourceError = ref('')
+const attentionSourceError = ref('')
+const agentTaskSourceError = ref('')
 const historyLoading = ref(false)
 const historyLoaded = ref(false)
 const historyError = ref('')
@@ -89,7 +92,7 @@ const selectedAutomationId = ref(queryText(route.query.automationId))
 const selectedStatus = ref(queryText(route.query.status))
 const selectedTime = ref(queryText(route.query.time) || 'all')
 const operationStatus = ref(queryText(route.query.operationStatus) || 'all')
-const mobileFiltersOpen = ref(false)
+const filtersOpen = ref(false)
 const confirmationLoading = ref<Record<number, boolean>>({})
 const historyActionLoading = ref<Record<number, boolean>>({})
 const resultLoading = ref<Record<number, boolean>>({})
@@ -171,11 +174,11 @@ const visibleResultsLoading = computed(() => view.value === 'attention' ? attent
 const visibleResultsHasMore = computed(() => view.value === 'attention' ? attentionHasMore.value : resultHasMore.value)
 const visibleResultsMoreLoading = computed(() => view.value === 'attention' ? attentionMoreLoading.value : resultMoreLoading.value)
 const tabs = computed(() => [
-  { id: 'confirmations' as const, label: `待我确认 ${filteredConfirmations.value.length + workflowConfirmationItems.value.length}` },
-  { id: 'attention' as const, label: `需要处理 ${filteredAttention.value.length}${attentionHasMore.value ? '+' : ''}` },
-  { id: 'results' as const, label: '最新结果' },
-  { id: 'history' as const, label: '历史记录' }
-])
+  { id: 'confirmations' as const, title: '待我确认', count: filteredConfirmations.value.length + workflowConfirmationItems.value.length, more: false },
+  { id: 'attention' as const, title: '需要处理', count: filteredAttention.value.length, more: attentionHasMore.value },
+  { id: 'results' as const, title: '最新结果', count: 0, more: false },
+  { id: 'history' as const, title: '历史记录', count: 0, more: false }
+].map((item) => ({ ...item, label: item.count ? `${item.title} ${item.count}${item.more ? '+' : ''}` : item.title })))
 const automationOptions = computed(() => {
   const options = new Map<number, string>()
   for (const item of [...results.value, ...attention.value]) {
@@ -195,6 +198,55 @@ const visibleOperations = computed(() => operations.value.filter((item) => {
   }
   return true
 }))
+const activeFilters = computed(() => {
+  const items: string[] = []
+  if (selectedProjectId.value) items.push(`项目 #${selectedProjectId.value}`)
+  if (isResultView.value && selectedAutomationId.value) {
+    items.push(automationOptions.value.find((item) => String(item.id) === selectedAutomationId.value)?.name || `自动化 #${selectedAutomationId.value}`)
+  }
+  if (isResultView.value && selectedStatus.value) {
+    const statuses: Record<string, string> = { completed: '已完成', partial: '部分完成', failed: '失败', awaiting_confirmation: '等待确认' }
+    items.push(`状态：${statuses[selectedStatus.value] || selectedStatus.value}`)
+  }
+  if (selectedTime.value !== 'all') {
+    const times: Record<string, string> = { '24h': '最近 24 小时', '7d': '最近 7 天', '30d': '最近 30 天' }
+    items.push(times[selectedTime.value] || selectedTime.value)
+  }
+  if (view.value === 'history' && operationStatus.value !== 'all') items.push(`操作：${operationStatusText(operationStatus.value)}`)
+  return items
+})
+const hasActiveFilters = computed(() => activeFilters.value.length > 0)
+const currentListLoading = computed(() => view.value === 'history'
+  ? historyLoading.value || !historyLoaded.value && !historyError.value
+  : isResultView.value ? visibleResultsLoading.value : attentionListLoading.value)
+const currentListError = computed(() => {
+  if (view.value === 'history') return historyError.value
+  if (view.value === 'confirmations') return confirmationSourceError.value || attentionSourceError.value || agentTaskSourceError.value
+  return (view.value === 'attention' ? attentionSourceError.value : resultSourceError.value) || agentTaskSourceError.value
+})
+const currentListEmpty = computed(() => {
+  if (view.value === 'history') return !visibleOperations.value.length
+  if (visibleAgentTasks.value.length) return false
+  return view.value === 'confirmations'
+    ? !displayConfirmations.value.length && !displayWorkflowConfirmations.value.length
+    : !visibleResults.value.length
+})
+const showEmptyPanel = computed(() => !pageLoading.value && !loadError.value && !currentListLoading.value && !currentListError.value && currentListEmpty.value)
+const showEmptyGuide = computed(() => showEmptyPanel.value && !hasActiveFilters.value && view.value === 'confirmations'
+  && !results.value.length && !attention.value.length && !agentTasks.value.length)
+const emptyContent = computed(() => {
+  if (hasActiveFilters.value) {
+    const subjects = { confirmations: '待确认事项', attention: '待处理结果', results: '执行结果', history: '操作记录' }
+    return { icon: Search, title: `没有符合筛选的${subjects[view.value]}`, description: '试着调整项目、时间或状态，也可以清除筛选查看全部内容。' }
+  }
+  const states = {
+    confirmations: { icon: ShieldCheck, title: '暂时没有需要你确认的事', description: '需要你决定的操作会集中在这里。了解原因和影响，再决定是否继续。' },
+    attention: { icon: CheckCircle2, title: '当前没有需要处理的结果', description: '执行遇到问题、只完成一部分或等待确认时，会显示在这里。你也可以查看最新结果。' },
+    results: { icon: ClipboardList, title: '让每次执行，都有迹可循', description: '还没有执行结果。运行一次项目巡检，或让 Lyle 完成一项任务，结果就会出现在这里。' },
+    history: { icon: History, title: '还没有操作记录', description: '你确认执行或拒绝的操作都会留在这里，方便随时回看做过的决定。' }
+  }
+  return states[view.value]
+})
 const highRiskBusy = computed(() => {
   const target = highRiskTarget.value
   if (!target) return false
@@ -263,29 +315,34 @@ async function load() {
 }
 
 async function loadAgentTasks(generation: number) {
+  if (generation === loadGeneration) agentTaskSourceError.value = ''
   try {
     const items = (await listAgentTasks({ limit: 100 })).data.items
     if (generation === loadGeneration) agentTasks.value = items
     return ''
   } catch (error: any) {
-    if (generation === loadGeneration) agentTasks.value = []
-    return requestMessage(error, 'Agent Task 暂时无法加载。')
+    const message = requestMessage(error, '任务运行记录暂时无法加载。')
+    if (generation === loadGeneration) { agentTasks.value = []; agentTaskSourceError.value = message }
+    return message
   }
 }
 
 async function loadConfirmations(generation: number) {
+  if (generation === loadGeneration) confirmationSourceError.value = ''
   try {
     const items = (await listConfirmations()).data.items
     if (generation === loadGeneration) confirmations.value = items
     return ''
   } catch (error: any) {
-    if (generation === loadGeneration) confirmations.value = []
-    return requestMessage(error, '待确认操作暂时无法加载。')
+    const message = requestMessage(error, '待确认操作暂时无法加载。')
+    if (generation === loadGeneration) { confirmations.value = []; confirmationSourceError.value = message }
+    return message
   }
 }
 
 async function reloadResults(showLoading = true): Promise<string> {
   const generation = ++resultListGeneration
+  resultSourceError.value = ''
   resultMoreLoading.value = false
   if (showLoading) resultListLoading.value = true
   try {
@@ -297,6 +354,7 @@ async function reloadResults(showLoading = true): Promise<string> {
     return ''
   } catch (error: any) {
     if (generation === resultListGeneration) {
+      resultSourceError.value = requestMessage(error, '最新结果暂时无法加载。')
       results.value = []
       resultNextCursor.value = null
       resultHasMore.value = false
@@ -328,6 +386,7 @@ async function loadMoreResults() {
 
 async function reloadAttention(showLoading = true): Promise<string> {
   const generation = ++attentionListGeneration
+  attentionSourceError.value = ''
   attentionMoreLoading.value = false
   if (showLoading) attentionListLoading.value = true
   const statuses = attentionFetchStatuses()
@@ -361,6 +420,7 @@ async function reloadAttention(showLoading = true): Promise<string> {
   }
   attention.value = mergeUniqueResults([], items)
   attentionPages.value = pages
+  attentionSourceError.value = failureMessages[0] || ''
   if (failureMessages.length && showLoading) partialError.value = '部分需处理结果暂时无法加载，已保留其余可用内容。'
   if (generation === attentionListGeneration) attentionListLoading.value = false
   return failureMessages[0] || ''
@@ -465,10 +525,6 @@ async function setView(next: ViewKey) {
   trackExecutionEvent('execution_filter_applied', `view_${next}`)
 }
 
-function setViewFromEvent(event: Event) {
-  void setView((event.target as HTMLSelectElement).value as ViewKey)
-}
-
 function syncFilters(): Promise<void> {
   selectedProjectId.value = selectedProjectId.value.replace(/\D/g, '')
   selectedAutomationId.value = selectedAutomationId.value.replace(/\D/g, '')
@@ -510,7 +566,7 @@ async function reloadCurrentResultView() {
   if (pageLoading.value) return
   partialError.value = ''
   if (view.value === 'results') await reloadResults()
-  else if (view.value === 'attention') await reloadAttention()
+  else if (view.value === 'attention' || view.value === 'confirmations') await reloadAttention()
 }
 
 async function loadMoreVisibleResults() {
@@ -815,6 +871,15 @@ async function clearResultOnlyFilters() {
   await syncFilters()
 }
 
+async function clearAllFilters() {
+  selectedProjectId.value = ''
+  selectedAutomationId.value = ''
+  selectedStatus.value = ''
+  selectedTime.value = 'all'
+  operationStatus.value = 'all'
+  await syncFilters()
+}
+
 function workflowRunNeedsSecondConfirmation(run: Record<string, unknown>) {
   if (run.status !== 'paused' || !Array.isArray(run.steps)) return false
   return run.steps.some((step) => {
@@ -1073,13 +1138,13 @@ onBeforeUnmount(clearDismissUndoTimer)
 
 <template>
   <div class="execution-page">
-    <PageHeader eyebrow="结果、影响、下一步" title="执行中心" description="先看结论，技术详情按需打开。">
-      <template #actions><RouterLink class="secondary-link" to="/automations">创建自动化</RouterLink></template>
-    </PageHeader>
+    <header class="execution-header">
+      <div><h1>执行中心</h1><p>查看执行结果，处理需要你确认的事项。</p></div>
+      <RouterLink class="text-action" to="/automations">管理自动化 <ArrowRight :size="17" aria-hidden="true" /></RouterLink>
+    </header>
 
     <LoadingState v-if="pageLoading" label="正在加载执行数据" :cards="3" />
     <section v-else-if="loadError" class="load-error">
-      <h2>执行中心加载失败</h2>
       <ErrorState title="执行中心加载失败" :message="loadError" @retry="load" />
     </section>
     <template v-else>
@@ -1095,28 +1160,32 @@ onBeforeUnmount(clearDismissUndoTimer)
         >撤销</AppButton>
       </div>
 
-      <nav class="execution-tabs" aria-label="执行中心分区">
-        <button
-          v-for="item in tabs"
-          :key="item.id"
-          type="button"
-          :class="{ active: view === item.id }"
-          :aria-current="view === item.id ? 'page' : undefined"
-          @click="setView(item.id)"
-        >{{ item.label }}</button>
-      </nav>
+      <div class="execution-toolbar">
+        <nav class="execution-tabs" aria-label="执行中心分区">
+          <button
+            v-for="item in tabs"
+            :key="item.id"
+            type="button"
+            :class="{ active: view === item.id }"
+            :aria-label="item.label"
+            :aria-current="view === item.id ? 'page' : undefined"
+            @click="setView(item.id)"
+          >{{ item.title }}<span v-if="item.count" class="tab-count" aria-hidden="true">{{ item.count }}{{ item.more ? '+' : '' }}</span></button>
+        </nav>
+        <div class="toolbar-actions">
+          <button class="filter-toggle" type="button" :class="{ active: filtersOpen || hasActiveFilters }" :aria-expanded="filtersOpen" aria-controls="execution-filters" @click="filtersOpen = !filtersOpen">
+            <SlidersHorizontal :size="16" aria-hidden="true" />{{ filtersOpen ? '收起筛选' : '筛选' }}<span v-if="activeFilters.length" class="filter-count">{{ activeFilters.length }}</span>
+          </button>
+          <button class="refresh-button" type="button" aria-label="刷新" title="刷新" @click="load"><RefreshCw :size="17" aria-hidden="true" /></button>
+        </div>
+      </div>
 
-      <label class="mobile-view-select">
-        <span>查看</span>
-        <select :value="view" aria-label="执行中心分区" @change="setViewFromEvent">
-          <option v-for="item in tabs" :key="item.id" :value="item.id">{{ item.label }}</option>
-        </select>
-      </label>
+      <div v-if="hasActiveFilters" class="active-filters" aria-label="当前筛选条件">
+        <span v-for="(filter, index) in activeFilters" :key="index" class="filter-chip" :title="filter">{{ filter }}</span>
+        <button class="text-action clear-filters" type="button" @click="clearAllFilters"><X :size="14" aria-hidden="true" />清除筛选</button>
+      </div>
 
-      <button class="mobile-filter-toggle secondary" type="button" :aria-expanded="mobileFiltersOpen" @click="mobileFiltersOpen = !mobileFiltersOpen">
-        {{ mobileFiltersOpen ? '收起筛选' : '筛选结果' }}
-      </button>
-      <FilterBar class="execution-filter-bar" :class="{ open: mobileFiltersOpen }">
+      <FilterBar v-if="filtersOpen" id="execution-filters" class="execution-filter-bar">
         <label>项目
           <input v-model.trim="selectedProjectId" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="全部项目" @change="syncFilters" />
         </label>
@@ -1140,24 +1209,56 @@ onBeforeUnmount(clearDismissUndoTimer)
             <option value="all">全部时间</option><option value="24h">最近 24 小时</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option>
           </select>
         </label>
-        <template #actions><AppButton variant="secondary" size="sm" @click="load">刷新</AppButton></template>
       </FilterBar>
 
-      <div v-if="isResultView" class="filter-scope" data-testid="execution-filter-scope" aria-live="polite">
+      <div v-if="isResultView && (filtersOpen || hasResultOnlyFilter)" class="filter-scope" data-testid="execution-filter-scope" aria-live="polite">
         <p>
-          项目和时间同时筛选 Agent Task 与执行结果；自动化和状态仅筛选执行结果。
+          项目和时间用于筛选任务与执行结果；自动化和状态仅用于筛选执行结果。
           <strong v-if="hasResultOnlyFilter">当前已启用结果专属筛选，Agent Task 暂时隐藏。</strong>
         </p>
         <AppButton v-if="hasResultOnlyFilter" variant="ghost" size="sm" @click="clearResultOnlyFilters">清除结果专属筛选</AppButton>
       </div>
 
       <section v-if="visibleAgentTasks.length" class="agent-task-section" aria-label="Agent Task">
-        <header><div><span>Agent Task</span><h2>受控任务运行</h2></div><RouterLink to="/agent-tasks">查看全部</RouterLink></header>
+        <header><div><h2>任务进展</h2></div><RouterLink to="/agent-tasks">查看全部</RouterLink></header>
         <div class="agent-task-grid"><AgentTaskCard v-for="task in visibleAgentTasks" :key="task.id" :task="task" /></div>
       </section>
 
+      <ErrorState
+        v-if="currentListEmpty && currentListError && !currentListLoading && view !== 'history'"
+        title="部分记录暂时无法加载"
+        :message="currentListError"
+        @retry="load"
+      />
+
+      <section
+        v-if="showEmptyPanel"
+        class="execution-empty"
+        :class="{ 'execution-empty--compact': hasActiveFilters || view === 'history' || view === 'attention' }"
+        aria-labelledby="execution-empty-title"
+      >
+        <span class="empty-icon" :class="`empty-icon--${hasActiveFilters ? 'filtered' : view}`"><component :is="emptyContent.icon" :size="34" :stroke-width="1.7" aria-hidden="true" /></span>
+        <h2 id="execution-empty-title">{{ emptyContent.title }}</h2>
+        <p>{{ emptyContent.description }}</p>
+        <div class="empty-actions">
+          <AppButton v-if="hasActiveFilters" variant="secondary" @click="clearAllFilters">查看全部</AppButton>
+          <template v-else-if="view === 'results'">
+            <RouterLink class="primary-link" to="/automations?templateId=first_project_inspection">运行一次项目巡检 <ArrowRight :size="17" aria-hidden="true" /></RouterLink>
+            <RouterLink class="text-action" to="/">开始对话 <MessageSquare :size="17" aria-hidden="true" /></RouterLink>
+          </template>
+          <RouterLink v-else-if="view === 'history'" class="text-action" to="/">开始对话 <ArrowRight :size="17" aria-hidden="true" /></RouterLink>
+          <button v-else class="text-action" type="button" @click="setView('results')">查看执行结果 <ArrowRight :size="17" aria-hidden="true" /></button>
+        </div>
+      </section>
+
+      <section v-if="showEmptyGuide" class="execution-guide" aria-label="了解执行中心">
+        <article><span class="guide-icon guide-icon--purple"><ShieldCheck :size="23" aria-hidden="true" /></span><div><h3>重要操作，由你确认</h3><p>先了解会发生什么，再决定是否继续。</p></div></article>
+        <article><span class="guide-icon guide-icon--blue"><ClipboardList :size="23" aria-hidden="true" /></span><div><h3>执行结果，清晰可见</h3><p>看结论、完成情况和下一步建议。</p></div></article>
+        <article><span class="guide-icon guide-icon--amber"><History :size="23" aria-hidden="true" /></span><div><h3>每个决定，都可回看</h3><p>已执行或拒绝的操作会保留记录。</p></div></article>
+      </section>
+
       <section v-if="view === 'confirmations'" class="card-list" aria-label="待我确认">
-        <EmptyState v-if="!displayConfirmations.length && !displayWorkflowConfirmations.length && !visibleAgentTasks.length" title="没有等待确认的操作" description="需要你决定的写操作和暂停步骤会集中出现在这里。" />
+        <LoadingState v-if="attentionListLoading" label="正在加载待确认事项" :cards="2" />
         <ResultSummaryCard
           v-for="item in displayWorkflowConfirmations"
           :key="`workflow-confirmation-${item.id}`"
@@ -1198,11 +1299,6 @@ onBeforeUnmount(clearDismissUndoTimer)
               @click="dismissAllAttention"
             >全部知悉</AppButton>
           </header>
-          <EmptyState
-            v-if="!visibleResults.length && !visibleAgentTasks.length"
-            :title="hasResultOnlyFilter ? '没有符合筛选的执行结果' : view === 'attention' ? '没有需要处理的结果' : '还没有执行结果'"
-            :description="hasResultOnlyFilter ? '当前自动化或状态筛选只作用于执行结果，Agent Task 已暂时隐藏。' : '运行首次巡检或自动化后，用户可读结果会出现在这里。'"
-          ><RouterLink class="secondary-link" to="/automations">运行首次巡检</RouterLink></EmptyState>
           <ResultSummaryCard
             v-for="item in visibleResults"
             :key="item.id"
@@ -1223,8 +1319,8 @@ onBeforeUnmount(clearDismissUndoTimer)
       </section>
 
       <section v-else class="history-section" aria-label="操作历史">
-        <div class="history-heading">
-          <div><h2>操作记录</h2><p>保留原“操作”页中的确认、拒绝和执行结果历史。</p></div>
+        <div v-if="operations.length || operationStatus !== 'all'" class="history-heading">
+          <div><h2>操作记录</h2><p>查看你确认执行、拒绝或尚待决定的操作。</p></div>
           <div class="history-tabs" aria-label="操作状态">
             <button :class="{ active: operationStatus === 'all' }" type="button" @click="operationStatus = 'all'; syncFilters()">全部</button>
             <button :class="{ active: operationStatus === 'pending' }" type="button" @click="operationStatus = 'pending'; syncFilters()">待确认</button>
@@ -1234,8 +1330,7 @@ onBeforeUnmount(clearDismissUndoTimer)
         </div>
         <LoadingState v-if="historyLoading" label="正在加载操作历史" :cards="2" />
         <ErrorState v-else-if="historyError" title="操作历史加载失败" :message="historyError" @retry="ensureHistoryLoaded(true)" />
-        <EmptyState v-else-if="!visibleOperations.length" title="暂无操作记录" description="聊天里触发写操作后，会先等待确认并保留在这里。" />
-        <div v-else class="card-list">
+        <div v-else-if="visibleOperations.length" class="card-list">
           <article v-for="item in visibleOperations" :key="item.id" class="operation-row" :class="{ disabled: item.status !== 'pending' }">
             <header>
               <div><h3>{{ humanizeIsoDateTimes(item.summary) }}</h3><p>{{ operationTypeText(item.operationType) }} · {{ humanizeIsoDateTimes(operationPayloadText(item)) }}</p></div>
@@ -1270,7 +1365,7 @@ onBeforeUnmount(clearDismissUndoTimer)
     <DetailDrawer
       :open="Boolean(resultDetailId)"
       :title="humanizeIsoDateTimes(resultDetail?.title) || '执行结果详情'"
-      description="技术信息按需加载，不在主列表暴露完整 Trace。"
+      description="查看完成情况、影响范围和后续建议。"
       @update:open="(open) => { if (!open) closeResultDetail() }"
     >
       <LoadingState v-if="resultDetailLoading" label="正在加载执行结果详情" :cards="1" />
@@ -1293,7 +1388,7 @@ onBeforeUnmount(clearDismissUndoTimer)
       @update:open="(open) => { if (!open) closeConfirmationDetail() }"
     >
       <LoadingState v-if="confirmationDetailLoading" label="正在加载待确认操作详情" :cards="1" />
-      <ErrorState v-else-if="confirmationDetailError" title="详情加载失败" :message="confirmationDetailError" />
+      <ErrorState v-else-if="confirmationDetailError" title="详情加载失败" :message="confirmationDetailError" @retry="confirmationDetail && openConfirmationDetail(confirmationDetail)" />
       <div v-else-if="confirmationDetail" class="detail-stack">
         <StatusBadge status="awaiting_confirmation" />
         <section v-if="(confirmationDetail.duplicateCount || 1) > 1"><strong>重复请求</strong><p>{{ confirmationDetail.duplicateCount }} 个相同请求已归并，可一次处理。</p></section>
@@ -1312,32 +1407,102 @@ onBeforeUnmount(clearDismissUndoTimer)
 </template>
 
 <style scoped>
-.execution-page { display: grid; gap: var(--space-5); width: min(100%, 1180px); margin: 0 auto; }
+.execution-page { display: grid; gap: var(--space-5); width: min(100%, 1180px); min-width: 0; margin: 0 auto; }
+.execution-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 4px 0 6px; }
+.execution-header > div { min-width: 0; }
+.execution-header h1 { margin: 0; color: var(--foreground); font-size: clamp(27px, 2.3vw, 32px); font-weight: 750; line-height: 1.4; letter-spacing: -.035em; }
+.execution-header p { margin: 9px 0 0; color: var(--muted-foreground); font-size: 15px; line-height: 1.7; }
+.execution-header > .text-action { flex-shrink: 0; margin-top: 5px; }
+.text-action { display: inline-flex; width: fit-content; min-height: 36px; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: var(--radius-sm); padding: 4px 0; background: transparent; color: var(--primary); font-size: 14px; font-weight: 650; text-decoration: none; box-shadow: none; }
+.text-action:hover { background: transparent; color: var(--primary-hover); text-decoration: underline; text-underline-offset: 4px; }
+.text-action:focus-visible, .execution-tabs button:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.primary-link { display: inline-flex; min-height: 46px; align-items: center; justify-content: center; gap: 9px; border-radius: 10px; background: var(--primary); color: var(--primary-foreground, #fff); padding: 12px 20px; font-size: 15px; font-weight: 650; text-decoration: none; }
+.primary-link:hover { background: var(--primary-hover); }
+.primary-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
 .secondary-link { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--foreground); padding: 9px 14px; font-weight: 650; }.secondary-link:hover { background: var(--surface-muted); }
 .load-error { display: grid; gap: var(--space-3); }.load-error > h2 { margin: 0; color: var(--danger-strong); font-size: 20px; }
 .partial-warning, .feedback { margin: 0; border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); }.partial-warning { border: 1px solid var(--warning-border); background: var(--warning-soft); color: var(--lyle-color-amber-800); }.feedback { border: 1px solid var(--info-border); background: var(--info-soft); color: var(--info-strong); }
 .feedback-row { display: flex; align-items: center; gap: var(--space-2); border: 1px solid var(--info-border); border-radius: var(--radius-md); background: var(--info-soft); padding-right: var(--space-2); }.feedback-row .feedback { min-width: 0; flex: 1; border: 0; background: transparent; }
-.execution-tabs { display: flex; gap: var(--space-1); overflow-x: auto; border-bottom: 1px solid var(--border); }
-.execution-tabs button { flex: 0 0 auto; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--muted-foreground); padding: 12px 14px; white-space: nowrap; }.execution-tabs button.active { border-bottom-color: var(--primary); color: var(--primary); font-weight: 750; }
-.mobile-view-select, .mobile-filter-toggle { display: none; }
-:deep(.filter-bar label) { display: grid; gap: 4px; color: var(--muted-foreground); font-size: 12px; font-weight: 650; }
+.execution-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; border-bottom: 1px solid var(--border); }
+.execution-tabs { display: flex; min-width: 0; gap: 14px; }
+.execution-tabs button { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 7px; min-height: 52px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted-foreground); padding: 12px 5px; font-size: 14px; white-space: nowrap; }
+.execution-tabs button:hover { color: var(--foreground); background: transparent; }
+.execution-tabs button.active { border-bottom-color: var(--primary); color: var(--primary); font-weight: 750; }
+.tab-count { display: inline-grid; min-width: 21px; height: 21px; align-items: center; border-radius: 6px; background: var(--surface-muted); color: var(--muted-foreground); padding: 0 5px; font-size: 11px; font-weight: 700; line-height: 1; }
+.active .tab-count { background: var(--primary-soft); color: var(--primary); }
+.toolbar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; }
+.filter-toggle, .refresh-button { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: 7px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted-foreground); padding: 7px 9px; font-size: 13px; }
+.filter-toggle:hover, .refresh-button:hover { border-color: var(--border); background: var(--surface); color: var(--foreground); }
+.filter-toggle.active { background: var(--primary-soft); color: var(--primary); }
+.filter-count { display: grid; min-width: 17px; height: 17px; align-items: center; border-radius: 4px; background: var(--surface); padding: 0 3px; font-size: 10px; }
+.refresh-button { width: 34px; padding: 0; }
+.active-filters { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: -7px; }
+.filter-chip { max-width: min(100%, 260px); overflow: hidden; border: 1px solid var(--primary-border); border-radius: 7px; background: var(--primary-soft); color: var(--primary); padding: 6px 9px; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.clear-filters { min-height: 30px; font-size: 12px; font-weight: 550; }
+:deep(.execution-filter-bar) { flex-wrap: wrap; gap: 14px; background: var(--surface); }
+:deep(.execution-filter-bar > .label) { display: none; }
+:deep(.execution-filter-bar label) { display: grid; min-width: 0; flex: 1 1 150px; gap: 6px; color: var(--muted-foreground); font-size: 12px; font-weight: 650; }
+:deep(.execution-filter-bar input), :deep(.execution-filter-bar select) { width: 100%; min-width: 0; min-height: 40px; }
 .filter-scope { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-muted); padding: 8px var(--space-3); color: var(--muted-foreground); font-size: 13px; }.filter-scope p { margin: 0; line-height: 1.5; }.filter-scope strong { color: var(--foreground); }
 .card-list { display: grid; gap: var(--space-4); }
+.card-list:empty { display: none; }
+.execution-empty { display: flex; min-width: 0; flex-direction: column; align-items: center; padding: 60px 24px 48px; text-align: center; }
+.empty-icon { display: grid; width: 76px; height: 76px; place-items: center; margin-bottom: 24px; border-radius: 20px; background: var(--primary-soft, #eef2ff); color: var(--primary); }
+.empty-icon--attention { background: var(--info-soft, #eff6ff); color: var(--info-strong, #0369a1); }
+.empty-icon--history, .empty-icon--filtered { background: var(--surface-muted); color: var(--muted-foreground); }
+.execution-empty h2 { max-width: 100%; margin: 0; color: var(--foreground); font-size: clamp(25px, 2.4vw, 34px); font-weight: 730; line-height: 1.45; letter-spacing: -.025em; }
+.execution-empty > p { max-width: 550px; margin: 14px 0 0; color: var(--muted-foreground); font-size: 16px; line-height: 1.85; }
+.empty-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 24px; margin-top: 26px; }
+.empty-actions > .text-action { font-size: 15px; }
+.execution-empty--compact { padding-top: 44px; padding-bottom: 40px; }
+.execution-empty--compact .empty-icon { width: 64px; height: 64px; margin-bottom: 20px; border-radius: 17px; }
+.execution-empty--compact h2 { font-size: 25px; }
+.execution-empty--compact > p { max-width: 520px; font-size: 15px; }
+.execution-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; border-top: 1px solid var(--border); padding: 28px 0 24px; }
+.execution-guide article { display: flex; align-items: flex-start; gap: 14px; min-width: 0; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 20px 16px; }
+.guide-icon { display: grid; flex: 0 0 46px; width: 46px; height: 46px; place-items: center; border-radius: 12px; }
+.guide-icon--purple { background: var(--primary-soft); color: var(--primary); }
+.guide-icon--blue { background: #eff6ff; color: #0284c7; }
+.guide-icon--amber { background: #fff7ed; color: #d97706; }
+.execution-guide h3 { margin: 2px 0 7px; color: var(--foreground); font-size: 15px; font-weight: 700; line-height: 1.5; }
+.execution-guide p { margin: 0; color: var(--muted-foreground); font-size: 13px; line-height: 1.7; }
 .attention-heading { display: flex; align-items: end; justify-content: space-between; gap: var(--space-4); border-bottom: 1px solid var(--border); padding-bottom: var(--space-3); }.attention-heading h2 { margin: 0; font-size: 18px; }.attention-heading p { margin: 5px 0 0; color: var(--muted-foreground); font-size: 13px; }
-.agent-task-section { display: grid; gap: var(--space-3); border-bottom: 1px solid var(--border); padding-bottom: var(--space-5); }.agent-task-section > header { display: flex; align-items: end; justify-content: space-between; gap: var(--space-3); }.agent-task-section > header span { color: var(--primary); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }.agent-task-section h2 { margin: 4px 0 0; font-size: 17px; }.agent-task-section a { color: var(--primary); font-size: 13px; font-weight: 700; text-decoration: none; }.agent-task-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-3); }
+.agent-task-section { display: grid; gap: var(--space-3); border-bottom: 1px solid var(--border); padding-bottom: var(--space-5); }.agent-task-section > header { display: flex; align-items: end; justify-content: space-between; gap: var(--space-3); }.agent-task-section h2 { margin: 4px 0 0; font-size: 17px; }.agent-task-section a { color: var(--primary); font-size: 13px; font-weight: 700; text-decoration: none; }.agent-task-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: var(--space-3); }
 .load-more-row { display: flex; justify-content: center; padding: var(--space-2) 0; }
 .history-section { display: grid; gap: var(--space-4); }.history-heading { display: flex; align-items: end; justify-content: space-between; gap: var(--space-4); }.history-heading h2 { margin: 0; }.history-heading p { margin: 5px 0 0; color: var(--muted-foreground); }
 .history-tabs { display: flex; flex-wrap: wrap; gap: var(--space-1); border-radius: var(--radius-md); background: var(--surface-muted); padding: 3px; }.history-tabs button { border: 0; border-radius: calc(var(--radius-md) - 2px); background: transparent; color: var(--muted-foreground); padding: 7px 10px; }.history-tabs button.active { background: var(--surface); color: var(--foreground); box-shadow: var(--shadow-card); }
 .operation-row { display: grid; gap: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--surface); padding: var(--space-5); }.operation-row.disabled { opacity: .82; }.operation-row header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }.operation-row h3 { margin: 0 0 5px; font-size: 17px; }.operation-row header p { margin: 0; color: var(--muted-foreground); overflow-wrap: anywhere; }.operation-row dl { display: flex; flex-wrap: wrap; gap: var(--space-4); margin: 0; }.operation-row dl > div { display: flex; gap: 6px; }.operation-row dt { color: var(--muted-foreground); }.operation-row dd { margin: 0; }.operation-detail { margin: 0; border-radius: var(--radius-md); background: var(--surface-muted); padding: var(--space-3); overflow-wrap: anywhere; }.operation-row footer { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .operation-created { margin: 0; color: var(--muted-foreground); font-size: 13px; }.technical-details { border-top: 1px solid var(--border); padding-top: var(--space-3); color: var(--muted-foreground); }.technical-details summary { cursor: pointer; font-size: 13px; font-weight: 700; }.technical-details dl { margin-top: var(--space-3); }
 .detail-stack { display: grid; gap: var(--space-4); }.detail-stack section { display: grid; gap: 6px; border-top: 1px solid var(--border); padding-top: var(--space-3); }.detail-stack p, .detail-stack ul { margin: 0; color: var(--muted-foreground); line-height: 1.6; }.detail-stack ul { padding-left: 20px; }.technical { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-muted); padding: var(--space-3) !important; }.technical code { overflow-wrap: anywhere; }
+@media (max-width: 960px) {
+  .execution-guide { gap: 12px; }
+  .execution-guide article { flex-direction: column; gap: 12px; }
+}
+@media (max-width: 720px) {
+  :deep(.execution-filter-bar label) { flex-basis: auto; width: 100%; }
+}
 @media (max-width: 680px) {
   .execution-page { gap: var(--space-3); }
-  .execution-tabs { display: none; }
-  .mobile-view-select { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-2); color: var(--muted-foreground); font-size: 13px; font-weight: 700; }
-  .mobile-view-select select { min-height: 42px; }
-  .mobile-filter-toggle { display: inline-flex; width: 100%; min-height: 40px; align-items: center; justify-content: center; }
-  :deep(.execution-filter-bar:not(.open)) { display: none; }
+  .execution-header { gap: 14px; padding-bottom: 9px; }
+  .execution-header p { font-size: 13px; margin-top: 7px; }
+  .execution-header > .text-action { gap: 5px; font-size: 12px; }
+  .execution-toolbar { flex-wrap: wrap; gap: 7px; border-bottom: 0; }
+  .execution-tabs { display: grid; width: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border-bottom: 1px solid var(--border); }
+  .execution-tabs button { gap: 4px; padding: 11px 2px; min-height: 45px; font-size: 12px; }
+  .tab-count { min-width: 17px; height: 18px; padding: 0 3px; font-size: 10px; }
+  .toolbar-actions { width: 100%; justify-content: flex-end; }
+  .active-filters { margin-top: 0; }
+  .execution-empty { padding: 32px 9px 34px; }
+  .empty-icon { width: 66px; height: 66px; border-radius: 18px; margin-bottom: 22px; }
+  .execution-empty h2 { max-width: 310px; font-size: 25px; }
+  .execution-empty > p { margin-top: 12px; font-size: 14px; line-height: 1.9; }
+  .empty-actions { gap: 18px; margin-top: 24px; }
+  .empty-actions .primary-link { width: 100%; padding: 12px 16px; font-size: 14px; }
+  .execution-empty--compact { padding-top: 30px; }
+  .execution-empty--compact h2 { font-size: 23px; }
+  .execution-guide { grid-template-columns: 1fr; gap: 11px; padding: 22px 0; }
+  .execution-guide article { flex-direction: row; align-items: center; gap: 15px; padding: 16px; }
+  .execution-guide h3 { margin-top: 0; margin-bottom: 5px; }
   .filter-scope { align-items: stretch; flex-direction: column; }.filter-scope :deep(button) { width: 100%; }
   .feedback-row, .attention-heading { align-items: stretch; flex-direction: column; }.feedback-row { padding: 0; }.feedback-row :deep(button), .attention-heading :deep(button) { width: 100%; }
   .history-heading, .operation-row header { align-items: stretch; flex-direction: column; }

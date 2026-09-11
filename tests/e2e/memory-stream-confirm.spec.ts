@@ -45,6 +45,7 @@ test('streamed explicit memory becomes a confirmable candidate with profile evid
   await expect(page.locator('.memory-row').filter({ hasText: '帽子' }).first()).toContainText('conversation:')
 
   await page.getByRole('link', { name: '任务', exact: true }).click()
+  await page.getByRole('button', { name: '新建待办', exact: true }).first().click()
   await page.getByTestId('manual-todo-title').fill(todoTitle)
   await page.getByTestId('manual-todo-submit').click()
   await expect(page.locator('.task-row').filter({ hasText: todoTitle })).toBeVisible()

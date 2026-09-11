@@ -3,6 +3,7 @@ import { getCurrentUser, hasAuth, initializeAuth } from '@/auth'
 import { isAgentTaskFrontendEnabled } from '@/features/agentTask'
 import { isMissionFrontendEnabled } from '@/features/mission'
 import type { NavigationGroupId } from '@/app/navigation'
+import { installSettingsNavigation } from '@/app/settings-navigation'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -557,10 +558,17 @@ router.beforeEach(async (to) => {
   return true
 })
 
-router.afterEach((to) => {
+installSettingsNavigation(router)
+
+router.afterEach((to, _from, failure) => {
+  if (failure) return
   document.title = to.meta.title ? `${to.meta.title} · Lyle AI` : 'Lyle AI'
-  if (window.sessionStorage.getItem(routeChunkReloadKey) === to.fullPath) {
-    window.sessionStorage.removeItem(routeChunkReloadKey)
+  try {
+    if (window.sessionStorage.getItem(routeChunkReloadKey) === to.fullPath) {
+      window.sessionStorage.removeItem(routeChunkReloadKey)
+    }
+  } catch {
+    // Navigation also works when browser storage is disabled.
   }
 })
 

@@ -111,6 +111,7 @@ test.describe('V4.2 execution and automation workspace', () => {
 
     await page.getByRole('button', { name: '最新结果' }).click()
     await expectQuery(page, 'view', 'results')
+    await page.getByRole('button', { name: '筛选', exact: true }).click()
     const projectFilter = page.getByLabel('项目', { exact: true })
     const automationFilter = page.getByRole('combobox', { name: '自动化' })
     const statusFilter = page.getByRole('combobox', { name: '状态' })
@@ -207,8 +208,8 @@ test.describe('V4.2 execution and automation workspace', () => {
     const lowRiskCard = page.getByRole('article').filter({ hasText: '更新项目周报' })
     await lowRiskCard.getByRole('button', { name: '拒绝' }).click()
     await expect.poll(() => rejectCalls).toBe(1)
-    await expect(page.getByRole('button', { name: '待我确认 0' })).toBeVisible()
-    await expect(page.getByText('没有等待确认的操作')).toBeVisible()
+    await expect(page.getByRole('button', { name: '待我确认', exact: true })).toBeVisible()
+    await expect(page.getByText('暂时没有需要你确认的事')).toBeVisible()
     await expect.poll(() => productEvents.filter((event) => event.eventType === 'effective_progress_action').length).toBeGreaterThanOrEqual(3)
     expect(productEvents.filter((event) => event.eventType === 'effective_progress_action').map((event) => event.actionType)).toEqual(
       expect.arrayContaining(['result_action', 'confirmation'])
@@ -267,6 +268,7 @@ test.describe('V4.2 execution and automation workspace', () => {
     await expect(page.getByRole('heading', { name: '分页后的失败结果' })).toBeVisible()
     await expect(page.getByRole('button', { name: '加载更多' })).toHaveCount(0)
 
+    await page.getByRole('button', { name: '筛选', exact: true }).click()
     const projectFilter = page.getByLabel('项目', { exact: true })
     const automationFilter = page.getByRole('combobox', { name: '自动化' })
     const statusFilter = page.getByRole('combobox', { name: '状态' })
@@ -350,7 +352,7 @@ test.describe('V4.2 execution and automation workspace', () => {
     await expect.poll(() => resumeCalls).toBe(1)
     expect(resumePayload).toEqual({ confirmed: true, secondConfirmed: false })
     await expect(page.getByText('已确认，工作流已继续执行。')).toBeVisible()
-    await expect(page.getByRole('button', { name: '待我确认 0' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '待我确认', exact: true })).toBeVisible()
     await expect(attentionCard).toHaveCount(0)
   })
 

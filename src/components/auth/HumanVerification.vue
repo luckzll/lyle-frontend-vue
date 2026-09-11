@@ -4,7 +4,7 @@ import { ShieldCheck, CheckCircle2, RefreshCw, CircleX, MoveRight } from '@lucid
 import { publicHttp } from '@/api/http'
 import { safeCaptchaImage, type CaptchaOptions, type CaptchaProof, type CaptchaImage, type CaptchaPoint } from '@/domain/captcha'
 
-const props = defineProps<{ options: CaptchaOptions | null; disabled?: boolean; modelValue: CaptchaProof | null }>()
+const props = defineProps<{ options: CaptchaOptions | null; disabled?: boolean; cooldownSeconds?: number; modelValue: CaptchaProof | null }>()
 const emit = defineEmits<{ 'update:modelValue': [value: CaptchaProof | null] }>()
 const busy = ref(false), error = ref(''), visible = ref(false)
 const challenge = ref<CaptchaImage | null>(null), position = ref(0)
@@ -81,9 +81,9 @@ async function confirm() {
 <template>
   <div class="human-verification">
     <div v-if="!visible" class="verification-row" :class="{ 'is-solved': modelValue }">
-      <CheckCircle2 v-if="modelValue" :size="24" aria-hidden="true" /><ShieldCheck v-else :size="24" aria-hidden="true" />
-      <div class="verification-copy"><strong>{{ modelValue ? '已完成人机验证' : '安全验证' }}</strong><p>{{ modelValue ? '验证通过，可获取邮箱验证码' : '请完成滑块验证以继续' }}</p></div>
-      <button type="button" :disabled="disabled || busy || !options?.configured || !!modelValue" @click="start">{{ modelValue ? '已完成' : busy ? '加载中…' : '点击完成验证' }}</button>
+      <CheckCircle2 v-if="modelValue" :size="20" aria-hidden="true" /><ShieldCheck v-else :size="20" aria-hidden="true" />
+      <div class="verification-copy"><strong>{{ modelValue ? '安全验证已通过' : '安全验证' }}</strong></div>
+      <button type="button" :disabled="disabled || busy || !options?.configured || !!modelValue" :aria-label="modelValue ? '安全验证已完成' : cooldownSeconds ? '等待验证码发送冷却结束' : '点击完成验证'" @click="start">{{ modelValue ? '已完成' : busy ? '加载中…' : cooldownSeconds ? '等待重发' : '点击完成验证' }}</button>
     </div>
     <section v-if="visible" class="captcha-panel" aria-label="滑块拼图验证" :aria-busy="busy">
       <header><strong>拖动滑块完成拼图</strong></header>
@@ -109,12 +109,11 @@ async function confirm() {
 </template>
 
 <style scoped>
-.verification-row { display: flex; align-items: center; gap: 18px; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; }
+.verification-row { display: flex; align-items: center; gap: 10px; min-height: 54px; box-sizing: border-box; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
 .verification-row > svg { flex-shrink: 0; color: #334155; }
 .verification-copy { flex: 1; min-width: 0; }
-.verification-copy strong { font-size: 17px; font-weight: 650; }
-.verification-copy p { margin: 5px 0 0; font-size: 13px; line-height: 1.5; color: #64748b; }
-.verification-row button { flex-shrink: 0; min-height: 44px; border: 0; border-radius: 9px; padding: 10px 18px; background: #eef2ff; color: #4338ca; font-size: 13px; font-weight: 600; }
+.verification-copy strong { font-size: 14px; font-weight: 600; line-height: 1.5; }
+.verification-row button { flex-shrink: 0; min-height: 36px; border: 0; border-radius: 7px; padding: 7px 10px; background: #eef2ff; color: #4338ca; font-size: 13px; font-weight: 600; line-height: 1.4; white-space: nowrap; }
 button:focus-visible,.captcha-slider:focus-visible { outline: 3px solid #a5b4fc; outline-offset: 3px; }
 button:disabled { cursor: not-allowed; opacity: .65; }
 .is-solved { background: #ecfdf5; border-color: #a7f3d0; }
@@ -143,5 +142,5 @@ button:disabled { cursor: not-allowed; opacity: .65; }
 .captcha-slider:disabled { cursor: wait; opacity: .6; }
 .captcha-panel { margin-top: 0; }
 .keyboard-help { color: #64748b; font-size: 12px; line-height: 1.5; margin: 4px 0 0; }
-@media(max-width: 520px) { .verification-row { gap: 12px; padding: 16px 12px; flex-wrap: wrap; } .verification-copy strong { font-size: 15px; } .verification-row button { margin-left: 36px; } }
+@media(max-width: 520px) { .verification-row { gap: 8px; padding: 7px 10px; } .verification-copy strong { font-size: 13px; } .verification-row button { font-size: 12px; padding: 7px 9px; } }
 </style>

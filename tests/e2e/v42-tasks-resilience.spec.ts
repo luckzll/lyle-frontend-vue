@@ -18,6 +18,7 @@ test('task page never presents a total API failure as an empty state', async ({ 
   await expect(failure).toBeVisible()
   await expect(failure).toContainText('任务服务暂时不可用')
   await expect(page.getByText('暂无提醒。')).toHaveCount(0)
+  await expect(page.getByText('从一件小事，开始推进')).toHaveCount(0)
   await expect(page.getByText('暂无待办。', { exact: false })).toHaveCount(0)
   await expect(page.getByText('当天暂无安排', { exact: false })).toHaveCount(0)
 
@@ -150,6 +151,7 @@ test('successful task completion and reschedule emit content-free progress event
 
   await page.goto('/tasks')
   let taskRow = page.locator('.task-row').filter({ hasText: currentTodo.title })
+  await taskRow.locator('summary').filter({ hasText: '调整时间' }).click()
   await taskRow.locator('input[type="datetime-local"]').fill('2026-07-12T09:00')
   await taskRow.getByRole('button', { name: '保存时间' }).click()
   await expect.poll(() => productEvents.length).toBe(1)

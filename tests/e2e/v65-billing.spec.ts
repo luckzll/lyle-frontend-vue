@@ -274,7 +274,18 @@ test('V6.5 core commercial pages remain usable at 390px', async ({ page }) => {
     await page.goto(target.path)
     await expect(page.getByRole('heading', { name: target.heading, exact: true }).first()).toBeVisible()
     await expectUsableWidth(page, target.selector, 340)
-    await expectUsableWidth(page, target.shellSelector ?? '.app-header', 340)
+    if (target.path.startsWith('/settings/')) {
+      await expect(page.getByRole('link', { name: '返回应用', exact: true })).toBeVisible()
+      await expect(page.locator('.settings-frame__nav')).toBeVisible()
+      const settingsCategory = page.getByRole('combobox', { name: '设置分类', exact: true })
+      await expect(settingsCategory).toBeVisible()
+      await expect(settingsCategory).toHaveValue('/settings/billing')
+      await expect(page.locator('.app-header')).toHaveCount(0)
+      await expect(page.locator('.app-sidebar')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '打开主导航', exact: true })).toHaveCount(0)
+    } else {
+      await expectUsableWidth(page, target.shellSelector ?? '.app-header', 340)
+    }
   }
 })
 

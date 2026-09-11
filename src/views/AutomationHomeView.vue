@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { ArrowRight, ClipboardList, Clock3, Plus, Search, Workflow } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   createDraftFromIntent,
@@ -16,13 +17,11 @@ import {
   runFirstInspection,
   trackEffectiveProgressAction,
   trackProductEvent,
-  updateAutomation,
-  updateOnboarding
+  updateAutomation
 } from '@/api/app'
 import type { AutomationDraft, AutomationSummary, AutomationTemplate, AutomationUpdatePayload } from '@/api/types'
 import AutomationCard from '@/components/domain/AutomationCard.vue'
 import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
-import EmptyState from '@/components/feedback/EmptyState.vue'
 import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
 import DetailDrawer from '@/components/layout/DetailDrawer.vue'
@@ -49,6 +48,11 @@ const automations = ref<AutomationSummary[]>([])
 const onboarding = ref<OnboardingState | null>(null)
 const draft = ref<AutomationDraft | null>(null)
 const intent = ref('')
+const showCatalog = ref(false)
+const templatePreview = ref<AutomationTemplate | null>(null)
+const inspectionOpen = ref(false)
+const catalogHeading = ref<HTMLElement | null>(null)
+const browseButton = ref<HTMLButtonElement | null>(null)
 const selectedProjectId = ref<number | undefined>()
 const selectedWorkspaceId = ref<number | undefined>()
 const loading = ref(false)
@@ -56,6 +60,7 @@ const pageLoading = ref(false)
 const loadError = ref('')
 const feedback = ref('')
 const automationsError = ref('')
+const automationsLoading = ref(false)
 const automationActions = ref<Record<number, AutomationAction | undefined>>({})
 const pendingDelete = ref<AutomationSummary | null>(null)
 const editingAutomation = ref<AutomationSummary | null>(null)
@@ -74,9 +79,82 @@ const editForm = ref({
 let automationLoadGeneration = 0
 
 const onboardingPending = computed(() => Boolean(onboarding.value && !onboarding.value.completedAt && !onboarding.value.skippedAt))
-const showWizard = computed(() => onboardingPending.value && automations.value.length === 0)
 const showDeferredOnboarding = computed(() => onboardingPending.value && automations.value.length > 0)
+const isEmpty = computed(() => !pageLoading.value && !automationsLoading.value && !loadError.value && !automationsError.value && automations.value.length === 0)
+const projects = computed(() => onboarding.value?.candidates?.projects ?? [])
+const workspaces = computed(() => onboarding.value?.candidates?.workspaces ?? [])
+const hasProjects = computed(() => projects.value.length > 0)
+const canInspect = computed(() => Boolean(selectedProjectId.value || selectedWorkspaceId.value))
+const starterTemplates = computed(() => [
+  { id: 'weekly_project_review', title: '项目周报', description: '每周汇总进展', icon: ClipboardList, tone: 'purple' },
+  { id: 'overdue_and_stale_alert', title: '逾期提醒', description: '每天发现待办风险', icon: Clock3, tone: 'amber' }
+].flatMap((item) => {
+  const template = templates.value.find((candidate) => candidate.id === item.id && !candidate.availability)
+  return template ? [{ ...item, template }] : []
+}))
+const previewNeedsWorkspace = computed(() => templatePreview.value?.category === 'code')
+const canPreviewTemplate = computed(() => Boolean(templatePreview.value && !templatePreview.value.availability
+  && (previewNeedsWorkspace.value ? selectedWorkspaceId.value : selectedProjectId.value)))
 const focusedAutomationId = computed(() => positiveId(route.query.automationId))
+
+async function browseTemplates() {
+  showCatalog.value = true
+  await nextTick()
+  catalogHeading.value?.scrollIntoView({ block: 'start', behavior: 'auto' })
+  catalogHeading.value?.focus({ preventScroll: true })
+}
+
+async function collapseTemplates() {
+  showCatalog.value = false
+  await nextTick()
+  browseButton.value?.focus({ preventScroll: true })
+  browseButton.value?.scrollIntoView({ block: 'nearest', behavior: 'auto' })
+}
+
+function startProject(templateId?: string) {
+  void router.push({ path: '/projects', query: { create: '1', from: 'automations', ...(templateId ? { templateId } : {}) } })
+}
+
+function openTemplate(item: AutomationTemplate) {
+  if (loading.value || item.availability) return
+  feedback.value = ''
+  templatePreview.value = item
+}
+
+async function previewSelectedTemplate() {
+  const item = templatePreview.value
+  if (!item || !canPreviewTemplate.value || loading.value) return
+  await chooseTemplate(item)
+  if (draft.value) templatePreview.value = null
+}
+
+async function resumeProjectCreation() {
+  const query = { ...route.query }
+  let consumed = false
+  const projectId = positiveId(query.projectId)
+  if (projectId && projects.value.some((item) => item.id === projectId)) {
+    selectedProjectId.value = projectId
+    delete query.projectId
+    consumed = true
+  }
+  const templateId = typeof query.templateId === 'string' ? query.templateId : ''
+  if (templateId && !loading.value) {
+    if (templateId === 'first_project_inspection') {
+      feedback.value = ''
+      inspectionOpen.value = true
+      delete query.templateId
+      consumed = true
+    } else {
+      const selectedTemplate = templates.value.find((item) => item.id === templateId && !item.availability)
+      if (selectedTemplate) {
+        openTemplate(selectedTemplate)
+        delete query.templateId
+        consumed = true
+      }
+    }
+  }
+  if (consumed) await router.replace({ path: route.path, query, hash: route.hash })
+}
 
 watch([focusedAutomationId, () => automations.value.map((item) => item.id).join(',')], () => {
   void focusAutomationSource()
@@ -92,6 +170,7 @@ async function load() {
     selectedProjectId.value = state.data.selectedProjectId ?? state.data.candidates?.projects?.[0]?.id
     selectedWorkspaceId.value = state.data.selectedWorkspaceId ?? state.data.candidates?.workspaces?.[0]?.id
     await loadAutomations()
+    await resumeProjectCreation()
   } catch (error: any) {
     loadError.value = requestMessage(error, '自动化数据加载失败，请确认 AI 服务可用后重试。')
   } finally {
@@ -101,6 +180,7 @@ async function load() {
 
 async function loadAutomations() {
   const generation = ++automationLoadGeneration
+  automationsLoading.value = true
   automationsError.value = ''
   try {
     const items = (await listAutomations()).data.items
@@ -109,6 +189,8 @@ async function loadAutomations() {
     if (generation === automationLoadGeneration) {
       automationsError.value = requestMessage(error, '我的自动化加载失败，请稍后重试。')
     }
+  } finally {
+    if (generation === automationLoadGeneration) automationsLoading.value = false
   }
 }
 
@@ -242,35 +324,18 @@ async function saveSettings() {
 }
 
 async function firstRun() {
-  if (loading.value) return
+  if (loading.value || !canInspect.value) return
   loading.value = true
   feedback.value = ''
   try {
     await runFirstInspection({ projectId: selectedProjectId.value, workspaceId: selectedWorkspaceId.value })
+    inspectionOpen.value = false
     feedback.value = '首次项目巡检已完成，结果已进入执行中心。'
     await load()
   } catch (error: any) {
     feedback.value = requestMessage(error, '巡检未完成，请检查项目与工作区。')
   } finally {
     loading.value = false
-  }
-}
-
-async function skip() {
-  try {
-    await updateOnboarding({ action: 'skip' })
-    await load()
-  } catch (error: any) {
-    feedback.value = requestMessage(error, '暂时无法更新引导状态。')
-  }
-}
-
-async function reopen() {
-  try {
-    await updateOnboarding({ action: 'reopen' })
-    await load()
-  } catch (error: any) {
-    feedback.value = requestMessage(error, '暂时无法重新打开引导。')
   }
 }
 
@@ -294,6 +359,11 @@ async function chooseTemplate(item: AutomationTemplate) {
 
 async function parseIntent() {
   if (!intent.value.trim() || loading.value) return
+  if (!canInspect.value) {
+    showCatalog.value = true
+    feedback.value = '先创建一个项目或连接工作区，再为它设置自动化。'
+    return
+  }
   loading.value = true
   feedback.value = ''
   try {
@@ -414,8 +484,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="automation-page">
+  <div class="automation-page" :class="{ 'automation-page--empty': isEmpty }">
     <PageHeader
+      v-if="!isEmpty"
       eyebrow="结果型自动化"
       title="自动化"
       description="说出想持续获得的结果，Lyle 会用安全模板帮你配置。"
@@ -431,41 +502,45 @@ onMounted(async () => {
       <ErrorState title="自动化加载失败" :message="loadError" @retry="load" />
     </section>
     <template v-else>
-      <section v-if="showWizard" class="onboarding">
-        <div>
-          <span class="onboarding-label">首次成功 · 全程只读</span>
-          <h2>先完成一次项目巡检</h2>
-          <p>检查项目进展、逾期事项和工作区状态，不会修改文件或外部系统。</p>
+      <template v-if="isEmpty">
+        <div class="empty-toolbar">
+          <RouterLink class="text-action" to="/execution-center">查看执行结果 <ArrowRight :size="17" aria-hidden="true" /></RouterLink>
         </div>
-        <div class="onboarding-fields">
-          <label>项目
-            <select v-model="selectedProjectId">
-              <option :value="undefined">暂不关联项目</option>
-              <option v-for="item in onboarding?.candidates?.projects" :key="item.id" :value="item.id">{{ item.name }}</option>
-            </select>
-          </label>
-          <label>已授权工作区
-            <select v-model="selectedWorkspaceId">
-              <option :value="undefined">仅检查项目数据</option>
-              <option v-for="item in onboarding?.candidates?.workspaces" :key="item.id" :value="item.id">{{ item.name }}</option>
-            </select>
-          </label>
-        </div>
-        <div class="onboarding-actions">
-          <AppButton :loading="loading" @click="firstRun">{{ loading ? '巡检中…' : '运行一次项目巡检' }}</AppButton>
-          <AppButton variant="secondary" :disabled="loading" @click="skip">稍后设置</AppButton>
-        </div>
-      </section>
+        <section class="automation-welcome" aria-labelledby="automation-welcome-title">
+          <span class="welcome-icon"><Workflow :size="38" :stroke-width="1.8" aria-hidden="true" /></span>
+          <h1 id="automation-welcome-title">把重复的事，交给 Lyle</h1>
+          <p class="welcome-description">定期汇总进展、发现逾期，让重要的事按时推进。</p>
+          <p class="welcome-hint">{{ hasProjects ? '项目已准备好，从一个模板开始，设置你的第一条自动化。' : '还没有项目？先创建一个，再设置你的第一条自动化。' }}</p>
+          <div class="welcome-actions">
+            <AppButton class="welcome-primary" @click="hasProjects ? browseTemplates() : startProject()"><Plus :size="19" aria-hidden="true" />{{ hasProjects ? '创建第一个自动化' : '创建第一个项目' }}</AppButton>
+            <button ref="browseButton" class="text-action" type="button" aria-controls="automation-templates" :aria-expanded="showCatalog" @click="browseTemplates">浏览模板 <ArrowRight :size="18" aria-hidden="true" /></button>
+          </div>
+        </section>
+        <section v-if="!showCatalog" class="starter-section" aria-labelledby="starter-heading">
+          <div class="starter-heading"><h2 id="starter-heading">从模板开始，快速上手</h2><p>从常用场景出发，轻松设置你的第一条自动化。</p></div>
+          <div class="starter-grid">
+            <article v-for="item in starterTemplates" :key="item.id" class="starter-card">
+              <span class="starter-icon" :class="`starter-icon--${item.tone}`"><component :is="item.icon" :size="27" :stroke-width="1.8" aria-hidden="true" /></span>
+              <div class="starter-copy"><h3>{{ item.title }}</h3><p>{{ item.description }}</p><button type="button" class="text-action" :aria-label="`了解${item.title}模板`" @click="openTemplate(item.template)">了解模板 <ArrowRight :size="16" aria-hidden="true" /></button></div>
+            </article>
+            <article class="starter-card">
+              <span class="starter-icon starter-icon--blue"><Search :size="28" :stroke-width="1.8" aria-hidden="true" /></span>
+              <div class="starter-copy"><h3>项目巡检</h3><p>快速了解项目状态</p><button class="text-action" type="button" aria-label="了解项目巡检" @click="inspectionOpen = true">了解模板 <ArrowRight :size="16" aria-hidden="true" /></button></div>
+            </article>
+          </div>
+        </section>
+      </template>
 
       <p v-if="feedback" class="feedback" role="status">{{ feedback }}</p>
 
-      <section class="automations-section">
+      <section v-if="!isEmpty" class="automations-section">
         <div class="section-heading">
           <div><h2>我的自动化</h2><p>直接运行、暂停或调整常用设置；执行权限仍由已有工作流策略控制。</p></div>
           <RouterLink class="secondary-link" to="/advanced-settings?tab=automations">高级配置</RouterLink>
         </div>
+        <LoadingState v-if="automationsLoading && !automations.length" label="正在加载自动化" />
         <ErrorState
-          v-if="automationsError"
+          v-else-if="automationsError"
           title="我的自动化加载失败"
           :message="automationsError"
           @retry="loadAutomations"
@@ -500,29 +575,24 @@ onMounted(async () => {
             </template>
           </AutomationCard>
         </div>
-        <EmptyState
-          v-else
-          title="还没有启用的自动化"
-          description="从下方模板选择一个，或用一句话创建。"
-          compact
-        />
       </section>
 
       <section v-if="showDeferredOnboarding" class="onboarding-complete">
         <span>首次项目巡检尚未完成，不影响现有自动化运行。</span>
-        <AppButton variant="secondary" size="sm" @click="reopen">继续引导</AppButton>
+        <AppButton variant="secondary" size="sm" @click="inspectionOpen = true">运行项目巡检</AppButton>
       </section>
 
-      <section class="intent-card">
+      <section v-if="!isEmpty || showCatalog" class="intent-card">
         <div><h2>用一句话创建</h2><p>例如：每周五下午五点检查 Lyle 项目进展和逾期任务，生成周报。</p></div>
         <form class="intent-form" @submit.prevent="parseIntent">
           <input v-model="intent" placeholder="我想定期得到…" aria-label="自动化意图" />
           <AppButton type="submit" :loading="loading" :disabled="!intent.trim()">生成预览</AppButton>
         </form>
+        <p v-if="!canInspect" class="intent-scope-note">先准备好项目，就能为它设置自动化。<button type="button" class="text-action" @click="startProject()">创建项目 <ArrowRight :size="15" aria-hidden="true" /></button></p>
       </section>
 
-      <section class="templates-section">
-        <div class="section-heading"><div><h2>结果模板</h2><p>模板只生成经过审查的只读流程。</p></div></div>
+      <section v-if="!isEmpty || showCatalog" id="automation-templates" class="templates-section" :class="{ 'templates-section--expanded': isEmpty }">
+        <div class="section-heading"><div><h2 ref="catalogHeading" tabindex="-1">结果模板</h2><p>选择想获得的结果，确认运行时间后启用。</p></div><button v-if="isEmpty" class="text-action" type="button" @click="collapseTemplates">收起模板</button></div>
         <div class="template-grid">
           <article v-for="item in templates" :key="item.id" class="template-card" :class="{ disabled: item.availability === 'coming_soon' }">
             <div class="template-meta"><span>{{ formatAutomationTemplateCategory(item.category) }}</span><span v-if="item.availability">即将支持</span></div>
@@ -534,11 +604,47 @@ onMounted(async () => {
               <div><dt>默认频率</dt><dd>{{ formatAutomationSchedule(item.defaultSchedule, 'Asia/Shanghai') }}</dd></div>
               <div><dt>预计耗时</dt><dd>{{ item.estimatedDuration }}</dd></div>
             </dl>
-            <AppButton :disabled="Boolean(item.availability) || loading" @click="chooseTemplate(item)">使用此模板</AppButton>
+            <AppButton :disabled="Boolean(item.availability) || loading" @click="openTemplate(item)">{{ item.availability ? '即将支持' : '使用此模板' }}</AppButton>
           </article>
         </div>
       </section>
     </template>
+
+    <DetailDrawer
+      :open="Boolean(templatePreview)"
+      :title="templatePreview?.name || '了解模板'"
+      :description="templatePreview?.problem"
+      @update:open="(open) => { if (!open && !loading) templatePreview = null }"
+    >
+      <template v-if="templatePreview">
+        <div class="drawer-block"><strong>你会得到</strong><p>{{ templatePreview.output }}</p></div>
+        <div class="drawer-block"><strong>运行时间</strong><p>{{ formatAutomationSchedule(templatePreview.defaultSchedule, 'Asia/Shanghai') }}</p></div>
+        <div class="drawer-block"><strong>会读取</strong><p>{{ templatePreview.sources.join('、') }}</p></div>
+        <div class="template-scope">
+          <label v-if="projects.length && !previewNeedsWorkspace">关联项目<select v-model="selectedProjectId" :disabled="loading"><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+          <label v-if="workspaces.length">{{ previewNeedsWorkspace ? '关联工作区' : '工作区（可选）' }}<select v-model="selectedWorkspaceId" :disabled="loading"><option :value="undefined">{{ previewNeedsWorkspace ? '请选择工作区' : '仅使用项目数据' }}</option><option v-for="item in workspaces" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+          <p v-if="!previewNeedsWorkspace && !projects.length" class="scope-note">还没有项目。先创建一个，再用这个模板设置自动化。</p>
+          <p v-if="previewNeedsWorkspace && !workspaces.length" class="scope-note">先连接并授权一个工作区，即可使用这个模板。</p>
+          <p v-if="feedback" class="form-error" role="alert">{{ feedback }}</p>
+        </div>
+      </template>
+      <template #footer>
+        <AppButton v-if="templatePreview && !previewNeedsWorkspace && !projects.length" @click="startProject(templatePreview.id)">创建项目并继续 <ArrowRight :size="16" aria-hidden="true" /></AppButton>
+        <RouterLink v-else-if="previewNeedsWorkspace && !workspaces.length" class="secondary-link" to="/connections">连接工作区</RouterLink>
+        <AppButton v-else :disabled="!canPreviewTemplate" :loading="loading" @click="previewSelectedTemplate">生成启用预览 <ArrowRight :size="16" aria-hidden="true" /></AppButton>
+      </template>
+    </DetailDrawer>
+
+    <DetailDrawer :open="inspectionOpen" title="项目巡检" description="先运行一次，了解项目进展、逾期事项和工作区状态。" @update:open="(open) => { if (!loading) inspectionOpen = open }">
+      <div class="drawer-block"><strong>你会得到</strong><p>项目进展、待关注事项与下一步建议，运行后可在执行中心查看。</p></div>
+      <div class="template-scope">
+        <label v-if="projects.length">项目<select v-model="selectedProjectId" :disabled="loading"><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+        <label v-if="workspaces.length">工作区（可选）<select v-model="selectedWorkspaceId" :disabled="loading"><option :value="undefined">仅检查项目数据</option><option v-for="item in workspaces" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+        <p v-if="!projects.length && !workspaces.length" class="scope-note">还没有可巡检的项目。创建项目后，就能从这里开始。</p>
+        <p v-if="feedback" class="form-error" role="alert">{{ feedback }}</p>
+      </div>
+      <template #footer><AppButton v-if="!projects.length && !workspaces.length" @click="startProject('first_project_inspection')">创建第一个项目</AppButton><AppButton v-else :loading="loading" :disabled="!canInspect" @click="firstRun">运行一次项目巡检</AppButton></template>
+    </DetailDrawer>
 
     <DetailDrawer
       :open="Boolean(draft)"
@@ -616,6 +722,40 @@ onMounted(async () => {
 
 <style scoped>
 .automation-page { display: grid; gap: var(--space-6); width: min(100%, 1180px); margin: 0 auto; }
+.automation-page--empty { gap: 0; }
+.empty-toolbar { display: flex; min-height: 40px; justify-content: flex-end; align-items: center; }
+.text-action { display: inline-flex; align-items: center; justify-content: center; gap: 9px; width: fit-content; min-height: 36px; border: 0; border-radius: var(--radius-sm); padding: 4px 0; background: transparent; color: var(--primary); font-size: 14px; font-weight: 650; box-shadow: none; text-decoration: none; }
+.text-action:hover { color: var(--primary-hover); background: transparent; text-decoration: underline; text-underline-offset: 4px; }
+.text-action:focus-visible { outline: 2px solid var(--primary); outline-offset: 5px; }
+.automation-welcome { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 56px 24px 56px; }
+.welcome-icon { display: grid; place-items: center; width: 84px; height: 84px; border-radius: 20px; background: var(--primary-soft, #eef2ff); color: var(--primary); margin-bottom: 24px; }
+.automation-welcome h1 { margin: 0; color: var(--foreground); font-size: clamp(28px, 2.7vw, 42px); font-weight: 750; line-height: 1.35; letter-spacing: -.035em; }
+.welcome-description { margin: 16px 0 0; color: var(--muted-foreground); font-size: 20px; line-height: 1.65; }
+.welcome-hint { margin: 24px 0 0; color: var(--muted-foreground); font-size: 17px; line-height: 1.65; }
+.welcome-actions { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 28px; margin-top: 24px; }
+.welcome-actions .welcome-primary { min-height: 54px; border-radius: 10px; padding: 14px 24px; font-size: 18px; }
+.welcome-actions > .text-action { font-size: 18px; }
+.starter-section { border-top: 1px solid var(--border); padding: 32px 0 40px; }
+.starter-heading h2 { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.5; }
+.starter-heading p { margin: 6px 0 0; color: var(--muted-foreground); font-size: 16px; line-height: 1.6; }
+.starter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 22px; }
+.starter-card { display: flex; align-items: flex-start; gap: 20px; min-width: 0; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 20px; }
+.starter-icon { display: grid; place-items: center; flex: 0 0 64px; width: 64px; height: 64px; border-radius: 14px; }
+.starter-icon--purple { color: var(--primary); background: var(--primary-soft, #eef2ff); }
+.starter-icon--amber { color: #d97706; background: #fff7ed; }
+.starter-icon--blue { color: #0284c7; background: #eff6ff; }
+.starter-copy { min-width: 0; }
+.starter-copy h3 { margin: 3px 0 7px; font-size: 18px; font-weight: 700; line-height: 1.5; }
+.starter-copy p { margin: 0; color: var(--muted-foreground); font-size: 16px; line-height: 1.6; }
+.starter-copy .text-action { margin-top: 16px; font-size: 16px; font-weight: 550; }
+.template-scope { display: grid; gap: 16px; margin-top: 24px; }
+.template-scope label { display: grid; gap: 8px; font-size: 14px; font-weight: 650; }
+.scope-note { margin: 0; border-radius: var(--radius-md); background: var(--primary-soft, #eef2ff); color: var(--primary-hover); padding: 14px 16px; line-height: 1.65; }
+.intent-scope-note { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 14px; }
+.automation-page--empty .intent-card { margin: 24px 0; }
+.templates-section--expanded { border-top: 1px solid var(--border); padding-top: 28px; padding-bottom: 32px; }
+.templates-section h2:focus { outline: none; }
+.automation-page--empty > .feedback { margin: 0 0 24px; }
 .secondary-link { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--foreground); padding: 9px 14px; font-weight: 650; }
 .secondary-link:hover { background: var(--surface-muted); }
 .schedule-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-muted); padding: var(--space-3); }
@@ -625,12 +765,7 @@ onMounted(async () => {
 .advanced-schedule[open] summary { margin-bottom: var(--space-3); }
 .advanced-schedule label, .advanced-schedule .settings-grid { margin-bottom: var(--space-3); }
 .load-error { display: grid; gap: var(--space-3); }.load-error > h2 { margin: 0; color: var(--danger-strong); font-size: 20px; }
-.onboarding { display: grid; gap: var(--space-5); border-radius: var(--radius-xl); background: linear-gradient(135deg, var(--primary-hover), var(--primary)); color: var(--primary-foreground); padding: clamp(var(--space-5), 4vw, var(--space-8)); box-shadow: var(--shadow-card); }
-.onboarding-label { display: inline-flex; border-radius: 999px; background: rgb(255 255 255 / .16); padding: 5px 9px; font-size: 12px; font-weight: 750; }
-.onboarding h2 { margin: var(--space-3) 0 6px; font-size: clamp(23px, 3vw, 30px); }.onboarding p { margin: 0; color: rgb(255 255 255 / .82); }
-.onboarding-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
-.onboarding-fields label { display: grid; gap: 6px; font-size: 13px; font-weight: 650; }.onboarding-fields select { background: var(--surface); color: var(--foreground); }
-.onboarding-actions, .intent-form { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.intent-form { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .onboarding-complete { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); border: 1px solid var(--info-border); border-radius: var(--radius-lg); background: var(--info-soft); padding: var(--space-3) var(--space-4); }
 .feedback { margin: 0; border: 1px solid var(--success-border); border-radius: var(--radius-md); background: var(--success-soft); color: var(--success-strong); padding: var(--space-3) var(--space-4); }
 .intent-card { display: grid; grid-template-columns: minmax(0, .8fr) minmax(280px, 1.2fr); align-items: end; gap: var(--space-5); border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--surface); padding: var(--space-5); }
@@ -647,10 +782,25 @@ onMounted(async () => {
 .drawer-block { display: grid; gap: 5px; border-radius: var(--radius-md); background: var(--surface-muted); padding: var(--space-4); }.drawer-block + .drawer-block { margin-top: var(--space-3); }.drawer-block p, .drawer-note { margin: 0; color: var(--muted-foreground); line-height: 1.55; }.drawer-block.safe { border: 1px solid var(--success-border); background: var(--success-soft); }.drawer-block.safe p { color: var(--success-strong); }.drawer-note { margin-top: var(--space-4); }
 .settings-form { display: grid; gap: var(--space-4); }.settings-form > label, .settings-grid label { display: grid; gap: 6px; color: var(--foreground); font-size: 13px; font-weight: 650; }.settings-form small { color: var(--muted-foreground); font-weight: 400; }.settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }.check-line { display: flex !important; grid-template-columns: none; align-items: center; }.check-line input { width: auto; }.permission-note { margin: 0; border-radius: var(--radius-md); background: var(--info-soft); color: var(--info-strong); padding: var(--space-3); line-height: 1.5; }.form-error { margin: 0; color: var(--danger-strong); font-weight: 650; }
 @media (max-width: 1280px) { .template-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1100px) { .starter-card { flex-direction: column; gap: 12px; padding: 18px; } }
 @media (max-width: 680px) {
-  .onboarding-fields, .automation-grid, .template-grid, .intent-card, .settings-grid { grid-template-columns: 1fr; }
+  .automation-grid, .template-grid, .intent-card, .settings-grid { grid-template-columns: 1fr; }
   .section-heading, .onboarding-complete { align-items: stretch; flex-direction: column; }
   .secondary-link { width: 100%; }
-  .intent-form :deep(button), .onboarding-actions :deep(button) { flex: 1 1 100%; }
+  .intent-form :deep(button) { flex: 1 1 100%; }
+  .automation-welcome { padding: 32px 4px 36px; }
+  .welcome-icon { width: 64px; height: 64px; border-radius: 18px; margin-bottom: 20px; }
+  .automation-welcome h1 { font-size: 27px; }
+  .welcome-description { font-size: 15px; max-width: 290px; }
+  .welcome-hint { font-size: 14px; max-width: 280px; margin-top: 20px; }
+  .welcome-actions { gap: 14px; margin-top: 20px; }
+  .welcome-actions .welcome-primary { font-size: 14px; padding: 12px 16px; }
+  .welcome-actions > .text-action { font-size: 14px; }
+  .starter-section { padding-top: 24px; }
+  .starter-heading h2 { font-size: 18px; }
+  .starter-heading p { font-size: 14px; }
+  .starter-grid { grid-template-columns: 1fr; gap: 12px; margin-top: 18px; }
+  .starter-card { flex-direction: row; gap: 18px; }
+  .starter-copy .text-action { margin-top: 8px; }
 }
 </style>
