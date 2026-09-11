@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Check, CreditCard, ShieldCheck } from '@lucide/vue'
+import { ArrowLeft, Check, CreditCard, ShieldCheck } from '@lucide/vue'
 import type { CatalogProduct } from '@/api/billing'
 import { hasAuth } from '@/auth'
-import { formatCredits, safeReturnTo } from '@/domain/billing'
+import { formatCredits } from '@/domain/billing'
+import { getPricingReturnPath } from '@/app/settings-navigation'
+import SettingsFrame from '@/components/settings/SettingsFrame.vue'
 import { useBillingStore } from '@/stores/billing'
 import { requestAuth } from '@/composables/useAuthGate'
 
@@ -17,7 +19,7 @@ const error = ref('')
 
 const plans = computed(() => store.catalog.filter((item) => item.productType === 'PLAN'))
 const creditPacks = computed(() => store.catalog.filter((item) => item.productType === 'CREDIT_PACK'))
-const returnTo = computed(() => safeReturnTo(route.query.returnTo, '/settings/billing'))
+const returnTo = computed(() => getPricingReturnPath(route.query.returnTo))
 const authenticated = computed(() => hasAuth())
 
 onMounted(async () => {
@@ -98,7 +100,9 @@ async function choose(product: CatalogProduct) {
 </script>
 
 <template>
+  <SettingsFrame>
   <section class="pricing-page" aria-labelledby="pricing-title">
+    <RouterLink class="pricing-back" :to="returnTo"><ArrowLeft :size="17" aria-hidden="true" />返回上一页</RouterLink>
     <header class="pricing-hero">
       <p class="eyebrow">Lyle 套餐</p>
       <h1 id="pricing-title">选择适合你的 Lyle</h1>
@@ -188,10 +192,14 @@ async function choose(product: CatalogProduct) {
       <div><CreditCard :size="18" aria-hidden="true" /><span><strong>支付可恢复</strong>页面关闭后可从套餐与账单继续待支付订单。</span></div>
     </footer>
   </section>
+  </SettingsFrame>
 </template>
 
 <style scoped>
-.pricing-page { width: 100%; min-width: 0; max-width: 1120px; margin: 0 auto; padding: 28px 20px 64px; }
+.pricing-page { container-type: inline-size; width: 100%; min-width: 0; max-width: 1120px; margin: 0 auto; padding: 0; }
+.pricing-back { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; margin-bottom: 24px; padding: 6px 0; color: var(--muted-foreground); font-size: 13px; font-weight: 550; }
+.pricing-back:hover { color: var(--primary); }
+.pricing-back:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; border-radius: 4px; }
 .pricing-hero { max-width: 720px; margin: 0 auto 30px; text-align: center; }
 .eyebrow { margin: 0 0 8px; color: var(--primary); font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .pricing-hero h1 { margin: 0; color: var(--foreground); font-size: clamp(32px, 5vw, 48px); letter-spacing: -.045em; }
@@ -206,7 +214,7 @@ async function choose(product: CatalogProduct) {
 .checkout-notice strong { color: var(--foreground); font-size: 13px; }
 .pricing-empty { display: grid; justify-items: center; gap: 8px; color: var(--muted-foreground); }
 .pricing-empty h2, .pricing-empty p { margin: 0; }
-.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; align-items: stretch; }
+.plan-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; align-items: stretch; }
 .plan-card { position: relative; display: flex; flex-direction: column; min-height: 470px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 25px; box-shadow: var(--shadow-sm); }
 .plan-card.featured { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary), var(--shadow-md); }
 .plan-card.current { background: var(--surface-muted); }
@@ -233,8 +241,10 @@ async function choose(product: CatalogProduct) {
 .pricing-notes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 34px; }
 .pricing-notes div { display: flex; gap: 10px; border-top: 1px solid var(--border); padding-top: 16px; color: var(--muted-foreground); font-size: 12px; }
 .pricing-notes strong { display: block; color: var(--foreground); }
+@container (max-width: 920px) { .plan-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 520px) { .plan-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 720px) {
-  .pricing-page { width: 100%; max-width: 520px; padding: 28px 12px 48px; }
+  .pricing-page { width: 100%; max-width: 520px; padding: 0; }
   .pricing-hero { margin-bottom: 22px; }
   .pricing-hero h1 { font-size: clamp(28px, 9vw, 36px); }
   .plan-grid { grid-template-columns: minmax(0, 1fr); }
