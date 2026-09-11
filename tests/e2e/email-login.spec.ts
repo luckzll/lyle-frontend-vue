@@ -1,5 +1,37 @@
 import { expect, test } from '@playwright/test'
 
+for (const status of [429, 503]) {
+  test(`email send ${status} starts the server cooldown and permits retry after expiry`, async ({ page }) => {
+    const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='
+    let sends = 0
+    await page.route(/^https?:\/\/[^/]+\/api\//, async route => {
+      const path = new URL(route.request().url()).pathname
+      if (path === '/api/auth/email/code') {
+        sends++
+        return route.fulfill({ status, headers: { 'Retry-After': '37' }, json: { detail: '请稍后重试。' } })
+      }
+      const body = path === '/api/auth/email/options' ? { enabled: true, captcha: { configured: true, provider: 'tianai' } }
+        : path === '/api/auth/captcha/challenge' ? { id: 'SLIDER_' + 'a'.repeat(32), backgroundImage: pixel, templateImage: pixel, backgroundImageWidth: 600, backgroundImageHeight: 360, templateImageWidth: 100, templateImageHeight: 360 }
+        : path === '/api/auth/captcha/verify' ? { captchaToken: 'a'.repeat(43) } : { items: [] }
+      await route.fulfill({ status: path === '/api/auth/refresh' ? 401 : 200, json: body })
+    })
+    await page.goto('/login')
+    await page.getByLabel('邮箱地址', { exact: true }).fill('user@example.com')
+    await page.getByRole('button', { name: '点击完成验证', exact: true }).click()
+    await page.getByRole('slider', { name: '移动拼图位置' }).press('ArrowRight')
+    await page.getByRole('slider').press('Enter')
+    await expect(page.getByText('已完成人机验证', { exact: true })).toBeVisible()
+    await page.clock.install()
+    await page.getByRole('button', { name: '获取验证码' }).click()
+    await expect(page.getByRole('button', { name: '37 秒后重发' })).toBeDisabled()
+    await page.clock.fastForward(5000)
+    await expect(page.getByRole('button', { name: '32 秒后重发' })).toBeDisabled()
+    expect(sends).toBe(1)
+    await page.clock.fastForward(32000)
+    await expect(page.getByRole('button', { name: '获取验证码' })).toBeEnabled()
+  })
+}
+
 test('email code login handles cooldown, invalid code, and existing-account redirect', async ({ page }) => {
   // These API stubs are test-only. Backend tests exercise the real Tianai image engine.
   const token = 'a'.repeat(43)

@@ -46,6 +46,13 @@ function validateEmail() {
   error.value = '邮箱格式不正确，例如 name@qq.com；请检查后缀、空格或多余标点。'
   emailInput.value?.focus(); return false
 }
+function startCooldown(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return
+  expiresAt = Date.now() + Math.ceil(seconds) * 1000
+  cooldown.value = Math.ceil(seconds)
+  if (timer) clearInterval(timer)
+  timer = setInterval(() => { cooldown.value = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)); if (!cooldown.value && timer) clearInterval(timer) }, 1000)
+}
 async function send() {
   if (busy.value || cooldown.value || !enabled.value) return
   if (!validateEmail()) return
@@ -54,11 +61,12 @@ async function send() {
   try {
     const { data } = await http.post<{ retryAfterSeconds?: number }>(`${prefix()}/code`, { email: normalizeEmail(email.value), ...proof.value })
     notice.value = '验证码已发送，5 分钟内有效。未收到请检查垃圾邮件。'
-    expiresAt = Date.now() + Math.max(60, data.retryAfterSeconds || 60) * 1000
-    cooldown.value = Math.ceil((expiresAt - Date.now()) / 1000)
-    if (timer) clearInterval(timer)
-    timer = setInterval(() => { cooldown.value = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000)); if (!cooldown.value && timer) clearInterval(timer) }, 1000)
-  } catch (e) { error.value = message(e) }
+    startCooldown(data.retryAfterSeconds || 60)
+  } catch (e) {
+    error.value = message(e)
+    const response = (e as { response?: { headers?: Record<string, unknown> } })?.response
+    startCooldown(Number(response?.headers?.['retry-after']))
+  }
   finally { proof.value = null; busy.value = false; await nextTick(); codeInput.value?.focus() }
 }
 async function submit() {
