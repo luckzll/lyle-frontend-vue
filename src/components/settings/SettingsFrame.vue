@@ -12,7 +12,7 @@ const sections = [
   { to: '/settings/usage', label: 'AI 用量', icon: BarChart3 },
   { to: '/settings/billing', label: '套餐与账单', icon: WalletCards }
 ]
-const activeSection = computed(() => route.path.startsWith('/settings/billing')
+const activeSection = computed(() => route.name === 'pricing' || route.path === '/pricing' || route.path.startsWith('/settings/billing')
   ? '/settings/billing'
   : route.path === '/settings/usage' ? '/settings/usage' : '/settings')
 const returnPath = computed(() => {

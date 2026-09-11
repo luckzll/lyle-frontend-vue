@@ -33,7 +33,7 @@ const pageTitle = computed(() => (
     : 'Lyle AI'
 ))
 const pageContext = computed(() => (
-  ['settings', 'usage', 'billing', 'billing-order'].includes(String(route.name || ''))
+  isSettingsLocation(route)
     ? '个人 AI 工作台 / 设置'
     : '个人 AI 工作台'
 ))
