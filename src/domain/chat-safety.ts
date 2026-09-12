@@ -12,6 +12,7 @@ import type {
   ToolResult,
   UsedMemory
 } from '@/api/types'
+import { sanitizeStageTimings } from '@/domain/chat-progress'
 
 const MAX_TRACE_TEXT = 500
 const SENSITIVE_KEYS = new Set([
@@ -84,10 +85,13 @@ export function sanitizeAgentTrace(items: unknown): AgentTraceItem[] {
       'contextCount',
       'queryCount',
       'elapsedMs',
+      'durationMs',
       'memoryContextChars',
       'candidateCount',
       'score'
     ])
+    const timings = sanitizeStageTimings(item.timings)
+    if (timings) safe.timings = timings
     copyEnumField(item, safe, 'action', ['read', 'write', 'candidate_ready'])
     copyEnumField({ status: typeof item.status === 'string' ? item.status.trim().toLowerCase() : undefined }, safe, 'status', [
       'pending', 'queued', 'scheduled', 'running', 'in_progress', 'processing',

@@ -11,6 +11,7 @@ import type {
   UsedMemory
 } from '@/api/types'
 import type { ChatAttachment } from '@/domain/chat-attachment'
+import { mergeAgentProgress, type AgentStepEvent } from '@/domain/chat-progress'
 import {
   sanitizeAgentTrace,
   sanitizeChatSources,
@@ -50,6 +51,7 @@ export type RecoveredChatMessage = {
   usage?: ChatUsage
   sources?: ChatSource[]
   agentTrace?: AgentTraceItem[]
+  agentProgress?: AgentStepEvent[]
   toolResults?: ToolResult[]
   projectContext?: ProjectChatContext
   review?: Record<string, unknown>
@@ -66,10 +68,13 @@ export type RecoveredChatMessage = {
 export function historyMessage(item: ChatMessage): RecoveredChatMessage {
   const metadata = isRecord(item.metadata) ? item.metadata : {}
   const phase = historyTurnPhase(metadata.phase)
+  const turnId = item.turnId || (typeof metadata.turnId === 'string' ? metadata.turnId : undefined)
   const debugVersion = sanitizeDebugVersion(metadata.debugVersion)
   const resolvedDebugDataState = resolveChatDebugDataState(metadata.debugVersion)
   const debugDataState = item.role === 'assistant'
-    ? phase === 'FAILED' && resolvedDebugDataState === 'legacy'
+    ? isActiveTurnPhase(phase) && resolvedDebugDataState === 'legacy'
+      ? 'pending'
+      : phase === 'FAILED' && resolvedDebugDataState === 'legacy'
       ? 'unavailable'
       : resolvedDebugDataState
     : undefined
@@ -77,7 +82,7 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
     id: item.id,
     role: item.role,
     content: item.content,
-    turnId: item.turnId || (typeof metadata.turnId === 'string' ? metadata.turnId : undefined),
+    turnId,
     phase,
     statusText: typeof metadata.statusText === 'string' ? metadata.statusText : undefined,
     imageBatch: historyImageBatch(metadata.imageBatch),
@@ -85,6 +90,7 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
     usage: historyUsage(metadata.usage),
     sources: sanitizeChatSources(metadata.sources),
     agentTrace: sanitizeAgentTrace(metadata.agentTrace),
+    agentProgress: mergeAgentProgress([], metadata.agentProgress, turnId),
     toolResults: sanitizeToolResults(metadata.toolResults),
     projectContext: sanitizeProjectContext(metadata.projectContext),
     review: sanitizeReview(metadata.review),

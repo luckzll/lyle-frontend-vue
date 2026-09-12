@@ -176,7 +176,40 @@ test('live metadata without a debug version is unavailable instead of legacy', a
   await expect(ledger.getByLabel('本轮执行路径').getByText('未返回', { exact: true })).toHaveCount(5)
 })
 
-test('terminal HTTP failure settles pending debug state', async ({ page }) => {
+test('HTTP failure remains pending until backend history confirms completion', async ({ page }) => {
+  let turnId = ''
+  let completed = false
+  await page.route('**/api/chat/stream', async route => {
+    turnId = route.request().postDataJSON().turnId
+    return json(route, { message: '上游服务暂时不可用' }, 503)
+  })
+  await page.route('**/api/chat/messages/debug-complete', route => json(route, [
+    ...completeMessages(),
+    ...(completed ? [{ id: 'recovered', role: 'assistant', content: '后台已完成的回答', turnId,
+      metadata: { phase: 'COMPLETED' }, createdAt: NOW }] : [])
+  ]))
+  await page.goto('/?debug=1&conversationId=debug-complete')
+  await page.getByTestId('chat-input').fill('触发 HTTP 失败')
+  await page.getByTestId('chat-submit').click()
+  const ledger = page.getByTestId('chat-debug-ledger').last()
+  await expect(page.locator('.turn-status').getByText('暂时无法确认后台状态，正在重新查询，请勿重复提交。')).toBeVisible()
+  await expect(ledger).toHaveAttribute('data-debug-state', 'pending')
+  completed = true
+  await expect(page.getByText('后台已完成的回答', { exact: true })).toBeVisible()
+  await expect(ledger).not.toHaveAttribute('data-debug-state', 'pending')
+})
+
+test('backend-confirmed failure settles pending debug state after HTTP failure', async ({ page }) => {
+  let turnId = ''
+  await page.route('**/api/chat/stream', async route => {
+    turnId = route.request().postDataJSON().turnId
+    return json(route, { message: '上游服务暂时不可用' }, 503)
+  })
+  await page.route('**/api/chat/messages/debug-complete', route => json(route, [
+    ...completeMessages(),
+    ...(turnId ? [{ id: 'failed', role: 'assistant', content: '', turnId,
+      metadata: { phase: 'FAILED', statusText: '后台确认执行失败' }, createdAt: NOW }] : [])
+  ]))
   await page.goto('/?debug=1&conversationId=debug-complete')
   await page.getByTestId('chat-input').fill('触发 HTTP 失败')
   await page.getByTestId('chat-submit').click()

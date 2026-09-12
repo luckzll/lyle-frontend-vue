@@ -84,7 +84,7 @@ export function presentAgentTrace(
     statusLabel: '结果未记录',
     tone: 'neutral',
     summary: copy.missing,
-    duration: formatTraceDuration(item.elapsedMs)
+    duration: formatTraceDuration(item.elapsedMs ?? item.durationMs)
   }
   const action = text(item.action)
   const status = text(item.status).toLowerCase()

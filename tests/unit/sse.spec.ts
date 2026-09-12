@@ -3,6 +3,16 @@ import { describe, expect, it, vi } from 'vitest'
 import { consumeSseBuffer, handleSseBlock } from '@/api/app'
 
 describe('SSE parsing', () => {
+  it('receives per-step events across chunks and ignores heartbeat comments and malformed progress', () => {
+    const handlers = { onDelta: vi.fn(), onAgentStep: vi.fn(), onDone: vi.fn() }
+    const first = consumeSseBuffer(': heartbeat\r\n\r\nevent:agent.step\r\ndata:{"turnId":"t","sequence":1,', handlers)
+    expect(handlers.onAgentStep).not.toHaveBeenCalled()
+    consumeSseBuffer(first + '"step":"rag_agent","status":"running"}\r\n\r\nevent:heartbeat\ndata:alive\n\nevent:agent.step\ndata:{"step":"fake"}\n\n', handlers)
+    expect(handlers.onAgentStep).toHaveBeenCalledExactlyOnceWith({ turnId: 't', sequence: 1, step: 'rag_agent', status: 'running' })
+    expect(handlers.onDelta).not.toHaveBeenCalled()
+    expect(handlers.onDone).not.toHaveBeenCalled()
+  })
+
   it('dispatches delta, meta, and error events from a complete buffer', () => {
     const handlers = {
       onDelta: vi.fn(),

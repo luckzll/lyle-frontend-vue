@@ -2,6 +2,7 @@ import { http, publicHttp } from './http'
 import type { MemorySchemaStatus } from './types'
 import type { MemoryFact } from './types'
 import { getAuthToken } from '@/auth'
+import { sanitizeAgentStep, type AgentStepEvent } from '@/domain/chat-progress'
 import type { AttachmentFolderMetadata, ChatAttachment, ChatAttachmentKind } from '@/domain/chat-attachment'
 import type {
   AdminOverview,
@@ -103,6 +104,7 @@ export type SseHandlers = {
   onDelta: (chunk: string) => void
   onMeta?: (meta: StreamMeta) => void
   onTurnStatus?: (event: TurnStatusEvent) => void
+  onAgentStep?: (event: AgentStepEvent) => void
   onImageBatchStarted?: (event: ImageBatchStartedEvent) => void
   onImageItem?: (event: ImageItemEvent) => void
   onImageBatchCompleted?: (event: ImageBatchCompletedEvent) => void
@@ -857,22 +859,23 @@ export async function streamMessage(
 }
 
 export function consumeSseBuffer(buffer: string, handlers: SseHandlers) {
-  let eventEnd = buffer.indexOf('\n\n')
-  while (eventEnd >= 0) {
-    const block = buffer.slice(0, eventEnd)
-    buffer = buffer.slice(eventEnd + 2)
+  let boundary = /\r?\n\r?\n/.exec(buffer)
+  while (boundary) {
+    const block = buffer.slice(0, boundary.index)
+    buffer = buffer.slice(boundary.index + boundary[0].length)
     handleSseBlock(block, handlers)
-    eventEnd = buffer.indexOf('\n\n')
+    boundary = /\r?\n\r?\n/.exec(buffer)
   }
   return buffer
 }
 
 export function handleSseBlock(block: string, handlers: SseHandlers) {
-  const lines = block.split('\n')
-  const event = lines.find((line) => line.startsWith('event: '))?.slice(7).trim()
+  const lines = block.split(/\r?\n/)
+  const event = lines.find((line) => line.startsWith('event:'))?.slice(6).trim()
+  if (!event || event === 'heartbeat' || event === 'ping') return
   const dataText = lines
-    .filter((line) => line.startsWith('data: '))
-    .map((line) => line.slice(6))
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).replace(/^ /, ''))
     .join('\n')
   const data = dataText ? JSON.parse(dataText) : {}
 
@@ -882,6 +885,9 @@ export function handleSseBlock(block: string, handlers: SseHandlers) {
     handlers.onMeta?.(data)
   } else if (event === 'turn.status') {
     handlers.onTurnStatus?.(data as TurnStatusEvent)
+  } else if (event === 'agent.step') {
+    const step = sanitizeAgentStep(data)
+    if (step) handlers.onAgentStep?.(step)
   } else if (event === 'image.batch.started') {
     handlers.onImageBatchStarted?.(data as ImageBatchStartedEvent)
   } else if (event === 'image.item.completed' || event === 'image.item.failed') {

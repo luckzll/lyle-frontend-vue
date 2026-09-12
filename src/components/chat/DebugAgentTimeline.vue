@@ -2,7 +2,8 @@
 import { computed } from 'vue'
 import { BrainCircuit, Check, ChevronRight, Clock3, Database, FileStack, FolderSearch, GitBranch, ShieldCheck, Sparkles, Wrench } from '@lucide/vue'
 import type { AgentTraceItem, ProjectChatContext } from '@/api/types'
-import { presentAgentTrace } from '@/domain/chat-trace-presentation'
+import { formatTraceDuration, presentAgentTrace } from '@/domain/chat-trace-presentation'
+import { stageTimingLabel } from '@/domain/chat-progress'
 
 const props = defineProps<{
   items: AgentTraceItem[]
@@ -78,6 +79,11 @@ function stepIcon(agent: string) {
               <span>节点标识 <code>{{ step.item.agent }}</code></span>
               <span>{{ step.duration ? `耗时 ${step.duration}` : '耗时未记录' }}</span>
             </div>
+            <dl v-if="step.item.timings && Object.keys(step.item.timings).length" class="debug-flow-timings">
+              <template v-for="(duration, name) in step.item.timings" :key="name">
+                <dt>{{ stageTimingLabel(name) }}</dt><dd>{{ formatTraceDuration(duration) }}</dd>
+              </template>
+            </dl>
             <details v-if="formatDetail(step.item)" class="debug-flow-raw">
               <summary>查看诊断字段</summary>
               <pre>{{ formatDetail(step.item) }}</pre>
@@ -130,6 +136,9 @@ function stepIcon(agent: string) {
 .debug-flow-detail p > strong { display: block; margin-bottom: 4px; color: var(--foreground, #334155); font-size: 11px; }
 .debug-flow-technical { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted-foreground, #64748b); font-size: 11px; overflow-wrap: anywhere; }
 .debug-flow-technical code { padding: 2px 5px; border-radius: 4px; background: var(--surface-muted, #f1f5f9); color: var(--foreground, #334155); }
+.debug-flow-timings { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; margin: 0; color: var(--muted-foreground); font-size: 12px; }
+.debug-flow-timings dt { overflow-wrap: anywhere; }
+.debug-flow-timings dd { margin: 0; font-variant-numeric: tabular-nums; }
 .debug-flow-raw { min-width: 0; }
 .debug-flow-raw > summary { cursor: pointer; color: var(--primary, #5b5ce2); font-size: 11px; padding: 3px 0; }
 .debug-flow-raw pre { max-height: 260px; overflow: auto; margin: 8px 0 0; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
