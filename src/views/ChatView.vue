@@ -76,6 +76,9 @@ import {
 import ChatComposer from '@/components/chat/ChatComposer.vue'
 import DebugAgentTimeline from '@/components/chat/DebugAgentTimeline.vue'
 import DebugLedger from '@/components/chat/DebugLedger.vue'
+import AgentProgressTimeline from '@/components/chat/AgentProgressTimeline.vue'
+import { AGENT_STEPS, agentProgressDetail, agentProgressDisplayStatus, mergeAgentProgress, type AgentStep, type AgentStepEvent } from '@/domain/chat-progress'
+import { reconcileChatTurn, recoveryPollDelay, recoveryStatusText, shouldRecoverChatTurn, type ChatRecoveryState } from '@/domain/chat-recovery'
 import { summarizeChatDebug } from '@/domain/chat-debug-summary'
 import ChatSources from '@/components/chat/ChatSources.vue'
 import { presentAgentTrace } from '@/domain/chat-trace-presentation'
@@ -121,6 +124,8 @@ interface Message {
   }
   sources?: ChatSource[]
   agentTrace?: AgentTraceItem[]
+  agentProgress?: AgentStepEvent[]
+  recoveryState?: ChatRecoveryState
   toolResults?: ToolResult[]
   candidateMemories?: MemoryItem[]
   candidateTasks?: CandidateTaskItem[]
@@ -153,7 +158,7 @@ interface DebugExecutionStep {
   id: 'route' | 'memory' | 'rag' | 'tools' | 'writer'
   label: string
   detail: string
-  state: 'done' | 'empty' | 'skipped' | 'missing' | 'running' | 'failed'
+  state: 'done' | 'empty' | 'skipped' | 'missing' | 'running' | 'failed' | 'pending' | 'interrupted'
 }
 
 interface RetryTurnContext {
@@ -182,6 +187,12 @@ const loading = ref(false)
 const streamController = ref<AbortController | null>(null)
 const recoveringTurnId = ref('')
 let recoveryPollTimer: number | undefined
+let conversationEpoch = 0
+let viewDisposed = false
+let recoveryFailures = 0
+let recoveryRequest = 0
+let recoveryInFlight = 0
+const cancellingTurnId = ref('')
 let sourceHighlightTimer: number | undefined
 const initializing = ref(true)
 const debugControlsEnabled = computed(() => route.query.debug === '1')
@@ -309,8 +320,12 @@ const contextMemoryCount = computed(() => latestAssistantMessage.value ? injecte
 const contextTimeline = computed(() => {
   const message = latestAssistantMessage.value
   const steps: Array<{ id: string; title: string; detail?: string; status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'skipped' | 'unknown' }> = []
-  if (loading.value) {
-    steps.push({ id: 'stream', title: '生成回答', detail: '正在读取上下文并组织结果', status: 'running' })
+  if (message?.agentProgress?.length && message.debugDataState !== 'available') {
+    for (const event of message.agentProgress) {
+      steps.push({ id: event.step, title: AGENT_STEPS[event.step], detail: agentProgressDetail(message.agentProgress, event.step, message.phase), status: agentProgressDisplayStatus(event, message.phase) === 'interrupted' ? 'failed' : event.status })
+    }
+  } else if (loading.value && !message?.agentTrace?.length) {
+    steps.push({ id: 'waiting', title: '等待执行进度', detail: message?.recoveryState ? recoveryStatusText(message.recoveryState) : '尚未收到步骤状态', status: 'waiting' })
   }
   for (const [index, trace] of (message?.agentTrace || []).entries()) {
     const presentation = presentAgentTrace(trace, { projectContext: message?.projectContext })
@@ -460,7 +475,8 @@ onActivated(async () => {
 })
 
 onBeforeUnmount(() => {
-  clearRecoveryPolling()
+  viewDisposed = true
+  detachConversation()
   if (sourceHighlightTimer !== undefined) window.clearTimeout(sourceHighlightTimer)
 })
 
@@ -582,22 +598,36 @@ async function refreshBrief() {
   }
 }
 
-async function ensureConversationId(firstMessage: string) {
+async function ensureConversationId(firstMessage: string, epoch = conversationEpoch) {
   if (conversationId.value) return conversationId.value
 
   const title = firstMessage.length > 18 ? `${firstMessage.slice(0, 18)}...` : firstMessage
   const response = await createConversation(title || '新会话')
+  if (epoch !== conversationEpoch) return ''
   conversationId.value = String(response.data.id)
   window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, conversationId.value)
   await refreshConversations()
   return conversationId.value
 }
 
-async function loadConversation(id: string) {
-  if (loading.value) return
-
+function detachConversation() {
+  conversationEpoch += 1
+  recoveryRequest += 1
+  recoveryInFlight = 0
   clearRecoveryPolling()
+  streamController.value?.abort()
+  streamController.value = null
   recoveringTurnId.value = ''
+  cancellingTurnId.value = ''
+  recoveryFailures = 0
+  loading.value = false
+}
+
+async function loadConversation(id: string) {
+  if (viewDisposed) return
+  detachConversation()
+  const epoch = conversationEpoch
+  messages.value = []
   handoffProject.value = null
   resetAttachments()
   editingTitle.value = false
@@ -606,50 +636,81 @@ async function loadConversation(id: string) {
   error.value = ''
   loading.value = true
   try {
-    const response = await listChatMessages(conversationId.value)
+    const response = await listChatMessages(String(id))
+    if (epoch !== conversationEpoch) return
     messages.value = response.data.map(historyMessage)
-    window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, conversationId.value)
+    window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, String(id))
     await refreshBrief()
   } catch {
-    error.value = '会话加载失败，请稍后重试。'
+    if (epoch === conversationEpoch) error.value = '会话加载失败，请稍后重试。'
   } finally {
-    loading.value = false
-    syncRecoveredTurnPolling()
+    if (epoch === conversationEpoch) {
+      loading.value = false
+      syncRecoveredTurnPolling()
+    }
   }
 }
 
 function syncRecoveredTurnPolling() {
+  if (viewDisposed || streamController.value || cancellingTurnId.value || recoveryInFlight) return
   const active = [...messages.value].reverse().find((message) => (
-    message.role === 'assistant'
-    && Boolean(message.turnId)
-    && isActiveTurnPhase(message.phase)
+    message.role === 'assistant' && Boolean(message.turnId)
+    && (isActiveTurnPhase(message.phase) || Boolean(message.recoveryState))
   ))
-  if (!active || streamController.value) {
+  if (!active) {
     recoveringTurnId.value = ''
     clearRecoveryPolling()
-    if (!streamController.value) loading.value = false
+    loading.value = false
     return
   }
   recoveringTurnId.value = active.turnId || ''
   loading.value = true
   if (recoveryPollTimer === undefined) {
-    recoveryPollTimer = window.setTimeout(pollRecoveredConversation, 1000)
+    recoveryPollTimer = window.setTimeout(pollRecoveredConversation, recoveryPollDelay(recoveryFailures))
   }
 }
 
 async function pollRecoveredConversation() {
   recoveryPollTimer = undefined
   const targetConversationId = conversationId.value
-  if (!targetConversationId || streamController.value) return
+  const turnId = recoveringTurnId.value
+  const target = messages.value.find(message => message.role === 'assistant' && message.turnId === turnId)
+  if (!targetConversationId || !target || streamController.value || cancellingTurnId.value || recoveryInFlight) return
+  const epoch = conversationEpoch
+  const request = ++recoveryRequest
+  recoveryInFlight = request
+  const current = () => epoch === conversationEpoch && request === recoveryRequest && !cancellingTurnId.value
   try {
     const response = await listChatMessages(targetConversationId)
-    if (conversationId.value !== targetConversationId) return
-    messages.value = response.data.map(historyMessage)
+    if (!current()) return
+    Object.assign(target, reconcileChatTurn(target, response.data))
+    recoveryFailures = target.recoveryState === 'unconfirmed' ? recoveryFailures + 1 : 0
   } catch {
-    error.value = '图片任务状态暂时无法更新，正在重试。'
+    if (!current()) return
+    target.recoveryState = 'unconfirmed'
+    recoveryFailures += 1
   } finally {
-    syncRecoveredTurnPolling()
+    if (recoveryInFlight === request) recoveryInFlight = 0
+    if (current()) syncRecoveredTurnPolling()
   }
+}
+
+function refreshTurnStatus() {
+  if (recoveryInFlight) return
+  clearRecoveryPolling()
+  recoveryRequest += 1
+  const target = messages.value.find(message => message.role === 'assistant' && message.turnId === recoveringTurnId.value)
+  if (target) target.recoveryState = 'checking'
+  void pollRecoveredConversation()
+}
+
+async function recoverInterruptedTurn(target: Message) {
+  if (!shouldRecoverChatTurn(target)) { settlePendingDebugState(target); return }
+  target.recoveryState = 'checking'
+  recoveringTurnId.value = target.turnId || ''
+  loading.value = true
+  clearRecoveryPolling()
+  await pollRecoveredConversation()
 }
 
 function clearRecoveryPolling() {
@@ -666,10 +727,9 @@ function changeConversation() {
 }
 
 function newConversation() {
-  if (loading.value) return
-
-  clearRecoveryPolling()
-  recoveringTurnId.value = ''
+  detachConversation()
+  error.value = ''
+  commercialQuotaError.value = false
   handoffProject.value = null
   resetAttachments()
   editingTitle.value = false
@@ -784,38 +844,35 @@ async function revealSourceMessage(messageId: string) {
 }
 
 async function cancelStreaming() {
+  const target = [...messages.value].reverse().find(message => (
+    message.role === 'assistant' && message.turnId
+    && (isActiveTurnPhase(message.phase) || Boolean(message.recoveryState))
+  ))
+  if (!target?.turnId || !conversationId.value || cancellingTurnId.value) return
+  const epoch = conversationEpoch
+  const turnId = target.turnId
   const controller = streamController.value
-  const pendingAssistant = [...messages.value].reverse().find((message) => (
-    message.role === 'assistant' && message.debugDataState === 'pending'
-  ))
-  const target = [...messages.value].reverse().find((message) => (
-    message.role === 'assistant'
-    && Boolean(message.turnId)
-    && isActiveTurnPhase(message.phase)
-  ))
-  const turnId = target?.turnId || recoveringTurnId.value
-  if (!turnId || !conversationId.value) {
-    controller?.abort()
-    settlePendingDebugState(target || pendingAssistant)
-    return
-  }
-
+  cancellingTurnId.value = turnId
+  recoveryRequest += 1
+  recoveryInFlight = 0
+  clearRecoveryPolling()
   try {
     const response = await cancelChatTurn(conversationId.value, turnId)
-    if (target) Object.assign(target, historyMessage(response.data))
+    if (epoch !== conversationEpoch) return
+    Object.assign(target, historyMessage(response.data), { recoveryState: undefined })
+    if (isActiveTurnPhase(target.phase)) target.recoveryState = 'unconfirmed'
+    else settlePendingDebugState(target)
   } catch {
-    if (target) {
-      target.content ||= '已停止生成。'
-      target.phase = 'FAILED'
-      target.statusText = '已停止生成'
-      applyImageBatchCancelled(target)
-    }
+    if (epoch !== conversationEpoch) return
+    // A failed cancel request is not confirmation that the backend has stopped.
+    target.recoveryState = 'unconfirmed'
   } finally {
-    settlePendingDebugState(target || pendingAssistant)
-    controller?.abort()
-    clearRecoveryPolling()
-    recoveringTurnId.value = ''
-    loading.value = false
+    if (epoch === conversationEpoch) {
+      controller?.abort()
+      if (streamController.value === controller) streamController.value = null
+      cancellingTurnId.value = ''
+      syncRecoveredTurnPolling()
+    }
   }
 }
 
@@ -855,37 +912,32 @@ async function submit(retryContext?: RetryTurnContext) {
   loading.value = true
   error.value = ''
   commercialQuotaError.value = false
-  streamController.value = new AbortController()
-
+  const controller = new AbortController()
+  streamController.value = controller
+  const epoch = conversationEpoch
   let assistantIndex = retryContext?.assistantIndex ?? -1
+  let activeConversationId = conversationId.value
   let streamError = ''
+  let receivedDone = false
+  const targetMessage = () => {
+    if (epoch !== conversationEpoch || activeConversationId !== conversationId.value) return undefined
+    const target = messages.value[assistantIndex]
+    return target?.turnId === turnId ? target : undefined
+  }
+  const liveTarget = () => cancellingTurnId.value === turnId || controller.signal.aborted ? undefined : targetMessage()
 
   try {
-    const activeConversationId = retryContext ? conversationId.value : await ensureConversationId(message)
+    activeConversationId = retryContext ? conversationId.value : await ensureConversationId(message, epoch)
+    if (epoch !== conversationEpoch) return
     if (!activeConversationId) throw new Error('会话尚未保存，无法重试。')
-    if (retryContext) {
-      messages.value[assistantIndex] = {
-        role: 'assistant',
-        content: '',
-        turnId,
-        phase: 'THINKING',
-        statusText: '正在理解你的需求…',
-        debugDataState: 'pending'
-      }
-    } else {
-      messages.value.push({
-        role: 'user',
-        content: message,
-        attachments: attachmentsForDisplay.length ? attachmentsForDisplay : undefined
-      })
-      messages.value.push({
-        role: 'assistant',
-        content: '',
-        turnId,
-        phase: 'THINKING',
-        statusText: '正在理解你的需求…',
-        debugDataState: 'pending'
-      })
+    const pending: Message = {
+      role: 'assistant', content: '', turnId, phase: 'THINKING',
+      statusText: '正在等待执行进度…', debugDataState: 'pending', agentProgress: []
+    }
+    if (retryContext) messages.value[assistantIndex] = pending
+    else {
+      messages.value.push({ role: 'user', content: message, attachments: attachmentsForDisplay.length ? attachmentsForDisplay : undefined })
+      messages.value.push(pending)
       assistantIndex = messages.value.length - 1
     }
 
@@ -900,123 +952,104 @@ async function submit(retryContext?: RetryTurnContext) {
       modelId: chatModelId.value
     }, {
       onOpen: () => {
-        if (!retryContext) {
-          input.value = ''
-          commitReadyAttachments()
-        }
+        if (!liveTarget()) return
+        if (!retryContext) { input.value = ''; commitReadyAttachments() }
       },
       onDelta: (chunk) => {
-        messages.value[assistantIndex].content += chunk
+        const target = liveTarget()
+        if (!target) return
+        target.content += chunk
         nextTick(() => {
+          if (epoch !== conversationEpoch) return
           if (isNearBottom.value) scrollToBottom(false)
           else hasMessagesBelow.value = true
         })
       },
       onMeta: (meta) => {
-        const debugVersion = sanitizeDebugVersion(meta.debugVersion)
-        messages.value[assistantIndex].sources = sanitizeChatSources(meta.sources)
-        messages.value[assistantIndex].agentTrace = sanitizeAgentTrace(meta.agentTrace)
-        messages.value[assistantIndex].toolResults = sanitizeToolResults(meta.toolResults)
-        messages.value[assistantIndex].candidateMemories = meta.candidateMemories || []
-        messages.value[assistantIndex].candidateTasks = meta.candidateTasks || []
-        messages.value[assistantIndex].candidateGoals = meta.candidateGoals || []
-        messages.value[assistantIndex].candidateDecisions = meta.candidateDecisions || []
-        messages.value[assistantIndex].candidateOpenQuestions = meta.candidateOpenQuestions || []
-        messages.value[assistantIndex].candidatePlans = meta.candidatePlans || []
-        messages.value[assistantIndex].executionSuggestions = sanitizeExecutionSuggestions(meta.executionSuggestions)
-        messages.value[assistantIndex].projectContext = sanitizeProjectContext(meta.projectContext)
-        messages.value[assistantIndex].review = sanitizeReview(meta.review)
-        messages.value[assistantIndex].usage = meta.usage
-        messages.value[assistantIndex].usedMemories = sanitizeUsedMemories(meta.usedMemories)
-        messages.value[assistantIndex].memoryExclusions = sanitizeMemoryExclusions(meta.memoryExclusions)
-        messages.value[assistantIndex].memoryExplanationVersion = meta.memoryExplanationVersion
-        messages.value[assistantIndex].debugVersion = debugVersion
-        messages.value[assistantIndex].knowledgeBaseIds = sanitizeKnowledgeBaseIds(meta.knowledgeBaseIds)
-        messages.value[assistantIndex].retrievalScope = sanitizeRetrievalScope(meta.retrievalScope)
-        messages.value[assistantIndex].debugTruncated = meta.debugTruncated === true
-        messages.value[assistantIndex].debugDataState = resolveLiveChatDebugDataState(meta.debugVersion)
+        const target = liveTarget()
+        if (!target) return
+        target.sources = sanitizeChatSources(meta.sources)
+        target.agentTrace = sanitizeAgentTrace(meta.agentTrace)
+        target.toolResults = sanitizeToolResults(meta.toolResults)
+        target.candidateMemories = meta.candidateMemories || []
+        target.candidateTasks = meta.candidateTasks || []
+        target.candidateGoals = meta.candidateGoals || []
+        target.candidateDecisions = meta.candidateDecisions || []
+        target.candidateOpenQuestions = meta.candidateOpenQuestions || []
+        target.candidatePlans = meta.candidatePlans || []
+        target.executionSuggestions = sanitizeExecutionSuggestions(meta.executionSuggestions)
+        target.projectContext = sanitizeProjectContext(meta.projectContext)
+        target.review = sanitizeReview(meta.review)
+        target.usage = meta.usage
+        target.usedMemories = sanitizeUsedMemories(meta.usedMemories)
+        target.memoryExclusions = sanitizeMemoryExclusions(meta.memoryExclusions)
+        target.memoryExplanationVersion = meta.memoryExplanationVersion
+        target.debugVersion = sanitizeDebugVersion(meta.debugVersion)
+        target.knowledgeBaseIds = sanitizeKnowledgeBaseIds(meta.knowledgeBaseIds)
+        target.retrievalScope = sanitizeRetrievalScope(meta.retrievalScope)
+        target.debugTruncated = meta.debugTruncated === true
+        target.debugDataState = resolveLiveChatDebugDataState(meta.debugVersion)
+      },
+      onAgentStep: (event) => {
+        const target = liveTarget()
+        if (!target || event.turnId !== turnId) return
+        target.agentProgress = mergeAgentProgress(target.agentProgress, event, turnId)
+        const running = target.agentProgress.filter(item => item.status === 'running')
+        target.statusText = running.length
+          ? running.map(item => `${AGENT_STEPS[item.step]}中`).join(' · ')
+          : '正在等待下一步进度…'
       },
       onTurnStatus: (status) => {
-        const target = messages.value[assistantIndex]
-        target.turnId = status.turnId || target.turnId
+        const target = liveTarget()
+        if (!target || (status.turnId && status.turnId !== turnId)) return
         target.phase = status.phase
         target.statusText = status.message
-        if (status.phase === 'COMPLETED' || status.phase === 'FAILED') {
-          settlePendingDebugState(target)
-        }
+        if (status.phase === 'COMPLETED' || status.phase === 'FAILED') settlePendingDebugState(target)
       },
-      onImageBatchStarted: (batch) => {
-        applyImageBatchStarted(messages.value[assistantIndex], batch)
-      },
-      onImageItem: (item) => {
-        applyImageItem(messages.value[assistantIndex], item)
-      },
-      onImageBatchCompleted: (batch) => {
-        applyImageBatchCompleted(messages.value[assistantIndex], batch)
-      },
-      onError: (errorMessage) => {
-        streamError = errorMessage
-        messages.value[assistantIndex].content ||= errorMessage
-        messages.value[assistantIndex].phase = 'FAILED'
-        messages.value[assistantIndex].statusText = errorMessage
-        settlePendingDebugState(messages.value[assistantIndex])
-      },
-      onDone: () => {
-        settlePendingDebugState(messages.value[assistantIndex])
-        streamController.value = null
-      }
-    }, {
-      signal: streamController.value.signal
-    })
+      onImageBatchStarted: (batch) => { const target = liveTarget(); if (target && batch.turnId === turnId) applyImageBatchStarted(target, batch) },
+      onImageItem: (item) => { const target = liveTarget(); if (target && item.turnId === turnId) applyImageItem(target, item) },
+      onImageBatchCompleted: (batch) => { const target = liveTarget(); if (target && batch.turnId === turnId) applyImageBatchCompleted(target, batch) },
+      onError: (errorMessage) => { streamError = errorMessage },
+      onDone: () => { receivedDone = true }
+    }, { signal: controller.signal })
+    const target = targetMessage()
+    if (!target || controller.signal.aborted || cancellingTurnId.value === turnId) return
+    if (streamController.value === controller) streamController.value = null
+    if ((!receivedDone || streamError || isActiveTurnPhase(target.phase)) && shouldRecoverChatTurn(target)) await recoverInterruptedTurn(target)
+    else settlePendingDebugState(target)
+    if (epoch !== conversationEpoch) return
     if (!streamError && startsProjectConversation && requestProjectId) {
-      void trackEffectiveProgressAction({
-        page: 'chat',
-        actionType: 'project_chat',
-        projectId: requestProjectId
-      }).catch(() => undefined)
+      void trackEffectiveProgressAction({ page: 'chat', actionType: 'project_chat', projectId: requestProjectId }).catch(() => undefined)
     }
     if (!retryContext && !streamError && window.matchMedia('(max-width: 959px)').matches) {
-      void trackProductEvent({
-        eventType: 'mobile_primary_action_used',
-        page: 'chat',
-        actionType: 'start_chat',
-        projectId: requestProjectId
-      }).catch(() => undefined)
+      void trackProductEvent({ eventType: 'mobile_primary_action_used', page: 'chat', actionType: 'start_chat', projectId: requestProjectId }).catch(() => undefined)
     }
     await refreshConversations()
     await refreshBrief()
   } catch (exception) {
+    if (epoch !== conversationEpoch || controller.signal.aborted || cancellingTurnId.value === turnId) return
+    const target = targetMessage()
+    if (target && !shouldRecoverChatTurn(target)) { settlePendingDebugState(target); return }
     if (exception instanceof HttpStreamError && exception.status === 402) {
       commercialQuotaError.value = true
       error.value = ''
-      if (!retryContext && assistantIndex > 0) {
-        messages.value.splice(assistantIndex - 1, 2)
-      }
+      if (!retryContext && target && assistantIndex > 0) messages.value.splice(assistantIndex - 1, 2)
+      else if (target) { target.phase = 'FAILED'; target.statusText = exception.message; settlePendingDebugState(target) }
       return
     }
-    if (exception instanceof DOMException && exception.name === 'AbortError') {
-      if (assistantIndex >= 0) {
-        messages.value[assistantIndex].content ||= '已停止生成。'
-        messages.value[assistantIndex].phase = 'FAILED'
-        messages.value[assistantIndex].statusText = '已停止生成'
-        applyImageBatchCancelled(messages.value[assistantIndex])
-        if (!messages.value[assistantIndex].content.includes('已停止生成。')) {
-          messages.value[assistantIndex].content += '\n\n已停止生成。'
-        }
-      }
-      return
+    if (target && (!(exception instanceof HttpStreamError) || exception.status >= 500 || [408, 409].includes(exception.status))) {
+      if (streamController.value === controller) streamController.value = null
+      await recoverInterruptedTurn(target)
+    } else {
+      const fallback = (exception instanceof Error ? exception.message : '') || '请求未能发送，请稍后重试。'
+      if (target) { target.phase = 'FAILED'; target.statusText = fallback; settlePendingDebugState(target) }
+      error.value = fallback
     }
-    const fallback = streamError || (exception instanceof Error ? exception.message : '') || '请求失败，请确认 Java 后端和 Python AI 服务已经启动。'
-    if (assistantIndex >= 0) {
-      messages.value[assistantIndex].content ||= fallback
-      messages.value[assistantIndex].phase = 'FAILED'
-      messages.value[assistantIndex].statusText = fallback
-    }
-    error.value = fallback
   } finally {
-    if (assistantIndex >= 0) settlePendingDebugState(messages.value[assistantIndex])
-    loading.value = false
-    streamController.value = null
+    if (epoch === conversationEpoch) {
+      if (streamController.value === controller) streamController.value = null
+      syncRecoveredTurnPolling()
+    }
   }
 }
 
@@ -1225,9 +1258,7 @@ function assistantImages(message: Message) {
 
 function showAssistantStatus(message: Message) {
   return message.role === 'assistant'
-    && message.phase !== 'FAILED'
-    && message.phase !== 'COMPLETED'
-    && Boolean(message.statusText)
+    && (Boolean(message.recoveryState) || (message.phase !== 'FAILED' && message.phase !== 'COMPLETED' && Boolean(message.statusText)))
 }
 
 function failureMessage(message: Message) {
@@ -1253,6 +1284,7 @@ async function copyDebugPayload(message: Message, index: number) {
     usedMemories: message.usedMemories || [],
     memoryExclusions: message.memoryExclusions || {},
     agentTrace: message.agentTrace || [],
+    agentProgress: message.agentProgress || [],
     toolResults: message.toolResults || [],
     sources: message.sources || [],
     projectContext: message.projectContext || {},
@@ -1291,7 +1323,8 @@ function debugDataStatusLabel(message: Message) {
 }
 
 function debugDataNotice(message: Message) {
-  if (message.debugDataState === 'pending') return '本轮仍在执行，证据账本会在回答完成后更新。'
+  if (message.recoveryState) return recoveryStatusText(message.recoveryState)
+  if (message.debugDataState === 'pending') return message.agentProgress?.length ? '步骤状态正在实时更新，最终证据将在本轮结束后汇总。' : '等待后台步骤状态，尚未收到的步骤不会标为进行中。'
   if (message.debugDataState === 'unsupported') return '本轮使用了当前界面不支持的调试数据版本，不会将其中的空值解释为真实 0。请升级前端或重新提问。'
   if (message.debugDataState === 'legacy') return '这条旧回答没有保存调试明细，无法判断当时是未调用还是数据未记录。请重新提问以生成完整账本。'
   if (message.debugDataState !== 'available') return '本轮没有收到完整调试快照，不能把空栏目解释为真实 0；可重试本轮进行确认。'
@@ -1307,26 +1340,37 @@ function debugSectionPlaceholder(message: Message, body = false) {
   return '快照未返回'
 }
 
+function debugStepPlaceholder(message: Message, step: AgentStep) {
+  if (!message.agentProgress?.some(item => item.step === step)) return '等待该步骤的执行状态。'
+  return `${agentProgressDetail(message.agentProgress, step, message.phase)}。详细证据将在本轮结束后汇总。`
+}
+
 function debugMemorySummary(message: Message) {
+  if (message.debugDataState !== 'available' && message.agentProgress?.length) return agentProgressDetail(message.agentProgress, 'memory_agent', message.phase)
   return debugSectionPlaceholder(message)
     || `注入 ${injectedMemoryItems(message).length} 条 · 候选 ${recalledMemoryItems(message).length} 条 · 排除 ${memoryExclusionCount(message)} 条`
 }
 
 function debugRagSummary(message: Message) {
+  if (message.debugDataState !== 'available' && message.agentProgress?.length) return agentProgressDetail(message.agentProgress, 'rag_agent', message.phase)
   return debugSectionPlaceholder(message) || `命中 ${ragContextCount(message)} 个片段`
 }
 
 function debugToolsSummary(message: Message) {
+  if (message.debugDataState !== 'available' && message.agentProgress?.length) return agentProgressDetail(message.agentProgress, 'tool_agent', message.phase)
   return debugSectionPlaceholder(message)
     || (message.toolResults?.length ? `调用 ${message.toolResults.length} 次` : '本轮未调用')
 }
 
 function debugAgentSummary(message: Message) {
+  if (message.debugDataState !== 'available' && message.agentProgress?.length) return `${message.agentProgress.length} 个步骤已有状态`
   return debugSectionPlaceholder(message) || `${message.agentTrace?.length || 0} 个节点`
 }
 
 function debugStepStateLabel(message: Message, state: DebugExecutionStep['state']) {
-  if (message.debugDataState === 'pending') return '进行中'
+  if (message.debugDataState === 'pending' || message.agentProgress?.length) {
+    return { done: '完成', empty: '0 项', skipped: '跳过', missing: '未记录', running: '进行中', failed: '失败', pending: '待开始', interrupted: '已中断' }[state]
+  }
   if (message.debugDataState === 'legacy') return '未记录'
   if (message.debugDataState === 'unsupported') return '不支持'
   if (message.debugDataState !== 'available') return '未返回'
@@ -1336,19 +1380,27 @@ function debugStepStateLabel(message: Message, state: DebugExecutionStep['state'
     skipped: '跳过',
     missing: '缺数据',
     running: '进行中',
-    failed: '失败'
+    failed: '失败',
+    pending: '待开始',
+    interrupted: '已中断'
   } as Record<DebugExecutionStep['state'], string>)[state]
 }
 
 function debugExecutionSteps(message: Message): DebugExecutionStep[] {
-  if (message.debugDataState === 'pending') {
-    return [
-      { id: 'route', label: '路由', detail: '正在决策', state: 'running' },
-      { id: 'memory', label: '记忆', detail: '等待结果', state: 'running' },
-      { id: 'rag', label: '知识库', detail: '等待结果', state: 'running' },
-      { id: 'tools', label: '工具', detail: '等待结果', state: 'running' },
-      { id: 'writer', label: '生成', detail: '正在生成', state: 'running' }
+  if (message.debugDataState !== 'available' && (message.debugDataState === 'pending' || message.agentProgress?.length)) {
+    const nodes: Array<{ id: DebugExecutionStep['id']; label: string; step: AgentStep }> = [
+      { id: 'route', label: '路由', step: 'supervisor_agent' },
+      { id: 'memory', label: '记忆', step: 'memory_agent' },
+      { id: 'rag', label: '知识库', step: 'rag_agent' },
+      { id: 'tools', label: '工具', step: 'tool_agent' },
+      { id: 'writer', label: '生成', step: 'writer_agent' }
     ]
+    return nodes.map(({ id, label, step }) => {
+      const event = message.agentProgress?.find(item => item.step === step)
+      const status = event ? agentProgressDisplayStatus(event, message.phase) : 'pending'
+      const state = status === 'completed' ? 'done' : status
+      return { id, label, state, detail: agentProgressDetail(message.agentProgress, step, message.phase) }
+    })
   }
   if (message.debugDataState === 'legacy') {
     return ['route', 'memory', 'rag', 'tools', 'writer'].map((id, index) => ({
@@ -2456,7 +2508,8 @@ function escapeHtml(text: string) {
             :class="`phase-${message.phase?.toLowerCase()}`"
           >
             <span class="turn-status-dot" aria-hidden="true"></span>
-            <span>{{ message.statusText }}</span>
+            <span>{{ message.recoveryState ? recoveryStatusText(message.recoveryState) : message.statusText }}</span>
+            <button v-if="message.recoveryState === 'unconfirmed'" class="secondary" type="button" @click="refreshTurnStatus">重新查询状态</button>
           </div>
           <GeneratedImageGrid v-if="message.imageBatch" :items="message.imageBatch.items" @retry="retryFailedMessage(index)" />
           <div
@@ -2888,7 +2941,7 @@ function escapeHtml(text: string) {
             </div>
             <div class="debug-ledger-section-body">
               <div v-if="message.debugDataState !== 'available'" class="debug-empty">
-                {{ debugSectionPlaceholder(message, true) }}
+                {{ message.debugDataState === 'pending' ? debugStepPlaceholder(message, 'memory_agent') : debugSectionPlaceholder(message, true) }}
               </div>
               <template v-else>
                 <div v-if="injectedMemoryRecords(message).length" class="debug-data-table debug-memory-table" role="table" aria-label="实际注入回答的记忆">
@@ -2956,7 +3009,7 @@ function escapeHtml(text: string) {
             </div>
             <div class="debug-ledger-section-body">
               <div v-if="message.debugDataState !== 'available'" class="debug-empty">
-                {{ debugSectionPlaceholder(message, true) }}
+                {{ message.debugDataState === 'pending' ? debugStepPlaceholder(message, 'rag_agent') : debugSectionPlaceholder(message, true) }}
               </div>
               <template v-else>
                 <div class="debug-inline-facts">
@@ -3011,7 +3064,7 @@ function escapeHtml(text: string) {
             </div>
             <div class="debug-ledger-section-body">
               <div v-if="message.debugDataState !== 'available'" class="debug-empty">
-                {{ debugSectionPlaceholder(message, true) }}
+                {{ message.debugDataState === 'pending' ? debugStepPlaceholder(message, 'tool_agent') : debugSectionPlaceholder(message, true) }}
               </div>
               <template v-else>
                 <p v-if="selectedToolNames(message).length" class="debug-ledger-summary">
@@ -3048,7 +3101,8 @@ function escapeHtml(text: string) {
               <p data-testid="debug-agent-summary">{{ debugAgentSummary(message) }}</p>
             </div>
             <div class="debug-ledger-section-body">
-              <div v-if="message.debugDataState !== 'available'" class="debug-empty">
+              <AgentProgressTimeline v-if="message.agentProgress?.length && message.debugDataState !== 'available'" :items="message.agentProgress" :phase="message.phase" :active="isActiveTurnPhase(message.phase)" />
+              <div v-else-if="message.debugDataState !== 'available'" class="debug-empty">
                 {{ debugSectionPlaceholder(message, true) }}
               </div>
               <template v-else>
@@ -3060,6 +3114,10 @@ function escapeHtml(text: string) {
                   :format-detail="formatTraceDetail"
                 />
                 <p v-else class="debug-empty">本轮 Agent Trace 为 0 步。</p>
+                <details v-if="message.agentProgress?.length" class="debug-disclosure">
+                  <summary>查看实时步骤与细分耗时</summary>
+                  <AgentProgressTimeline :items="message.agentProgress" :phase="message.phase" />
+                </details>
               </template>
             </div>
           </section>
@@ -3077,7 +3135,7 @@ function escapeHtml(text: string) {
             v-model="conversationId"
             data-testid="conversation-select"
             aria-label="选择会话"
-            :disabled="loading || titleSaving"
+            :disabled="titleSaving"
             @change="changeConversation"
           >
             <option value="">新会话</option>
@@ -3366,17 +3424,24 @@ function escapeHtml(text: string) {
 .turn-status {
   display: inline-flex;
   width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 16px;
   background: var(--surface-muted);
   color: var(--muted-foreground);
   padding: 7px 11px;
   font-size: 13px;
   font-weight: 700;
 }
+.turn-status > span:nth-child(2) { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.turn-status > button { font-size: 12px; min-height: 28px; padding: 4px 8px; }
+.debug-execution-step.is-interrupted .debug-step-copy small { color: #92400e; }
+.debug-execution-step.is-pending .debug-step-copy small { color: var(--muted-foreground); }
 .turn-status-dot {
+  flex: 0 0 8px;
   width: 8px;
   height: 8px;
   border-radius: 50%;

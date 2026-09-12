@@ -521,6 +521,8 @@ export interface AgentTraceItem {
   contextCount?: number
   queryCount?: number
   elapsedMs?: number
+  durationMs?: number
+  timings?: Record<string, number>
   memoryContextChars?: number
   candidateCount?: number
   score?: number
