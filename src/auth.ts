@@ -76,8 +76,12 @@ export function clearAuth() {
 }
 
 export async function initializeAuth(): Promise<boolean> {
-  if (authState.status !== 'unknown') return hasAuth()
-  if (restoreE2ELegacyAuth()) return true
+  if (hasAuth()) return true
+  // An expired access token does not mean the refresh-cookie session has ended.
+  // Route guards must await renewal before deciding to send the user to login.
+  if (refreshPromise) return refreshPromise
+  if (authState.status === 'anonymous') return false
+  if (authState.status === 'unknown' && restoreE2ELegacyAuth()) return true
   return refreshAuth()
 }
 
