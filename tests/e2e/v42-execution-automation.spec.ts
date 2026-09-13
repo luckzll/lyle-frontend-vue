@@ -111,7 +111,7 @@ test.describe('V4.2 execution and automation workspace', () => {
 
     await page.getByRole('button', { name: '最新结果' }).click()
     await expectQuery(page, 'view', 'results')
-    await page.getByRole('button', { name: '筛选', exact: true }).click()
+    await page.getByRole('button', { name: /^筛选(?:\s*\d+)?$/ }).click()
     const projectFilter = page.getByLabel('项目', { exact: true })
     const automationFilter = page.getByRole('combobox', { name: '自动化' })
     const statusFilter = page.getByRole('combobox', { name: '状态' })
@@ -209,6 +209,8 @@ test.describe('V4.2 execution and automation workspace', () => {
     await lowRiskCard.getByRole('button', { name: '拒绝' }).click()
     await expect.poll(() => rejectCalls).toBe(1)
     await expect(page.getByRole('button', { name: '待我确认', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '没有符合筛选的待确认事项' })).toBeVisible()
+    await page.getByRole('button', { name: '清除筛选', exact: true }).click()
     await expect(page.getByText('暂时没有需要你确认的事')).toBeVisible()
     await expect.poll(() => productEvents.filter((event) => event.eventType === 'effective_progress_action').length).toBeGreaterThanOrEqual(3)
     expect(productEvents.filter((event) => event.eventType === 'effective_progress_action').map((event) => event.actionType)).toEqual(
