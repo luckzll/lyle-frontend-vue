@@ -3,6 +3,7 @@ import type { MemorySchemaStatus } from './types'
 import type { MemoryFact } from './types'
 import { getAuthToken } from '@/auth'
 import { sanitizeAgentStep, type AgentStepEvent } from '@/domain/chat-progress'
+import { sanitizeReasoningDelta, type ChatReasoning, type ReasoningDelta } from '@/domain/chat-reasoning'
 import type { AttachmentFolderMetadata, ChatAttachment, ChatAttachmentKind } from '@/domain/chat-attachment'
 import type {
   AdminOverview,
@@ -77,6 +78,9 @@ import type {
 } from './types'
 
 export type StreamMeta = {
+  reasoning?: ChatReasoning
+  processStartedAt?: number
+  processCompletedAt?: number
   sources?: ChatSource[]
   agentTrace?: ChatResponse['agentTrace']
   toolResults?: ChatResponse['toolResults']
@@ -105,6 +109,7 @@ export type SseHandlers = {
   onMeta?: (meta: StreamMeta) => void
   onTurnStatus?: (event: TurnStatusEvent) => void
   onAgentStep?: (event: AgentStepEvent) => void
+  onReasoningDelta?: (event: ReasoningDelta) => void
   onImageBatchStarted?: (event: ImageBatchStartedEvent) => void
   onImageItem?: (event: ImageItemEvent) => void
   onImageBatchCompleted?: (event: ImageBatchCompletedEvent) => void
@@ -126,6 +131,8 @@ export type TurnStatusEvent = {
   turnId: string
   phase: 'THINKING' | 'ANALYZING' | 'GENERATING' | 'RESPONDING' | 'COMPLETED' | 'FAILED'
   message: string
+  processStartedAt?: number
+  processCompletedAt?: number
 }
 
 export type ImageBatchItem = {
@@ -888,6 +895,9 @@ export function handleSseBlock(block: string, handlers: SseHandlers) {
   } else if (event === 'agent.step') {
     const step = sanitizeAgentStep(data)
     if (step) handlers.onAgentStep?.(step)
+  } else if (event === 'reasoning.delta') {
+    const reasoning = sanitizeReasoningDelta(data)
+    if (reasoning) handlers.onReasoningDelta?.(reasoning)
   } else if (event === 'image.batch.started') {
     handlers.onImageBatchStarted?.(data as ImageBatchStartedEvent)
   } else if (event === 'image.item.completed' || event === 'image.item.failed') {

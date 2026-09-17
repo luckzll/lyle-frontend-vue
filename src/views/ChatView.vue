@@ -77,6 +77,8 @@ import ChatComposer from '@/components/chat/ChatComposer.vue'
 import DebugAgentTimeline from '@/components/chat/DebugAgentTimeline.vue'
 import DebugLedger from '@/components/chat/DebugLedger.vue'
 import AgentProgressTimeline from '@/components/chat/AgentProgressTimeline.vue'
+import ChatThinkingProcess from '@/components/chat/ChatThinkingProcess.vue'
+import { appendReasoning, mergeReasoning, processTimestamp, type ChatReasoning } from '@/domain/chat-reasoning'
 import { AGENT_STEPS, agentProgressDetail, agentProgressDisplayStatus, mergeAgentProgress, type AgentStep, type AgentStepEvent } from '@/domain/chat-progress'
 import { reconcileChatTurn, recoveryPollDelay, recoveryStatusText, shouldRecoverChatTurn, type ChatRecoveryState } from '@/domain/chat-recovery'
 import { summarizeChatDebug } from '@/domain/chat-debug-summary'
@@ -125,6 +127,9 @@ interface Message {
   sources?: ChatSource[]
   agentTrace?: AgentTraceItem[]
   agentProgress?: AgentStepEvent[]
+  reasoning?: ChatReasoning
+  processStartedAt?: number
+  processCompletedAt?: number
   recoveryState?: ChatRecoveryState
   toolResults?: ToolResult[]
   candidateMemories?: MemoryItem[]
@@ -879,6 +884,9 @@ async function cancelStreaming() {
 function settlePendingDebugState(message?: Message) {
   if (!message) return
   message.debugDataState = resolveTerminalChatDebugDataState(message.debugDataState)
+  if ((message.phase === 'COMPLETED' || message.phase === 'FAILED') && message.processStartedAt && !message.processCompletedAt) {
+    message.processCompletedAt = Date.now()
+  }
 }
 
 async function submit(retryContext?: RetryTurnContext) {
@@ -932,7 +940,7 @@ async function submit(retryContext?: RetryTurnContext) {
     if (!activeConversationId) throw new Error('会话尚未保存，无法重试。')
     const pending: Message = {
       role: 'assistant', content: '', turnId, phase: 'THINKING',
-      statusText: '正在等待执行进度…', debugDataState: 'pending', agentProgress: []
+      statusText: '正在等待执行进度…', debugDataState: 'pending', agentProgress: [], processStartedAt: Date.now()
     }
     if (retryContext) messages.value[assistantIndex] = pending
     else {
@@ -968,6 +976,9 @@ async function submit(retryContext?: RetryTurnContext) {
       onMeta: (meta) => {
         const target = liveTarget()
         if (!target) return
+        target.reasoning = mergeReasoning(target.reasoning, meta.reasoning)
+        target.processStartedAt = processTimestamp(meta.processStartedAt) ?? target.processStartedAt
+        target.processCompletedAt = processTimestamp(meta.processCompletedAt) ?? target.processCompletedAt
         target.sources = sanitizeChatSources(meta.sources)
         target.agentTrace = sanitizeAgentTrace(meta.agentTrace)
         target.toolResults = sanitizeToolResults(meta.toolResults)
@@ -990,6 +1001,16 @@ async function submit(retryContext?: RetryTurnContext) {
         target.debugTruncated = meta.debugTruncated === true
         target.debugDataState = resolveLiveChatDebugDataState(meta.debugVersion)
       },
+      onReasoningDelta: (event) => {
+        const target = liveTarget()
+        if (!target) return
+        target.reasoning = appendReasoning(target.reasoning, event, turnId)
+        nextTick(() => {
+          if (epoch !== conversationEpoch) return
+          if (isNearBottom.value) scrollToBottom(false)
+          else hasMessagesBelow.value = true
+        })
+      },
       onAgentStep: (event) => {
         const target = liveTarget()
         if (!target || event.turnId !== turnId) return
@@ -998,12 +1019,19 @@ async function submit(retryContext?: RetryTurnContext) {
         target.statusText = running.length
           ? running.map(item => `${AGENT_STEPS[item.step]}中`).join(' · ')
           : '正在等待下一步进度…'
+        nextTick(() => {
+          if (epoch !== conversationEpoch) return
+          if (isNearBottom.value) scrollToBottom(false)
+          else hasMessagesBelow.value = true
+        })
       },
       onTurnStatus: (status) => {
         const target = liveTarget()
         if (!target || (status.turnId && status.turnId !== turnId)) return
         target.phase = status.phase
         target.statusText = status.message
+        target.processStartedAt = processTimestamp(status.processStartedAt) ?? target.processStartedAt
+        target.processCompletedAt = processTimestamp(status.processCompletedAt) ?? target.processCompletedAt
         if (status.phase === 'COMPLETED' || status.phase === 'FAILED') settlePendingDebugState(target)
       },
       onImageBatchStarted: (batch) => { const target = liveTarget(); if (target && batch.turnId === turnId) applyImageBatchStarted(target, batch) },
@@ -2476,7 +2504,7 @@ function escapeHtml(text: string) {
       </section>
       <div
         v-for="(message, index) in messages"
-        :key="message.id || index"
+        :key="message.turnId ? `${message.role}:${message.turnId}` : (message.id || index)"
         class="message"
         :class="[message.role, { 'debug-message': showDebug && message.role === 'assistant', 'source-message-highlight': highlightedMessageId === message.id }]"
         :data-message-id="message.id || undefined"
@@ -2502,8 +2530,18 @@ function escapeHtml(text: string) {
         </template>
 
         <template v-else>
+          <ChatThinkingProcess
+            :key="message.turnId || message.id || index"
+            :items="message.agentProgress || []"
+            :reasoning="message.reasoning"
+            :phase="message.phase"
+            :active="isActiveTurnPhase(message.phase)"
+            :status-text="message.recoveryState ? recoveryStatusText(message.recoveryState) : message.statusText"
+            :started-at="message.processStartedAt"
+            :completed-at="message.processCompletedAt"
+          />
           <div
-            v-if="showAssistantStatus(message)"
+            v-if="message.recoveryState === 'unconfirmed' || (message.imageBatch && showAssistantStatus(message))"
             class="turn-status"
             :class="`phase-${message.phase?.toLowerCase()}`"
           >
