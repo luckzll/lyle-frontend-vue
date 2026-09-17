@@ -1,6 +1,7 @@
 import type { ChatMessage } from '@/api/types'
 import { historyMessage, isActiveTurnPhase, type RecoveredChatMessage } from './chat-history'
 import { mergeAgentProgress } from './chat-progress'
+import { mergeReasoning } from './chat-reasoning'
 
 export type ChatRecoveryState = 'checking' | 'polling' | 'unconfirmed'
 export type RecoverableMessage = RecoveredChatMessage & { recoveryState?: ChatRecoveryState }
@@ -19,6 +20,9 @@ export function reconcileChatTurn(local: RecoverableMessage, history: ChatMessag
   if (recovered.phase === 'COMPLETED' || recovered.phase === 'FAILED') return {
     ...local, ...recovered,
     agentProgress: mergeAgentProgress(local.agentProgress, recovered.agentProgress, local.turnId),
+    reasoning: mergeReasoning(local.reasoning, recovered.reasoning),
+    processStartedAt: recovered.processStartedAt ?? local.processStartedAt,
+    processCompletedAt: recovered.processCompletedAt ?? local.processCompletedAt,
     recoveryState: undefined
   }
   if (!isActiveTurnPhase(recovered.phase)) return { ...local, recoveryState: 'unconfirmed' }
@@ -28,6 +32,9 @@ export function reconcileChatTurn(local: RecoverableMessage, history: ChatMessag
     // Persistence may trail the last received delta. Do not erase visible output during polling.
     content: recovered.content.length >= local.content.length ? recovered.content : local.content,
     agentProgress: mergeAgentProgress(local.agentProgress, recovered.agentProgress, local.turnId),
+    reasoning: mergeReasoning(local.reasoning, recovered.reasoning),
+    processStartedAt: recovered.processStartedAt ?? local.processStartedAt,
+    processCompletedAt: recovered.processCompletedAt ?? local.processCompletedAt,
     recoveryState: 'polling'
   }
 }

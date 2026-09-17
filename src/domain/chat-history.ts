@@ -12,6 +12,7 @@ import type {
 } from '@/api/types'
 import type { ChatAttachment } from '@/domain/chat-attachment'
 import { mergeAgentProgress, type AgentStepEvent } from '@/domain/chat-progress'
+import { sanitizeReasoning, processTimestamp, type ChatReasoning } from '@/domain/chat-reasoning'
 import {
   sanitizeAgentTrace,
   sanitizeChatSources,
@@ -52,6 +53,9 @@ export type RecoveredChatMessage = {
   sources?: ChatSource[]
   agentTrace?: AgentTraceItem[]
   agentProgress?: AgentStepEvent[]
+  reasoning?: ChatReasoning
+  processStartedAt?: number
+  processCompletedAt?: number
   toolResults?: ToolResult[]
   projectContext?: ProjectChatContext
   review?: Record<string, unknown>
@@ -91,6 +95,9 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
     sources: sanitizeChatSources(metadata.sources),
     agentTrace: sanitizeAgentTrace(metadata.agentTrace),
     agentProgress: mergeAgentProgress([], metadata.agentProgress, turnId),
+    reasoning: item.role === 'assistant' ? sanitizeReasoning(metadata.reasoning) : undefined,
+    processStartedAt: processTimestamp(metadata.processStartedAt),
+    processCompletedAt: processTimestamp(metadata.processCompletedAt),
     toolResults: sanitizeToolResults(metadata.toolResults),
     projectContext: sanitizeProjectContext(metadata.projectContext),
     review: sanitizeReview(metadata.review),
