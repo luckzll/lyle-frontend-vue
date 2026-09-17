@@ -1,4 +1,5 @@
 import { formatTraceDuration } from './chat-trace-presentation'
+import { chatWireInteger } from './chat-wire'
 
 export const AGENT_STEPS = {
   supervisor_agent: '理解与分流',
@@ -51,13 +52,14 @@ export function sanitizeAgentStep(value: unknown, turnId?: string): AgentStepEve
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   const item = value as Record<string, unknown>
   if (typeof item.turnId !== 'string' || !item.turnId || (turnId && item.turnId !== turnId)) return undefined
-  if (typeof item.sequence !== 'number' || !Number.isSafeInteger(item.sequence) || item.sequence < 0) return undefined
+  const sequence = chatWireInteger(item.sequence)
+  if (sequence === undefined) return undefined
   if (typeof item.step !== 'string' || !Object.prototype.hasOwnProperty.call(AGENT_STEPS, item.step)) return undefined
   if (!['running', 'completed', 'failed', 'skipped'].includes(String(item.status))) return undefined
   const timings = sanitizeStageTimings(item.timings)
   return {
     turnId: item.turnId,
-    sequence: item.sequence,
+    sequence,
     step: item.step as AgentStep,
     status: item.status as AgentStepEvent['status'],
     ...(typeof item.durationMs === 'number' && Number.isFinite(item.durationMs) && item.durationMs >= 0 ? { durationMs: item.durationMs } : {}),

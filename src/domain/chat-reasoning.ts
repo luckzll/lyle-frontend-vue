@@ -1,3 +1,5 @@
+import { chatWireInteger } from './chat-wire'
+
 /** Only provider-supplied display text belongs here; it never becomes answer content. */
 export const MAX_REASONING_CHARS = 16_000
 
@@ -19,22 +21,27 @@ function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-function validSequence(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+function positiveInteger(value: unknown): number | undefined {
+  const number = chatWireInteger(value)
+  return number !== undefined && number > 0 ? number : undefined
 }
 
 export function sanitizeReasoning(value: unknown): ChatReasoning | undefined {
-  if (!record(value) || !validSequence(value.sequence) || typeof value.text !== 'string'
+  if (!record(value)) return undefined
+  const sequence = positiveInteger(value.sequence)
+  if (sequence === undefined || typeof value.text !== 'string'
     || !value.text.trim() || !['reasoning', 'summary'].includes(String(value.kind))) return undefined
-  return { text: value.text.slice(0, MAX_REASONING_CHARS), kind: value.kind as ChatReasoning['kind'], sequence: value.sequence }
+  return { text: value.text.slice(0, MAX_REASONING_CHARS), kind: value.kind as ChatReasoning['kind'], sequence }
 }
 
 export function sanitizeReasoningDelta(value: unknown, turnId?: string): ReasoningDelta | undefined {
-  if (!record(value) || typeof value.turnId !== 'string' || !value.turnId
-    || (turnId && value.turnId !== turnId) || !validSequence(value.sequence)
+  if (!record(value)) return undefined
+  const sequence = positiveInteger(value.sequence)
+  if (typeof value.turnId !== 'string' || !value.turnId
+    || (turnId && value.turnId !== turnId) || sequence === undefined
     || value.step !== 'writer_agent' || typeof value.delta !== 'string' || !value.delta
     || !['reasoning', 'summary'].includes(String(value.kind))) return undefined
-  return { turnId: value.turnId, sequence: value.sequence, step: 'writer_agent',
+  return { turnId: value.turnId, sequence, step: 'writer_agent',
     delta: value.delta.slice(0, MAX_REASONING_CHARS), kind: value.kind as ChatReasoning['kind'] }
 }
 
@@ -52,5 +59,5 @@ export function mergeReasoning(current: ChatReasoning | undefined, snapshot: unk
 }
 
 export function processTimestamp(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+  return positiveInteger(value)
 }
