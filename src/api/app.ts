@@ -78,6 +78,7 @@ import type {
 } from './types'
 
 export type StreamMeta = {
+  agentProgress?: AgentStepEvent[]
   reasoning?: ChatReasoning
   processStartedAt?: number
   processCompletedAt?: number
@@ -890,6 +891,11 @@ export function handleSseBlock(block: string, handlers: SseHandlers) {
     handlers.onDelta(String(data.text ?? ''))
   } else if (event === 'meta') {
     handlers.onMeta?.(data)
+    // Replayed turns carry their accepted steps in metadata instead of separate live frames.
+    for (const item of Array.isArray(data.agentProgress) ? data.agentProgress : []) {
+      const step = sanitizeAgentStep(item)
+      if (step) handlers.onAgentStep?.(step)
+    }
   } else if (event === 'turn.status') {
     handlers.onTurnStatus?.(data as TurnStatusEvent)
   } else if (event === 'agent.step') {

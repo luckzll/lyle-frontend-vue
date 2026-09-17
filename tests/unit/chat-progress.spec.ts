@@ -6,6 +6,22 @@ import { sanitizeAgentTrace } from '@/domain/chat-safety'
 const event = { turnId: 'turn-1', sequence: 1, step: 'rag_agent', status: 'running' }
 
 describe('real agent step progress', () => {
+  it('normalizes Jackson Long string sequences before ordering live and persisted steps', () => {
+    expect(sanitizeAgentStep({ ...event, sequence: '12' })?.sequence).toBe(12)
+    const progress = mergeAgentProgress([], [
+      { ...event, sequence: '9' }, { ...event, sequence: '12', status: 'completed' },
+      { ...event, sequence: '10', status: 'running' }
+    ], 'turn-1')
+    expect(progress).toEqual([{ ...event, sequence: 12, status: 'completed' }])
+  })
+
+  it('rejects noncanonical and unsafe integer sequence values', () => {
+    for (const sequence of ['', ' ', '01', '-1', '1.5', '1e2', '0x10', '12junk',
+      '9007199254740992', Number.MAX_SAFE_INTEGER + 1, null, true, []]) {
+      expect(sanitizeAgentStep({ ...event, sequence })).toBeUndefined()
+    }
+  })
+
   it('does not mark unstarted steps as running or invent result evidence', () => {
     const progress = mergeAgentProgress([], event, 'turn-1')
     expect(agentProgressState(progress, 'rag_agent')).toBe('running')

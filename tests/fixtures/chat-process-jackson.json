@@ -1,0 +1,222 @@
+{
+  "withoutReasoning" : {
+    "storedMetadata" : {
+      "turnId" : "turn-http",
+      "phase" : "COMPLETED",
+      "statusText" : "回复完成",
+      "processStartedAt" : "1789662931153",
+      "knowledgeBaseIds" : [ ],
+      "retrievalScope" : { },
+      "sources" : [ ],
+      "agentTrace" : [ {
+        "agent" : "tool_agent",
+        "toolCount" : 1
+      } ],
+      "toolResults" : [ {
+        "tool" : "weather",
+        "ok" : true,
+        "summary" : "工具执行已完成。",
+        "content" : "工具执行已完成。"
+      } ],
+      "review" : { },
+      "usage" : {
+        "promptTokens" : 0,
+        "completionTokens" : 0,
+        "callCount" : 0,
+        "estimatedCostMicros" : "0",
+        "measurementSource" : "PENDING"
+      },
+      "usedMemories" : [ ],
+      "memoryExclusions" : {
+        "conflicted" : 0,
+        "sensitive" : 0,
+        "governed" : 0
+      },
+      "memoryExplanationVersion" : "v1",
+      "debugTruncated" : false,
+      "debugCounts" : {
+        "agentTrace" : 1,
+        "sources" : 0,
+        "toolResults" : 1,
+        "usedMemories" : 0
+      },
+      "agentProgress" : [ {
+        "turnId" : "turn-http",
+        "sequence" : "2",
+        "step" : "tool_agent",
+        "status" : "completed",
+        "durationMs" : 100.0,
+        "summary" : "天气查询完成"
+      } ],
+      "processCompletedAt" : "1789662931493"
+    },
+    "liveFrames" : [ "event: turn.status\ndata: {\"message\":\"正在理解你的需求…\",\"turnId\":\"turn-http\",\"phase\":\"THINKING\",\"processStartedAt\":\"1789662931153\"}\n\n", ": keep-alive\n\n", "event: agent.step\ndata: {\"turnId\":\"turn-http\",\"sequence\":\"1\",\"step\":\"tool_agent\",\"status\":\"running\",\"summary\":\"正在查询天气\"}\n\n", "event: agent.step\ndata: {\"turnId\":\"turn-http\",\"sequence\":\"2\",\"step\":\"tool_agent\",\"status\":\"completed\",\"durationMs\":100.0,\"summary\":\"天气查询完成\"}\n\n", "event: delta\ndata: {\"text\":\"今天晴天。\"}\n\n", "event: meta\ndata: {\"agentTrace\":[{\"agent\":\"tool_agent\",\"toolCount\":1}],\"toolResults\":[{\"tool\":\"weather\",\"ok\":true,\"content\":\"已查询天气\"}]}\n\n", "event: turn.status\ndata: {\"phase\":\"RESPONDING\",\"turnId\":\"turn-http\",\"message\":\"正在回复…\"}\n\n", "event: turn.status\ndata: {\"phase\":\"COMPLETED\",\"message\":\"回复完成\",\"turnId\":\"turn-http\",\"processStartedAt\":\"1789662931153\",\"processCompletedAt\":\"1789662931493\"}\n\n", "event: done\ndata: {\"turnId\":\"turn-http\"}\n\n" ],
+    "turnId" : "turn-http",
+    "replayFrames" : [ "event: delta\ndata: {\"text\":\"今天晴天。\"}\n\n", "event: meta\ndata: {\"knowledgeBaseIds\":[],\"retrievalScope\":{},\"sources\":[],\"agentTrace\":[{\"agent\":\"tool_agent\",\"toolCount\":1}],\"agentProgress\":[{\"turnId\":\"turn-http\",\"sequence\":\"2\",\"step\":\"tool_agent\",\"status\":\"completed\",\"durationMs\":100.0,\"summary\":\"天气查询完成\"}],\"processStartedAt\":\"1789662931153\",\"processCompletedAt\":\"1789662931493\",\"toolResults\":[{\"tool\":\"weather\",\"ok\":true,\"summary\":\"工具执行已完成。\",\"content\":\"工具执行已完成。\"}],\"review\":{},\"usage\":{\"promptTokens\":0,\"completionTokens\":0,\"callCount\":0,\"estimatedCostMicros\":\"0\",\"measurementSource\":\"PENDING\"},\"usedMemories\":[],\"memoryExclusions\":{\"conflicted\":0,\"sensitive\":0,\"governed\":0},\"memoryExplanationVersion\":\"v1\",\"debugTruncated\":false,\"debugCounts\":{\"agentTrace\":1,\"sources\":0,\"toolResults\":1,\"usedMemories\":0}}\n\n", "event: turn.status\ndata: {\"phase\":\"COMPLETED\",\"turnId\":\"turn-http\",\"message\":\"回复完成\"}\n\n", "event: done\ndata: {\"turnId\":\"turn-http\"}\n\n" ],
+    "historyMetadata" : {
+      "turnId" : "turn-http",
+      "phase" : "COMPLETED",
+      "statusText" : "回复完成",
+      "knowledgeBaseIds" : [ ],
+      "retrievalScope" : { },
+      "sources" : [ ],
+      "agentTrace" : [ {
+        "agent" : "tool_agent",
+        "toolCount" : 1
+      } ],
+      "agentProgress" : [ {
+        "turnId" : "turn-http",
+        "sequence" : "2",
+        "step" : "tool_agent",
+        "status" : "completed",
+        "durationMs" : 100.0,
+        "summary" : "天气查询完成"
+      } ],
+      "processStartedAt" : "1789662931153",
+      "processCompletedAt" : "1789662931493",
+      "toolResults" : [ {
+        "tool" : "weather",
+        "ok" : true,
+        "summary" : "工具执行已完成。",
+        "content" : "工具执行已完成。"
+      } ],
+      "review" : { },
+      "usage" : {
+        "promptTokens" : 0,
+        "completionTokens" : 0,
+        "callCount" : 0,
+        "estimatedCostMicros" : "0",
+        "measurementSource" : "PENDING"
+      },
+      "usedMemories" : [ ],
+      "memoryExclusions" : {
+        "conflicted" : 0,
+        "sensitive" : 0,
+        "governed" : 0
+      },
+      "memoryExplanationVersion" : "v1",
+      "debugTruncated" : false,
+      "debugCounts" : {
+        "agentTrace" : 1,
+        "sources" : 0,
+        "toolResults" : 1,
+        "usedMemories" : 0
+      }
+    }
+  },
+  "withReasoning" : {
+    "storedMetadata" : {
+      "turnId" : "turn-http",
+      "phase" : "COMPLETED",
+      "statusText" : "回复完成",
+      "processStartedAt" : "1789662931515",
+      "knowledgeBaseIds" : [ ],
+      "retrievalScope" : { },
+      "sources" : [ ],
+      "agentTrace" : [ {
+        "agent" : "tool_agent",
+        "toolCount" : 1
+      } ],
+      "toolResults" : [ {
+        "tool" : "weather",
+        "ok" : true,
+        "summary" : "工具执行已完成。",
+        "content" : "工具执行已完成。"
+      } ],
+      "review" : { },
+      "usage" : {
+        "promptTokens" : 0,
+        "completionTokens" : 0,
+        "callCount" : 0,
+        "estimatedCostMicros" : "0",
+        "measurementSource" : "PENDING"
+      },
+      "usedMemories" : [ ],
+      "memoryExclusions" : {
+        "conflicted" : 0,
+        "sensitive" : 0,
+        "governed" : 0
+      },
+      "memoryExplanationVersion" : "v1",
+      "debugTruncated" : false,
+      "debugCounts" : {
+        "agentTrace" : 1,
+        "sources" : 0,
+        "toolResults" : 1,
+        "usedMemories" : 0
+      },
+      "agentProgress" : [ {
+        "turnId" : "turn-http",
+        "sequence" : "2",
+        "step" : "tool_agent",
+        "status" : "completed",
+        "durationMs" : 100.0,
+        "summary" : "天气查询完成"
+      } ],
+      "reasoning" : {
+        "kind" : "reasoning",
+        "text" : "先核对天气数据\uD83D\uDE42。",
+        "sequence" : "1"
+      },
+      "processCompletedAt" : "1789662931532"
+    },
+    "liveFrames" : [ "event: turn.status\ndata: {\"message\":\"正在理解你的需求…\",\"turnId\":\"turn-http\",\"phase\":\"THINKING\",\"processStartedAt\":\"1789662931515\"}\n\n", ": keep-alive\n\n", "event: agent.step\ndata: {\"turnId\":\"turn-http\",\"sequence\":\"1\",\"step\":\"tool_agent\",\"status\":\"running\",\"summary\":\"正在查询天气\"}\n\n", "event: reasoning.delta\ndata: {\"turnId\":\"turn-http\",\"sequence\":\"1\",\"step\":\"writer_agent\",\"kind\":\"reasoning\",\"delta\":\"先核对天气数据\uD83D\uDE42。\"}\n\n", "event: agent.step\ndata: {\"turnId\":\"turn-http\",\"sequence\":\"2\",\"step\":\"tool_agent\",\"status\":\"completed\",\"durationMs\":100.0,\"summary\":\"天气查询完成\"}\n\n", "event: delta\ndata: {\"text\":\"今天晴天。\"}\n\n", "event: meta\ndata: {\"agentTrace\":[{\"agent\":\"tool_agent\",\"toolCount\":1}],\"toolResults\":[{\"tool\":\"weather\",\"ok\":true,\"content\":\"已查询天气\"}]}\n\n", "event: turn.status\ndata: {\"phase\":\"RESPONDING\",\"turnId\":\"turn-http\",\"message\":\"正在回复…\"}\n\n", "event: turn.status\ndata: {\"phase\":\"COMPLETED\",\"message\":\"回复完成\",\"turnId\":\"turn-http\",\"processStartedAt\":\"1789662931515\",\"processCompletedAt\":\"1789662931532\"}\n\n", "event: done\ndata: {\"turnId\":\"turn-http\"}\n\n" ],
+    "turnId" : "turn-http",
+    "replayFrames" : [ "event: delta\ndata: {\"text\":\"今天晴天。\"}\n\n", "event: meta\ndata: {\"knowledgeBaseIds\":[],\"retrievalScope\":{},\"sources\":[],\"agentTrace\":[{\"agent\":\"tool_agent\",\"toolCount\":1}],\"agentProgress\":[{\"turnId\":\"turn-http\",\"sequence\":\"2\",\"step\":\"tool_agent\",\"status\":\"completed\",\"durationMs\":100.0,\"summary\":\"天气查询完成\"}],\"reasoning\":{\"kind\":\"reasoning\",\"text\":\"先核对天气数据\uD83D\uDE42。\",\"sequence\":\"1\"},\"processStartedAt\":\"1789662931515\",\"processCompletedAt\":\"1789662931532\",\"toolResults\":[{\"tool\":\"weather\",\"ok\":true,\"summary\":\"工具执行已完成。\",\"content\":\"工具执行已完成。\"}],\"review\":{},\"usage\":{\"promptTokens\":0,\"completionTokens\":0,\"callCount\":0,\"estimatedCostMicros\":\"0\",\"measurementSource\":\"PENDING\"},\"usedMemories\":[],\"memoryExclusions\":{\"conflicted\":0,\"sensitive\":0,\"governed\":0},\"memoryExplanationVersion\":\"v1\",\"debugTruncated\":false,\"debugCounts\":{\"agentTrace\":1,\"sources\":0,\"toolResults\":1,\"usedMemories\":0}}\n\n", "event: turn.status\ndata: {\"phase\":\"COMPLETED\",\"turnId\":\"turn-http\",\"message\":\"回复完成\"}\n\n", "event: done\ndata: {\"turnId\":\"turn-http\"}\n\n" ],
+    "historyMetadata" : {
+      "turnId" : "turn-http",
+      "phase" : "COMPLETED",
+      "statusText" : "回复完成",
+      "knowledgeBaseIds" : [ ],
+      "retrievalScope" : { },
+      "sources" : [ ],
+      "agentTrace" : [ {
+        "agent" : "tool_agent",
+        "toolCount" : 1
+      } ],
+      "agentProgress" : [ {
+        "turnId" : "turn-http",
+        "sequence" : "2",
+        "step" : "tool_agent",
+        "status" : "completed",
+        "durationMs" : 100.0,
+        "summary" : "天气查询完成"
+      } ],
+      "reasoning" : {
+        "kind" : "reasoning",
+        "text" : "先核对天气数据\uD83D\uDE42。",
+        "sequence" : "1"
+      },
+      "processStartedAt" : "1789662931515",
+      "processCompletedAt" : "1789662931532",
+      "toolResults" : [ {
+        "tool" : "weather",
+        "ok" : true,
+        "summary" : "工具执行已完成。",
+        "content" : "工具执行已完成。"
+      } ],
+      "review" : { },
+      "usage" : {
+        "promptTokens" : 0,
+        "completionTokens" : 0,
+        "callCount" : 0,
+        "estimatedCostMicros" : "0",
+        "measurementSource" : "PENDING"
+      },
+      "usedMemories" : [ ],
+      "memoryExclusions" : {
+        "conflicted" : 0,
+        "sensitive" : 0,
+        "governed" : 0
+      },
+      "memoryExplanationVersion" : "v1",
+      "debugTruncated" : false,
+      "debugCounts" : {
+        "agentTrace" : 1,
+        "sources" : 0,
+        "toolResults" : 1,
+        "usedMemories" : 0
+      }
+    }
+  }
+}

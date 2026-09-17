@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { consumeSseBuffer } from '@/api/app'
-import { appendReasoning, mergeReasoning, sanitizeReasoning, MAX_REASONING_CHARS } from '@/domain/chat-reasoning'
+import { appendReasoning, mergeReasoning, sanitizeReasoning, processTimestamp, MAX_REASONING_CHARS } from '@/domain/chat-reasoning'
 import { historyMessage } from '@/domain/chat-history'
 import { reconcileChatTurn } from '@/domain/chat-recovery'
 import type { ChatMessage } from '@/api/types'
@@ -13,6 +13,28 @@ const stored = (reasoning: unknown, phase = 'COMPLETED'): ChatMessage => ({
 })
 
 describe('provider reasoning display stream', () => {
+  it('accepts production Jackson Long string sequences and timestamps from SSE and history', () => {
+    expect(appendReasoning(undefined, { ...delta, sequence: '1' }, 't')).toEqual(snapshot)
+    expect(sanitizeReasoning({ ...snapshot, sequence: '1' })).toEqual(snapshot)
+    expect(mergeReasoning(snapshot, { ...snapshot, text: '后续摘要', sequence: '10' }))
+      .toEqual({ ...snapshot, text: '后续摘要', sequence: 10 })
+    expect(processTimestamp('1789662595003')).toBe(1789662595003)
+    const history = stored({ ...snapshot, sequence: '1' })
+    history.metadata!.processStartedAt = '1789662595003'
+    history.metadata!.processCompletedAt = '1789662599003'
+    expect(historyMessage(history)).toMatchObject({ reasoning: snapshot,
+      processStartedAt: 1789662595003, processCompletedAt: 1789662599003 })
+  })
+
+  it('rejects unsafe, zero and noncanonical reasoning sequence and timestamp strings', () => {
+    for (const sequence of ['0', '', ' ', '01', '-1', '1.5', '1e2', '0x10', '1oops',
+      '9007199254740992', Number.MAX_SAFE_INTEGER + 1, null, true, []]) {
+      expect(sanitizeReasoning({ ...snapshot, sequence })).toBeUndefined()
+      expect(appendReasoning(undefined, { ...delta, sequence }, 't')).toBeUndefined()
+      expect(processTimestamp(sequence)).toBeUndefined()
+    }
+  })
+
   it('keeps partial SSE chunks separate from answer and tool events', () => {
     const handlers = { onDelta: vi.fn(), onReasoningDelta: vi.fn(), onAgentStep: vi.fn() }
     const frame = `event: reasoning.delta\r\ndata: ${JSON.stringify(delta)}\r\n\r\n`
