@@ -10,7 +10,7 @@ defineProps<{ scanning?: boolean }>()
       <Upload v-else :size="30" />
     </span>
     <strong>{{ scanning ? '正在读取文件夹…' : '释放以添加到对话' }}</strong>
-    <small>{{ scanning ? '扫描完成后会统一校验并加入附件队列' : '支持图片、文件和文件夹' }}</small>
+    <small>{{ scanning ? '正在处理选中的内容' : '文件夹连接为本地项目；普通文件作为附件上传' }}</small>
   </div>
 </template>
 

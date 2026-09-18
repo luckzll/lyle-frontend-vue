@@ -229,7 +229,7 @@ test('short viewports keep Home and End menu targets visible without scrolling t
     }
   })
   await page.keyboard.press('End')
-  await expect(menu.getByRole('menuitem', { name: /^文件夹\s/ })).toBeFocused()
+  await expect(menu.getByRole('menuitem', { name: /^连接本地项目\s/ })).toBeFocused()
   const end = await visiblePosition()
   expect(end.menuScrollTop).toBeGreaterThan(0)
   await page.keyboard.press('Home')
@@ -418,167 +418,17 @@ test('retry reuses the failed turn and its attachments without duplicating the u
   expect(streamPayloads[1].retry).toBe(true)
 })
 
-test('folder picker uploads stable relative paths and renders a grouped draft', async ({ page }) => {
-  const multipartBodies: string[] = []
-  let uploadIndex = 0
-  await mockChatApis(page, async (route, pathname) => {
-    if (pathname !== '/api/chat/attachments' || route.request().method() !== 'POST') return false
-    uploadIndex += 1
-    multipartBodies.push(route.request().postData() || '')
-    const name = uploadIndex === 1 ? '2.txt' : '10.txt'
-    return json(route, {
-      id: `folder-${uploadIndex}`,
-      kind: 'file',
-      name,
-      mimeType: 'text/plain',
-      size: 1,
-      status: 'READY',
-      sourceType: 'folder_picker',
-      folderGroupId: 'server-group',
-      folderRoot: '资料',
-      relativePath: `资料/${name}`,
-      downloadUrl: `/chat/attachments/folder-${uploadIndex}/content?disposition=attachment`
-    })
-  })
-
-  await page.goto('/')
-  await page.getByTestId('chat-input').fill('/文件夹')
-  await page.getByRole('menuitem', { name: /^\/文件夹\s/ }).click()
-  await page.getByLabel('选择文件夹').evaluate((element) => {
-    const ten = new File(['a'], '10.txt', { type: 'text/plain' })
-    const two = new File(['b'], '2.txt', { type: 'text/plain' })
-    Object.defineProperty(ten, 'webkitRelativePath', { value: '资料/10.txt' })
-    Object.defineProperty(two, 'webkitRelativePath', { value: '资料/2.txt' })
-    Object.defineProperty(element, 'files', { configurable: true, value: [ten, two] })
-    element.dispatchEvent(new Event('change', { bubbles: true }))
-  })
-
-  await expect(page.locator('.folder-attachment-group')).toContainText('资料')
-  await expect(page.locator('.folder-attachment-group .project-toggle')).toHaveAttribute('aria-expanded', 'false')
-  await page.locator('.folder-attachment-group .project-toggle').click()
-  await expect(page.locator('.folder-attachment-group .tree-file')).toHaveCount(2)
-  await expect(page.locator('.folder-attachment-group .tree-file').nth(0)).toContainText('2.txt')
-  await expect(page.locator('.folder-attachment-group .tree-file').nth(1)).toContainText('10.txt')
-  expect(multipartBodies).toHaveLength(2)
-  expect(multipartBodies.every((body) => body.includes('folder_picker') && body.includes('资料/'))).toBe(true)
-  expect(multipartBodies.some((body) => body.includes('/Users/') || body.includes('C:\\'))).toBe(false)
-})
-
-test('nested folder drop preserves top-level file and folder delivery order', async ({ page }) => {
-  const multipartBodies: string[] = []
-  await mockChatApis(page, async (route, pathname) => {
-    if (pathname !== '/api/chat/attachments' || route.request().method() !== 'POST') return false
-    const body = route.request().postData() || ''
-    multipartBodies.push(body)
-    const name = ['before.txt', '2.txt', '10.txt', 'after.txt'].find((candidate) => body.includes(`filename="${candidate}"`)) || 'unknown.txt'
-    return json(route, {
-      id: `nested-${name}`,
-      kind: 'file',
-      name,
-      mimeType: 'text/plain',
-      size: 1,
-      status: 'READY',
-      downloadUrl: `/chat/attachments/nested-${name}/content?disposition=attachment`
-    })
-  })
-
-  await page.goto('/')
-  await expect(page.getByTestId('chat-input')).toBeVisible()
-  await page.evaluate(() => {
-    type Entry = {
-      isFile: boolean
-      isDirectory: boolean
-      name: string
-      file?: (success: (file: File) => void) => void
-      createReader?: () => { readEntries: (success: (entries: Entry[]) => void) => void }
-    }
-    const file = (name: string): Entry => ({
-      isFile: true,
-      isDirectory: false,
-      name,
-      file: (success) => { queueMicrotask(() => success(new File([name], name, { type: 'text/plain' }))) }
-    })
-    const directory = (name: string, children: Entry[]): Entry => ({
-      isFile: false,
-      isDirectory: true,
-      name,
-      createReader: () => {
-        let complete = false
-        return { readEntries: (success) => { success(complete ? [] : children); complete = true } }
-      }
-    })
-    const root = directory('资料', [directory('一级', [file('10.txt'), file('2.txt')])])
-    const entries = [file('before.txt'), root, file('after.txt')]
-    const dataTransfer = {
-      types: ['Files'],
-      files: [],
-      items: entries.map((entry) => ({ kind: 'file', getAsEntry: () => entry, getAsFile: () => null }))
-    }
-    const dispatch = (type: string) => {
-      const event = new Event(type, { bubbles: true, cancelable: true })
-      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
-      document.querySelector('.chat-composer')?.dispatchEvent(event)
-      return event.defaultPrevented
-    }
-    dispatch('dragenter')
-    dispatch('drop')
-  })
-
-  await expect(page.locator('.attachment-card').filter({ hasText: '已就绪' })).toHaveCount(2)
-  await expect(page.locator('.folder-attachment-group')).toContainText('资料')
-  await expect(page.locator('.folder-attachment-group')).toContainText('已就绪 2/2')
-  await page.locator('.folder-attachment-group .project-toggle').click()
-  await page.locator('.folder-attachment-group .tree-folder > summary').click()
-  await expect(page.locator('.folder-attachment-group .tree-file').nth(0)).toContainText('2.txt')
-  await expect(page.locator('.folder-attachment-group .tree-file').nth(1)).toContainText('10.txt')
-  const topLevelText = await page.locator('.attachment-tray').locator(':scope > *').allTextContents()
-  expect(topLevelText[0]).toContain('before.txt')
-  expect(topLevelText[1]).toContain('资料')
-  expect(topLevelText[2]).toContain('after.txt')
-  expect(multipartBodies.some((body) => body.includes('资料/一级/2.txt'))).toBe(true)
-  expect(multipartBodies.some((body) => body.includes('资料/一级/10.txt'))).toBe(true)
-})
-
-test('empty folder drop shows a skip summary and live announcement', async ({ page }) => {
+test('project menu connects locally without uploading directory contents', async ({ page }) => {
   let uploads = 0
   await mockChatApis(page, async (route, pathname) => {
-    if (pathname === '/api/chat/attachments' && route.request().method() === 'POST') {
-      uploads += 1
-    }
+    if (pathname === '/api/chat/attachments' && route.request().method() === 'POST') uploads++
     return false
   })
-
   await page.goto('/')
-  await expect(page.getByTestId('chat-input')).toBeVisible()
-  await page.evaluate(() => {
-    const emptyDirectory = {
-      isFile: false,
-      isDirectory: true,
-      name: '空资料',
-      createReader: () => ({
-        readEntries: (success: (entries: unknown[]) => void) => success([])
-      })
-    }
-    const dataTransfer = {
-      types: ['Files'],
-      files: [],
-      items: [{ kind: 'file', getAsEntry: () => emptyDirectory, getAsFile: () => null }]
-    }
-    const dispatch = (type: string) => {
-      const event = new Event(type, { bubbles: true, cancelable: true })
-      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
-      document.querySelector('.chat-composer')?.dispatchEvent(event)
-    }
-    dispatch('dragenter')
-    dispatch('drop')
-  })
-
-  const skipSummary = page.locator('.skip-summary')
-  await expect(skipSummary).toBeVisible()
-  await expect(skipSummary.locator(':scope > summary')).toHaveText('跳过 1 个文件或条目')
-  await skipSummary.locator(':scope > summary').click()
-  await expect(skipSummary).toContainText('1 个空文件夹')
-  await expect(page.locator('.sr-announcement')).toHaveText('未添加附件，已跳过 1 个文件或条目。')
+  await page.getByTestId('chat-input').fill('/项目')
+  await page.getByRole('menuitem', { name: /^\/项目\s/ }).click()
+  await expect(page).toHaveURL(/\/local-project$/)
+  await expect(page.getByRole('heading', { name: '本地项目', exact: true })).toBeVisible()
   expect(uploads).toBe(0)
 })
 
@@ -644,7 +494,7 @@ test('sent attachment metadata is restored from history after refresh', async ({
   await expect(page.getByText('附件已经保存。', { exact: true })).toBeVisible()
 })
 
-test('runtime rollback switches disable workspace drop and folder attachment entry', async ({ page }) => {
+test('upload rollback disables file drop but preserves local project entry', async ({ page }) => {
   await mockChatApis(page, async (route, pathname) => {
     if (pathname !== '/api/runtime-config') return false
     return json(route, {
@@ -656,11 +506,11 @@ test('runtime rollback switches disable workspace drop and folder attachment ent
 
   await page.goto('/')
   await page.getByTestId('chat-input').fill('/')
-  await expect(page.getByRole('menuitem', { name: /^\/文件夹\s/ })).toHaveCount(0)
+  await expect(page.getByRole('menuitem', { name: /^\/项目\s/ })).toHaveCount(1)
   await page.getByTestId('chat-input').press('Escape')
   await page.getByTestId('chat-attach-trigger').click()
   await expect(page.getByRole('menu', { name: '附件命令' })).toBeVisible()
-  await expect(page.getByRole('menuitem', { name: /^文件夹\s/ })).toHaveCount(0)
+  await expect(page.getByRole('menuitem', { name: /^连接本地项目\s/ })).toHaveCount(1)
   await page.keyboard.press('Escape')
   await page.evaluate(() => {
     const transfer = new DataTransfer()
