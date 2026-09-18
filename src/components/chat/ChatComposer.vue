@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { ArrowUp, ChevronDown, Layers3, Plus, Sparkles, Square, X } from '@lucide/vue'
 import AttachmentCommandMenu from './AttachmentCommandMenu.vue'
-import AttachmentSkipSummary from './AttachmentSkipSummary.vue'
 import AttachmentTray from './AttachmentTray.vue'
 import type { ChatAttachmentDraft } from '@/domain/chat-attachment'
 import type { DirectorySkip } from '@/domain/directory-entry'
@@ -27,6 +26,7 @@ const emit = defineEmits<{
   stop: []
   files: [files: File[], source: 'picker' | 'paste' | 'folder_picker']
   remove: [localId: string]
+  removeGroup: [id: string]
   retry: [localId: string]
   dismissHint: []
   'update:chatModelId': [value: ChatModelId]
@@ -178,8 +178,7 @@ defineExpose({ focus: () => textarea.value?.focus() })
 
 <template>
   <form ref="root" class="chat-composer" @submit.prevent="!disabled && !loading && $emit('submit')" @focusout="focusOut">
-    <AttachmentTray :attachments="attachments" @remove="$emit('remove', $event)" @retry="$emit('retry', $event)" />
-    <AttachmentSkipSummary :skipped="skipped" />
+    <AttachmentTray :attachments="attachments" :skipped="skipped" @remove="$emit('remove', $event)" @remove-group="$emit('removeGroup', $event)" @retry="$emit('retry', $event)" />
     <AttachmentCommandMenu ref="attachmentMenu" v-if="commandOpen" :id="menuId" :folder-supported="folderSupported" :show-commands="slashCommand && !attachmentOpen" @select="choose" @dismiss="dismissMenu()" />
     <textarea
       ref="textarea"
@@ -198,7 +197,7 @@ defineExpose({ focus: () => textarea.value?.focus() })
     />
     <span :id="inputHelpId" class="visually-hidden">点击添加附件或输入斜杠选择资料。Enter 发送，Shift 加 Enter 换行。按 Command 或 Control 加 O 选择文件，加 Shift 选择文件夹。</span>
     <input ref="imageInput" class="native-picker" type="file" aria-label="选择图片" accept="image/jpeg,image/png,image/webp,image/gif" multiple @change="selected($event, 'picker')" />
-    <input ref="fileInput" class="native-picker" type="file" aria-label="选择文件" accept="image/jpeg,image/png,image/webp,image/gif,.pdf,.docx,.txt,.md,.csv,.json,.log,.xlsx,.xlsm,.xls,.pptx" multiple @change="selected($event, 'picker')" />
+    <input ref="fileInput" class="native-picker" type="file" aria-label="选择文件" multiple @change="selected($event, 'picker')" />
     <input ref="folderInput" class="native-picker" type="file" aria-label="选择文件夹" webkitdirectory multiple @change="selected($event, 'folder_picker')" />
     <div v-if="showAttachmentHint && !modelValue && !attachments.length" class="attachment-hint">
       <span>可拖入图片、文件或文件夹</span>

@@ -1,5 +1,6 @@
 import type { AttachmentSource, IncomingAttachmentFile } from '@/domain/chat-attachment'
-import { DIRECTORY_SCAN_LIMITS, type DirectoryScanResult, type DirectorySkip } from '@/domain/directory-entry'
+import { ALLOWED_PROJECT_DOTFILES } from '@/domain/chat-attachment'
+import { DIRECTORY_SCAN_LIMITS, IGNORED_PROJECT_DIRECTORIES, type DirectoryScanResult, type DirectorySkip } from '@/domain/directory-entry'
 
 interface LegacyFileEntry {
   isFile: boolean
@@ -58,34 +59,50 @@ export function scanPickerFiles(files: File[], source: 'picker' | 'paste' | 'fol
 
   const groups = new Map<string, { id: string; first: number; files: Array<{ file: File; path: string }> }>()
   const skipped: DirectorySkip[] = []
-  files.slice(0, DIRECTORY_SCAN_LIMITS.maxEntries).forEach((file, index) => {
+  const excluded = new Map<string, DirectorySkip>()
+  const deadline = performance.now() + DIRECTORY_SCAN_LIMITS.timeoutMs
+  let entries = 0
+  let truncated = false
+  for (const [index, file] of files.entries()) {
+    if (performance.now() >= deadline) {
+      skipped.push({ name: '其余选择器条目', reason: 'timeout', count: files.length - index })
+      truncated = true
+      break
+    }
     const rawPath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
     const path = normalizeRelativePath(rawPath)
     if (!path) {
       skipped.push({ name: file.name, reason: 'read_error' })
-      return
+      continue
     }
     const segments = path.split('/')
-    const hidden = segments.find((segment) => segment.startsWith('.'))
+    const ignored = segments.slice(0, -1).findIndex(segment => IGNORED_PROJECT_DIRECTORIES.has(segment.toLowerCase()))
+    if (ignored >= 0) {
+      const relativePath = segments.slice(0, ignored + 1).join('/')
+      const previous = excluded.get(relativePath)
+      if (previous) previous.count = (previous.count || 1) + 1
+      else { const item: DirectorySkip = { name: segments[ignored], relativePath, reason: 'ignored_directory', count: 1 }; excluded.set(relativePath, item); skipped.push(item) }
+      continue
+    }
+    if (entries >= DIRECTORY_SCAN_LIMITS.maxEntries) {
+      skipped.push({ name: '其余选择器条目', reason: 'scan_limit', count: files.length - index })
+      truncated = true
+      break
+    }
+    entries += 1
+    const hidden = segments.find((segment, index) => segment.startsWith('.') && !(index === segments.length - 1 && ALLOWED_PROJECT_DOTFILES.has(segment)))
     if (hidden) {
       skipped.push({ name: file.name, relativePath: path, reason: isSystem(hidden) ? 'system' : 'hidden' })
-      return
+      continue
     }
     if (segments.length - 2 > DIRECTORY_SCAN_LIMITS.maxDepth) {
       skipped.push({ name: file.name, relativePath: path, reason: 'depth' })
-      return
+      continue
     }
     const root = path.split('/')[0] || file.name
     const group = groups.get(root) || { id: newId(), first: index, files: [] }
     group.files.push({ file, path })
     groups.set(root, group)
-  })
-  if (files.length > DIRECTORY_SCAN_LIMITS.maxEntries) {
-    skipped.push({
-      name: '其余选择器条目',
-      reason: 'scan_limit',
-      count: files.length - DIRECTORY_SCAN_LIMITS.maxEntries
-    })
   }
 
   const incoming: IncomingAttachmentFile[] = []
@@ -102,7 +119,7 @@ export function scanPickerFiles(files: File[], source: 'picker' | 'paste' | 'fol
       })
     }
   }
-  return { files: incoming, skipped, truncated: files.length > DIRECTORY_SCAN_LIMITS.maxEntries }
+  return { files: incoming, skipped, truncated }
 }
 
 export function scanFlatFiles(files: File[], source: Extract<AttachmentSource, 'picker' | 'drop' | 'paste'>): DirectoryScanResult {
@@ -136,15 +153,19 @@ async function readEntry(
   folderRoot?: string
 ) {
   const relativePath = parentPath ? `${parentPath}/${entry.name}` : entry.name
+  if (entry.isDirectory && IGNORED_PROJECT_DIRECTORIES.has(entry.name.toLowerCase())) {
+    ctx.skipped.push({ name: entry.name, relativePath, reason: 'ignored_directory' })
+    return
+  }
   if (isSystem(entry.name)) {
     ctx.skipped.push({ name: entry.name, relativePath, reason: 'system' })
     return
   }
-  if (entry.name.startsWith('.')) {
+  if (entry.name.startsWith('.') && !(entry.isFile && ALLOWED_PROJECT_DOTFILES.has(entry.name))) {
     ctx.skipped.push({ name: entry.name, relativePath, reason: 'hidden' })
     return
   }
-  if (depth > DIRECTORY_SCAN_LIMITS.maxDepth) {
+  if (depth - (entry.isFile ? 1 : 0) > DIRECTORY_SCAN_LIMITS.maxDepth) {
     ctx.skipped.push({ name: entry.name, relativePath, reason: 'depth' })
     ctx.truncated = true
     return
@@ -202,13 +223,16 @@ function guard(ctx: ScanContext, name = '其余条目', relativePath?: string, k
 }
 
 function readFile(entry: LegacyFileEntry, ctx: ScanContext): Promise<File> {
-  return callbackBeforeDeadline<File>(ctx, (resolve, reject) => entry.file?.(resolve, reject) ?? reject(new Error('not a file')))
+  return callbackBeforeDeadline<File>(ctx, (resolve, reject) => {
+    if (!entry.file) { reject(new Error('not a file')); return }
+    entry.file(resolve, reject)
+  })
 }
 
 /**
  * Enumerate at most the remaining scan budget. Calling readEntries in bounded
  * batches prevents a huge directory from being fully materialized before the
- * 500-entry / 5-second guards can run.
+ * entry / time guards can run.
  */
 async function readBoundedEntries(
   reader: ReturnType<NonNullable<LegacyFileEntry['createReader']>>,
@@ -229,6 +253,12 @@ async function readBoundedEntries(
       throw error
     }
     if (!batch.length) return entries
+    // Do not traverse dependency/generated trees or let their names consume the useful-entry budget.
+    batch = batch.filter(entry => {
+      if (!entry.isDirectory || !IGNORED_PROJECT_DIRECTORIES.has(entry.name.toLowerCase())) return true
+      ctx.skipped.push({ name: entry.name, relativePath: `${relativePath}/${entry.name}`, reason: 'ignored_directory' })
+      return false
+    })
     const remaining = DIRECTORY_SCAN_LIMITS.maxEntries - ctx.entries - entries.length
     const accepted = Math.max(0, Math.min(remaining, batch.length))
     entries.push(...batch.slice(0, accepted))

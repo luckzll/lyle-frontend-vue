@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeRelativePath, scanDataTransfer, scanPickerFiles } from '@/composables/useDirectoryEntries'
+import { DIRECTORY_SCAN_LIMITS } from '@/domain/directory-entry'
 
 type FakeEntry = {
   isFile: boolean
@@ -10,7 +11,7 @@ type FakeEntry = {
 }
 
 function fileEntry(name: string, text = name): FakeEntry {
-  return { isFile: true, isDirectory: false, name, file: (success) => success(new File([text], name, { type: 'text/plain' })) }
+  return { isFile: true, isDirectory: false, name, file: (success) => { queueMicrotask(() => success(new File([text], name, { type: 'text/plain' }))) } }
 }
 
 function directoryEntry(name: string, batches: FakeEntry[][]): FakeEntry {
@@ -20,7 +21,7 @@ function directoryEntry(name: string, batches: FakeEntry[][]): FakeEntry {
     name,
     createReader: () => {
       let index = 0
-      return { readEntries: (success) => success(batches[index++] || []) }
+      return { readEntries: (success) => { queueMicrotask(() => success(batches[index++] || [])) } }
     }
   }
 }
@@ -96,7 +97,7 @@ describe('directory entry scanning', () => {
 
   it('stops directory enumeration at the bounded scan limit and reports the known remainder', async () => {
     let reads = 0
-    const batches = Array.from({ length: 8 }, (_, batch) =>
+    const batches = Array.from({ length: 25 }, (_, batch) =>
       Array.from({ length: 100 }, (_, index) => fileEntry(`${batch}-${index}.txt`))
     )
     const root: FakeEntry = {
@@ -114,10 +115,41 @@ describe('directory entry scanning', () => {
 
     const result = await scanDataTransfer(dataTransfer)
 
-    expect(reads).toBeLessThan(8)
-    expect(result.files).toHaveLength(499)
+    expect(reads).toBeLessThan(25)
+    expect(result.files).toHaveLength(DIRECTORY_SCAN_LIMITS.maxEntries - 1)
     expect(result.truncated).toBe(true)
     expect(result.skipped).toContainEqual(expect.objectContaining({ reason: 'scan_limit', count: 1, isMinimum: true }))
+  })
+
+  it('reads real asynchronous file callbacks and preserves source content and allowed dotfiles', async () => {
+    const root = directoryEntry('project', [[fileEntry('App.vue', '<template>中文</template>'), fileEntry('.gitignore', 'node_modules'),
+      fileEntry('.dockerignore'), fileEntry('.editorconfig'), fileEntry('.env'), fileEntry('.secret.ts')], []])
+    const result = await scanDataTransfer({ items: [{ kind: 'file', webkitGetAsEntry: () => root, getAsFile: () => null }] } as unknown as DataTransfer)
+    expect(result.files).toHaveLength(4)
+    expect(await result.files.find(item => item.file.name === 'App.vue')!.file.text()).toBe('<template>中文</template>')
+    expect(result.skipped.map(item => item.name).sort()).toEqual(['.env', '.secret.ts'])
+  })
+
+  it('skips dependency and generated trees before enumeration and useful-file budgeting', async () => {
+    let enumerated = false
+    const ignored: FakeEntry = { name: 'node_modules', isFile: false, isDirectory: true,
+      createReader: () => { enumerated = true; throw new Error('must never inspect dependency tree') } }
+    const root = directoryEntry('project', [[ignored, directoryEntry('dist', [[]]), fileEntry('main.ts')], []])
+    const result = await scanDataTransfer({ items: [{ kind: 'file', getAsEntry: () => root, getAsFile: () => null }] } as unknown as DataTransfer)
+    expect(enumerated).toBe(false)
+    expect(result.files.map(item => item.relativePath)).toEqual(['project/main.ts'])
+    expect(result.skipped.map(item => item.reason)).toEqual(['ignored_directory', 'ignored_directory'])
+    const picked = Array.from({ length: DIRECTORY_SCAN_LIMITS.maxEntries + 50 }, (_, index) => {
+      const file = new File(['dependency'], `${index}.js`)
+      Object.defineProperty(file, 'webkitRelativePath', { value: `project/node_modules/lib/${index}.js` })
+      return file
+    })
+    const source = new File(['export {}'], 'main.ts')
+    Object.defineProperty(source, 'webkitRelativePath', { value: 'project/src/main.ts' })
+    const scanned = scanPickerFiles([...picked, source], 'folder_picker')
+    expect(scanned.files.map(item => item.relativePath)).toEqual(['project/src/main.ts'])
+    expect(scanned.skipped).toEqual([{ name: 'node_modules', relativePath: 'project/node_modules', reason: 'ignored_directory', count: picked.length }])
+    expect(scanned.truncated).toBe(false)
   })
 
   it.each([

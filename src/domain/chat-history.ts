@@ -51,6 +51,8 @@ export type RecoveredChatMessage = {
   statusText?: string
   imageBatch?: RecoveredImageBatch
   attachments?: ChatAttachment[]
+  attachmentContextInherited?: boolean
+  attachmentContextSourceMessageId?: string
   usage?: ChatUsage
   sources?: ChatSource[]
   agentTrace?: AgentTraceItem[]
@@ -97,6 +99,7 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
     statusText: typeof metadata.statusText === 'string' ? metadata.statusText : undefined,
     imageBatch: historyImageBatch(metadata.imageBatch),
     attachments: Array.isArray(item.attachments) ? item.attachments : undefined,
+    ...attachmentContextMetadata(metadata),
     usage: historyUsage(metadata.usage),
     sources: sanitizeChatSources(metadata.sources),
     agentTrace: sanitizeAgentTrace(metadata.agentTrace),
@@ -119,6 +122,13 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
     retrievalScope: sanitizeRetrievalScope(metadata.retrievalScope),
     debugTruncated: metadata.debugTruncated === true,
     debugDataState
+  }
+}
+export function attachmentContextMetadata(value: Record<string, unknown>) {
+  return {
+    attachmentContextInherited: typeof value.attachmentContextInherited === 'boolean' ? value.attachmentContextInherited : undefined,
+    attachmentContextSourceMessageId: typeof value.attachmentContextSourceMessageId === 'string'
+      ? value.attachmentContextSourceMessageId.slice(0, 128) : undefined
   }
 }
 export function resolveChatDebugDataState(value: unknown): Extract<ChatDebugDataState, 'available' | 'unsupported' | 'legacy'> {

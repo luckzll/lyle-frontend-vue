@@ -1,11 +1,8 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { AttachmentFolderMetadata, ChatAttachment, ChatAttachmentDraft, ChatAttachmentKind, IncomingAttachmentFile } from '@/domain/chat-attachment'
-import { CHAT_ATTACHMENT_LIMITS } from '@/domain/chat-attachment'
+import { CHAT_ATTACHMENT_LIMITS, isChatImage, isSupportedChatFile } from '@/domain/chat-attachment'
 import type { DirectorySkip } from '@/domain/directory-entry'
 import { directorySkippedCount } from '@/domain/directory-entry'
-
-const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
-const FILE_EXTENSIONS = new Set(['pdf', 'docx', 'txt', 'md', 'csv', 'json', 'log', 'xlsx'])
 
 export function useChatAttachments(options: {
   upload: (file: File, kind: ChatAttachmentKind, metadata: AttachmentFolderMetadata) => Promise<ChatAttachment>
@@ -14,6 +11,8 @@ export function useChatAttachments(options: {
   const attachments = ref<ChatAttachmentDraft[]>([])
   const skipped = ref<DirectorySkip[]>([])
   const announcement = ref('')
+  const uploadTasks: Array<{ draft: ChatAttachmentDraft; done: () => void }> = []
+  let activeUploads = 0
 
   const isUploading = computed(() => attachments.value.some((item) => ['local', 'uploading'].includes(item.status)))
   const hasFailed = computed(() => attachments.value.some((item) => item.status === 'failed'))
@@ -22,10 +21,11 @@ export function useChatAttachments(options: {
 
   async function addFiles(files: IncomingAttachmentFile[], scanSkipped: DirectorySkip[] = []) {
     if (!files.length && !scanSkipped.length) return
-    skipped.value = [...scanSkipped]
-    const slots = Math.max(0, CHAT_ATTACHMENT_LIMITS.maxCount - attachments.value.length)
+    skipped.value = [...skipped.value, ...scanSkipped]
     const acceptedFiles: IncomingAttachmentFile[] = []
     let acceptedBytes = attachments.value.reduce((sum, item) => sum + item.size, 0)
+    let looseCount = attachments.value.filter(item => !item.folderGroupId).length
+    let imageCount = attachments.value.filter(item => item.kind === 'image').length
     for (const item of files) {
       const validationError = validateFile(item.file)
       if (validationError) {
@@ -36,8 +36,13 @@ export function useChatAttachments(options: {
         })
         continue
       }
-      if (acceptedFiles.length >= slots) {
+      if (acceptedFiles.length + attachments.value.length >= CHAT_ATTACHMENT_LIMITS.maxProjectCount
+        || (!item.folderGroupId && looseCount >= CHAT_ATTACHMENT_LIMITS.maxCount)) {
         skipped.value.push({ name: item.file.name, relativePath: item.relativePath, reason: 'count' })
+        continue
+      }
+      if (isChatImage(item.file) && imageCount >= CHAT_ATTACHMENT_LIMITS.maxImages) {
+        skipped.value.push({ name: item.file.name, relativePath: item.relativePath, reason: 'image_count' })
         continue
       }
       if (acceptedBytes + item.file.size > CHAT_ATTACHMENT_LIMITS.maxTotalBytes) {
@@ -46,6 +51,8 @@ export function useChatAttachments(options: {
       }
       acceptedFiles.push(item)
       acceptedBytes += item.file.size
+      if (!item.folderGroupId) looseCount += 1
+      if (isChatImage(item.file)) imageCount += 1
     }
 
     const drafts = acceptedFiles.map(createDraft)
@@ -82,6 +89,14 @@ export function useChatAttachments(options: {
     announcement.value = `已移除 ${draft.name}。`
   }
 
+  async function removeGroup(folderGroupId: string) {
+    const drafts = attachments.value.filter(item => item.folderGroupId === folderGroupId)
+    const root = drafts[0]?.folderRoot
+    await Promise.all(drafts.map(item => remove(item.localId)))
+    if (root) skipped.value = skipped.value.filter(item => !item.relativePath?.startsWith(`${root}/`) && item.relativePath !== root)
+    announcement.value = `已移除文件夹 ${root || ''}。`
+  }
+
   function commitReady(): ChatAttachment[] {
     const committed = attachments.value.flatMap((draft, position) => draft.attachment ? [{ ...draft.attachment, position }] : [])
     attachments.value.forEach(revokePreview)
@@ -100,7 +115,7 @@ export function useChatAttachments(options: {
 
   function createDraft(incoming: IncomingAttachmentFile): ChatAttachmentDraft {
     const { file } = incoming
-    const kind: ChatAttachmentKind = IMAGE_TYPES.has(file.type.toLowerCase()) ? 'image' : 'file'
+    const kind: ChatAttachmentKind = isChatImage(file) ? 'image' : 'file'
     return {
       localId: newId(),
       kind,
@@ -126,12 +141,19 @@ export function useChatAttachments(options: {
         : '未添加附件。'
       return
     }
-    let cursor = 0
-    const workers = Array.from({ length: Math.min(CHAT_ATTACHMENT_LIMITS.uploadConcurrency, drafts.length) }, async () => {
-      while (cursor < drafts.length) {
-        const draft = drafts[cursor++]
-        if (!draft || draft.status !== 'local') continue
-        draft.status = 'uploading'
+    await Promise.all(drafts.map(draft => new Promise<void>(done => { uploadTasks.push({ draft, done }); pumpUploads() })))
+    const readyCount = attachments.value.filter((item) => item.status === 'ready').length
+    const failedCount = attachments.value.filter((item) => item.status === 'failed').length
+    announcement.value = `${readyCount} 个附件已就绪${failedCount ? `，${failedCount} 个需要处理` : ''}${skipped.value.length ? `，跳过 ${directorySkippedCount(skipped.value)} 个` : ''}。`
+  }
+
+  function pumpUploads() {
+    while (activeUploads < CHAT_ATTACHMENT_LIMITS.uploadConcurrency && uploadTasks.length) {
+      const { draft, done } = uploadTasks.shift()!
+      if (draft.status !== 'local' || !attachments.value.some(item => item.localId === draft.localId)) { done(); continue }
+      activeUploads += 1
+      draft.status = 'uploading'
+      void (async () => {
         try {
           const metadata: AttachmentFolderMetadata = {
             sourceType: draft.sourceType,
@@ -141,6 +163,10 @@ export function useChatAttachments(options: {
             sourceOrder: draft.sourceOrder
           }
           const response = await options.upload(draft.file, draft.kind, metadata)
+          if (!attachments.value.some(item => item.localId === draft.localId)) {
+            await options.remove?.(response.id).catch(() => undefined)
+            return
+          }
           const attachment = {
             ...response,
             sourceType: response.sourceType || draft.sourceType,
@@ -155,13 +181,13 @@ export function useChatAttachments(options: {
         } catch (exception) {
           draft.status = 'failed'
           draft.error = requestError(exception)
+        } finally {
+          activeUploads -= 1
+          done()
+          pumpUploads()
         }
-      }
-    })
-    await Promise.all(workers)
-    const readyCount = attachments.value.filter((item) => item.status === 'ready').length
-    const failedCount = attachments.value.filter((item) => item.status === 'failed').length
-    announcement.value = `${readyCount} 个附件已就绪${failedCount ? `，${failedCount} 个需要处理` : ''}${skipped.value.length ? `，跳过 ${directorySkippedCount(skipped.value)} 个` : ''}。`
+      })()
+    }
   }
 
   function updateAnnouncement(added: number) {
@@ -170,16 +196,13 @@ export function useChatAttachments(options: {
 
   onBeforeUnmount(reset)
 
-  return { attachments, skipped, announcement, isUploading, hasFailed, allReady, totalBytes, addFiles, retry, remove, commitReady, reset }
+  return { attachments, skipped, announcement, isUploading, hasFailed, allReady, totalBytes, addFiles, retry, remove, removeGroup, commitReady, reset }
 }
 
 function validateFile(file: File) {
   if (file.size > CHAT_ATTACHMENT_LIMITS.maxFileBytes) return '单个附件不能超过 5MB。'
-  const type = file.type.toLowerCase()
-  const extension = file.name.split('.').pop()?.toLowerCase() || ''
-  if (IMAGE_TYPES.has(type)) return ''
-  if (FILE_EXTENSIONS.has(extension)) return ''
-  return '仅支持 JPG、PNG、WEBP、GIF、PDF、DOCX、TXT、MD、CSV、JSON、LOG、XLSX。'
+  if (isSupportedChatFile(file)) return ''
+  return '不支持此文件类型；可上传图片、文档、源代码或项目配置。'
 }
 
 function requestError(exception: unknown) {

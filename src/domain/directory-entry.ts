@@ -1,6 +1,6 @@
 import type { IncomingAttachmentFile } from '@/domain/chat-attachment'
 
-export type DirectorySkipReason = 'hidden' | 'system' | 'unsupported' | 'depth' | 'scan_limit' | 'timeout' | 'read_error' | 'empty_directory' | 'count' | 'size' | 'total_size'
+export type DirectorySkipReason = 'hidden' | 'system' | 'ignored_directory' | 'unsupported' | 'depth' | 'scan_limit' | 'timeout' | 'read_error' | 'empty_directory' | 'count' | 'image_count' | 'size' | 'total_size'
 
 export interface DirectorySkip {
   name: string
@@ -21,15 +21,19 @@ export interface DirectoryScanResult {
 
 export const DIRECTORY_SCAN_LIMITS = {
   maxDepth: 8,
-  maxEntries: 500,
+  maxEntries: 2000,
   timeoutMs: 5000,
   maxPathLength: 512,
   maxSegmentLength: 128
 } as const
 
+export const IGNORED_PROJECT_DIRECTORIES = new Set(['node_modules', '.git', 'dist', 'build', 'target',
+  '.venv', 'venv', '__pycache__', 'vendor', 'coverage', '.next', '.nuxt', '.output', '.cache'])
+
 export const DIRECTORY_SKIP_LABELS: Record<DirectorySkipReason, string> = {
   hidden: '隐藏文件',
   system: '系统文件',
+  ignored_directory: '依赖、版本记录或生成目录',
   unsupported: '类型不支持',
   depth: '超过目录深度限制',
   scan_limit: '超过扫描条目限制',
@@ -37,6 +41,7 @@ export const DIRECTORY_SKIP_LABELS: Record<DirectorySkipReason, string> = {
   read_error: '读取失败',
   empty_directory: '空文件夹',
   count: '超过数量限制',
+  image_count: '超过图片数量限制',
   size: '超过单文件大小限制',
   total_size: '超过单轮总量限制'
 }
