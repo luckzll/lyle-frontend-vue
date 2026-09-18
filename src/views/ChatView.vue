@@ -78,8 +78,11 @@ import DebugAgentTimeline from '@/components/chat/DebugAgentTimeline.vue'
 import DebugLedger from '@/components/chat/DebugLedger.vue'
 import AgentProgressTimeline from '@/components/chat/AgentProgressTimeline.vue'
 import ChatThinkingProcess from '@/components/chat/ChatThinkingProcess.vue'
-import { appendReasoning, mergeReasoning, processTimestamp, type ChatReasoning } from '@/domain/chat-reasoning'
-import { AGENT_STEPS, agentProgressDetail, agentProgressDisplayStatus, mergeAgentProgress, type AgentStep, type AgentStepEvent } from '@/domain/chat-progress'
+import { processTimestamp, type ChatReasoning } from '@/domain/chat-reasoning'
+import type { ChatToolCall } from '@/domain/chat-tool-calls'
+import type { ProcessTimelineEntry } from '@/domain/chat-process-timeline'
+import { applyProcessAgent, applyProcessTool, applyProcessReasoning, applyProcessSnapshot } from '@/domain/chat-process-state'
+import { AGENT_STEPS, agentProgressDetail, agentProgressDisplayStatus, type AgentStep, type AgentStepEvent } from '@/domain/chat-progress'
 import { reconcileChatTurn, recoveryPollDelay, recoveryStatusText, shouldRecoverChatTurn, type ChatRecoveryState } from '@/domain/chat-recovery'
 import { summarizeChatDebug } from '@/domain/chat-debug-summary'
 import ChatSources from '@/components/chat/ChatSources.vue'
@@ -127,6 +130,8 @@ interface Message {
   sources?: ChatSource[]
   agentTrace?: AgentTraceItem[]
   agentProgress?: AgentStepEvent[]
+  toolCalls?: ChatToolCall[]
+  processTimeline?: ProcessTimelineEntry[]
   reasoning?: ChatReasoning
   processStartedAt?: number
   processCompletedAt?: number
@@ -864,7 +869,7 @@ async function cancelStreaming() {
   try {
     const response = await cancelChatTurn(conversationId.value, turnId)
     if (epoch !== conversationEpoch) return
-    Object.assign(target, historyMessage(response.data), { recoveryState: undefined })
+    Object.assign(target, reconcileChatTurn(target, [response.data]), { recoveryState: undefined })
     if (isActiveTurnPhase(target.phase)) target.recoveryState = 'unconfirmed'
     else settlePendingDebugState(target)
   } catch {
@@ -940,7 +945,7 @@ async function submit(retryContext?: RetryTurnContext) {
     if (!activeConversationId) throw new Error('会话尚未保存，无法重试。')
     const pending: Message = {
       role: 'assistant', content: '', turnId, phase: 'THINKING',
-      statusText: '正在等待执行进度…', debugDataState: 'pending', agentProgress: [], processStartedAt: Date.now()
+      statusText: '正在等待执行进度…', debugDataState: 'pending', agentProgress: [], toolCalls: [], processTimeline: [], processStartedAt: Date.now()
     }
     if (retryContext) messages.value[assistantIndex] = pending
     else {
@@ -976,9 +981,7 @@ async function submit(retryContext?: RetryTurnContext) {
       onMeta: (meta) => {
         const target = liveTarget()
         if (!target) return
-        target.reasoning = mergeReasoning(target.reasoning, meta.reasoning)
-        target.processStartedAt = processTimestamp(meta.processStartedAt) ?? target.processStartedAt
-        target.processCompletedAt = processTimestamp(meta.processCompletedAt) ?? target.processCompletedAt
+        applyProcessSnapshot(target, meta, turnId)
         target.sources = sanitizeChatSources(meta.sources)
         target.agentTrace = sanitizeAgentTrace(meta.agentTrace)
         target.toolResults = sanitizeToolResults(meta.toolResults)
@@ -1004,7 +1007,7 @@ async function submit(retryContext?: RetryTurnContext) {
       onReasoningDelta: (event) => {
         const target = liveTarget()
         if (!target) return
-        target.reasoning = appendReasoning(target.reasoning, event, turnId)
+        applyProcessReasoning(target, event, turnId)
         nextTick(() => {
           if (epoch !== conversationEpoch) return
           if (isNearBottom.value) scrollToBottom(false)
@@ -1014,8 +1017,8 @@ async function submit(retryContext?: RetryTurnContext) {
       onAgentStep: (event) => {
         const target = liveTarget()
         if (!target || event.turnId !== turnId) return
-        target.agentProgress = mergeAgentProgress(target.agentProgress, event, turnId)
-        const running = target.agentProgress.filter(item => item.status === 'running')
+        applyProcessAgent(target, event, turnId)
+        const running = (target.agentProgress || []).filter(item => item.status === 'running')
         target.statusText = running.length
           ? running.map(item => `${AGENT_STEPS[item.step]}中`).join(' · ')
           : '正在等待下一步进度…'
@@ -1033,6 +1036,16 @@ async function submit(retryContext?: RetryTurnContext) {
         target.processStartedAt = processTimestamp(status.processStartedAt) ?? target.processStartedAt
         target.processCompletedAt = processTimestamp(status.processCompletedAt) ?? target.processCompletedAt
         if (status.phase === 'COMPLETED' || status.phase === 'FAILED') settlePendingDebugState(target)
+      },
+      onToolCall: (event) => {
+        const target = liveTarget()
+        if (!target || event.turnId !== turnId) return
+        applyProcessTool(target, event, turnId)
+        nextTick(() => {
+          if (epoch !== conversationEpoch) return
+          if (isNearBottom.value) scrollToBottom(false)
+          else hasMessagesBelow.value = true
+        })
       },
       onImageBatchStarted: (batch) => { const target = liveTarget(); if (target && batch.turnId === turnId) applyImageBatchStarted(target, batch) },
       onImageItem: (item) => { const target = liveTarget(); if (target && item.turnId === turnId) applyImageItem(target, item) },
@@ -1313,6 +1326,8 @@ async function copyDebugPayload(message: Message, index: number) {
     memoryExclusions: message.memoryExclusions || {},
     agentTrace: message.agentTrace || [],
     agentProgress: message.agentProgress || [],
+    toolCalls: message.toolCalls || [],
+    processTimeline: message.processTimeline || [],
     toolResults: message.toolResults || [],
     sources: message.sources || [],
     projectContext: message.projectContext || {},
@@ -2533,6 +2548,8 @@ function escapeHtml(text: string) {
           <ChatThinkingProcess
             :key="message.turnId || message.id || index"
             :items="message.agentProgress || []"
+            :tool-calls="message.toolCalls || []"
+            :process-timeline="message.processTimeline"
             :reasoning="message.reasoning"
             :phase="message.phase"
             :active="isActiveTurnPhase(message.phase)"

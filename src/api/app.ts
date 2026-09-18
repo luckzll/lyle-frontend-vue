@@ -4,6 +4,8 @@ import type { MemoryFact } from './types'
 import { getAuthToken } from '@/auth'
 import { sanitizeAgentStep, type AgentStepEvent } from '@/domain/chat-progress'
 import { sanitizeReasoningDelta, type ChatReasoning, type ReasoningDelta } from '@/domain/chat-reasoning'
+import { sanitizeToolCall, type ChatToolCall } from '@/domain/chat-tool-calls'
+import type { ProcessTimelineEntry } from '@/domain/chat-process-timeline'
 import type { AttachmentFolderMetadata, ChatAttachment, ChatAttachmentKind } from '@/domain/chat-attachment'
 import type {
   AdminOverview,
@@ -78,6 +80,8 @@ import type {
 } from './types'
 
 export type StreamMeta = {
+  toolCalls?: ChatToolCall[]
+  processTimeline?: ProcessTimelineEntry[]
   agentProgress?: AgentStepEvent[]
   reasoning?: ChatReasoning
   processStartedAt?: number
@@ -110,6 +114,7 @@ export type SseHandlers = {
   onMeta?: (meta: StreamMeta) => void
   onTurnStatus?: (event: TurnStatusEvent) => void
   onAgentStep?: (event: AgentStepEvent) => void
+  onToolCall?: (event: ChatToolCall) => void
   onReasoningDelta?: (event: ReasoningDelta) => void
   onImageBatchStarted?: (event: ImageBatchStartedEvent) => void
   onImageItem?: (event: ImageItemEvent) => void
@@ -896,11 +901,18 @@ export function handleSseBlock(block: string, handlers: SseHandlers) {
       const step = sanitizeAgentStep(item)
       if (step) handlers.onAgentStep?.(step)
     }
+    for (const item of Array.isArray(data.toolCalls) ? data.toolCalls : []) {
+      const call = sanitizeToolCall(item)
+      if (call) handlers.onToolCall?.(call)
+    }
   } else if (event === 'turn.status') {
     handlers.onTurnStatus?.(data as TurnStatusEvent)
   } else if (event === 'agent.step') {
     const step = sanitizeAgentStep(data)
     if (step) handlers.onAgentStep?.(step)
+  } else if (event === 'tool.call') {
+    const call = sanitizeToolCall(data)
+    if (call) handlers.onToolCall?.(call)
   } else if (event === 'reasoning.delta') {
     const reasoning = sanitizeReasoningDelta(data)
     if (reasoning) handlers.onReasoningDelta?.(reasoning)

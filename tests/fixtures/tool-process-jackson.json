@@ -1,0 +1,189 @@
+{
+  "liveFrames" : [ "event: turn.status\ndata: {\"phase\":\"THINKING\",\"processStartedAt\":\"1789696574313\",\"message\":\"正在理解你的需求…\",\"turnId\":\"turn-tools\"}\n\n", "event: agent.step\ndata: {\"turnId\":\"turn-tools\",\"sequence\":\"100\",\"step\":\"tool_agent\",\"status\":\"running\"}\n\n", "event: reasoning.delta\ndata: {\"turnId\":\"turn-tools\",\"sequence\":\"1\",\"step\":\"writer_agent\",\"kind\":\"reasoning\",\"delta\":\"先检查需求\uD83D\uDE42。\"}\n\n", "event: tool.call\ndata: {\"turnId\":\"turn-tools\",\"sequence\":\"1\",\"callId\":\"first\",\"tool\":\"weather\",\"title\":\"查询天气\",\"status\":\"running\",\"summary\":\"天气工具执行状态\",\"durationMs\":20.0}\n\n", "event: reasoning.delta\ndata: {\"turnId\":\"turn-tools\",\"sequence\":\"2\",\"step\":\"writer_agent\",\"kind\":\"reasoning\",\"delta\":\"确认查询结果。\"}\n\n", "event: tool.call\ndata: {\"turnId\":\"turn-tools\",\"sequence\":\"2\",\"callId\":\"first\",\"tool\":\"weather\",\"title\":\"查询天气\",\"status\":\"completed\",\"summary\":\"天气工具执行状态\",\"durationMs\":20.0}\n\n", "event: tool.call\ndata: {\"turnId\":\"turn-tools\",\"sequence\":\"3\",\"callId\":\"second\",\"tool\":\"weather\",\"title\":\"查询天气\",\"status\":\"running\",\"summary\":\"天气工具执行状态\",\"durationMs\":20.0}\n\n", "event: reasoning.delta\ndata: {\"turnId\":\"turn-tools\",\"sequence\":\"3\",\"step\":\"writer_agent\",\"kind\":\"reasoning\",\"delta\":\"准备等待确认。\"}\n\n", "event: tool.call\ndata: {\"turnId\":\"turn-tools\",\"sequence\":\"4\",\"callId\":\"second\",\"tool\":\"weather\",\"title\":\"查询天气\",\"status\":\"awaiting_confirmation\",\"summary\":\"天气工具执行状态\",\"durationMs\":20.0}\n\n", "event: reasoning.delta\ndata: {\"turnId\":\"turn-tools\",\"sequence\":\"4\",\"step\":\"writer_agent\",\"kind\":\"reasoning\",\"delta\":\"将保留操作。\"}\n\n", "event: agent.step\ndata: {\"turnId\":\"turn-tools\",\"sequence\":\"101\",\"step\":\"tool_agent\",\"status\":\"completed\"}\n\n", "event: delta\ndata: {\"text\":\"已查询，请确认后续操作。\"}\n\n", "event: turn.status\ndata: {\"turnId\":\"turn-tools\",\"message\":\"正在回复…\",\"phase\":\"RESPONDING\"}\n\n", "event: meta\ndata: {}\n\n", "event: turn.status\ndata: {\"message\":\"回复完成\",\"turnId\":\"turn-tools\",\"processStartedAt\":\"1789696574313\",\"processCompletedAt\":\"1789696574327\",\"phase\":\"COMPLETED\"}\n\n", "event: done\ndata: {\"turnId\":\"turn-tools\"}\n\n" ],
+  "turnId" : "turn-tools",
+  "replayFrames" : [ "event: delta\ndata: {\"text\":\"已查询，请确认后续操作。\"}\n\n", "event: meta\ndata: {\"knowledgeBaseIds\":[],\"retrievalScope\":{},\"sources\":[],\"agentTrace\":[],\"agentProgress\":[{\"turnId\":\"turn-tools\",\"sequence\":\"101\",\"step\":\"tool_agent\",\"status\":\"completed\"}],\"reasoning\":{\"kind\":\"reasoning\",\"text\":\"先检查需求\uD83D\uDE42。确认查询结果。准备等待确认。将保留操作。\",\"sequence\":\"4\"},\"processStartedAt\":\"1789696574313\",\"processCompletedAt\":\"1789696574327\",\"toolResults\":[],\"review\":{},\"usage\":{\"promptTokens\":0,\"completionTokens\":0,\"callCount\":0,\"estimatedCostMicros\":\"0\",\"measurementSource\":\"PENDING\"},\"usedMemories\":[],\"memoryExclusions\":{\"conflicted\":0,\"sensitive\":0,\"governed\":0},\"memoryExplanationVersion\":\"v1\",\"debugTruncated\":false,\"debugCounts\":{\"agentTrace\":0,\"sources\":0,\"toolResults\":0,\"usedMemories\":0},\"toolCalls\":[{\"turnId\":\"turn-tools\",\"sequence\":\"2\",\"callId\":\"first\",\"tool\":\"weather\",\"title\":\"查询天气\",\"status\":\"completed\",\"summary\":\"天气工具执行状态\",\"durationMs\":20.0},{\"turnId\":\"turn-tools\",\"sequence\":\"4\",\"callId\":\"second\",\"tool\":\"weather\",\"title\":\"查询天气\",\"status\":\"awaiting_confirmation\",\"summary\":\"天气工具执行状态\",\"durationMs\":20.0}],\"processTimeline\":[{\"type\":\"agent\",\"id\":\"tool_agent\"},{\"type\":\"reasoning\",\"id\":\"r-1\",\"text\":\"先检查需求\uD83D\uDE42。\",\"kind\":\"reasoning\",\"sequence\":\"1\"},{\"type\":\"tool\",\"id\":\"first\"},{\"type\":\"reasoning\",\"id\":\"r-2\",\"text\":\"确认查询结果。\",\"kind\":\"reasoning\",\"sequence\":\"2\"},{\"type\":\"tool\",\"id\":\"second\"},{\"type\":\"reasoning\",\"id\":\"r-3\",\"text\":\"准备等待确认。将保留操作。\",\"kind\":\"reasoning\",\"sequence\":\"4\"}]}\n\n", "event: turn.status\ndata: {\"turnId\":\"turn-tools\",\"message\":\"回复完成\",\"phase\":\"COMPLETED\"}\n\n", "event: done\ndata: {\"turnId\":\"turn-tools\"}\n\n" ],
+  "historyMetadata" : {
+    "turnId" : "turn-tools",
+    "phase" : "COMPLETED",
+    "statusText" : "回复完成",
+    "knowledgeBaseIds" : [ ],
+    "retrievalScope" : { },
+    "sources" : [ ],
+    "agentTrace" : [ ],
+    "agentProgress" : [ {
+      "turnId" : "turn-tools",
+      "sequence" : "101",
+      "step" : "tool_agent",
+      "status" : "completed"
+    } ],
+    "reasoning" : {
+      "kind" : "reasoning",
+      "text" : "先检查需求\uD83D\uDE42。确认查询结果。准备等待确认。将保留操作。",
+      "sequence" : "4"
+    },
+    "processStartedAt" : "1789696574313",
+    "processCompletedAt" : "1789696574327",
+    "toolResults" : [ ],
+    "review" : { },
+    "usage" : {
+      "promptTokens" : 0,
+      "completionTokens" : 0,
+      "callCount" : 0,
+      "estimatedCostMicros" : "0",
+      "measurementSource" : "PENDING"
+    },
+    "usedMemories" : [ ],
+    "memoryExclusions" : {
+      "conflicted" : 0,
+      "sensitive" : 0,
+      "governed" : 0
+    },
+    "memoryExplanationVersion" : "v1",
+    "debugTruncated" : false,
+    "debugCounts" : {
+      "agentTrace" : 0,
+      "sources" : 0,
+      "toolResults" : 0,
+      "usedMemories" : 0
+    },
+    "toolCalls" : [ {
+      "turnId" : "turn-tools",
+      "sequence" : "2",
+      "callId" : "first",
+      "tool" : "weather",
+      "title" : "查询天气",
+      "status" : "completed",
+      "summary" : "天气工具执行状态",
+      "durationMs" : 20.0
+    }, {
+      "turnId" : "turn-tools",
+      "sequence" : "4",
+      "callId" : "second",
+      "tool" : "weather",
+      "title" : "查询天气",
+      "status" : "awaiting_confirmation",
+      "summary" : "天气工具执行状态",
+      "durationMs" : 20.0
+    } ],
+    "processTimeline" : [ {
+      "type" : "agent",
+      "id" : "tool_agent"
+    }, {
+      "type" : "reasoning",
+      "id" : "r-1",
+      "text" : "先检查需求\uD83D\uDE42。",
+      "kind" : "reasoning",
+      "sequence" : "1"
+    }, {
+      "type" : "tool",
+      "id" : "first"
+    }, {
+      "type" : "reasoning",
+      "id" : "r-2",
+      "text" : "确认查询结果。",
+      "kind" : "reasoning",
+      "sequence" : "2"
+    }, {
+      "type" : "tool",
+      "id" : "second"
+    }, {
+      "type" : "reasoning",
+      "id" : "r-3",
+      "text" : "准备等待确认。将保留操作。",
+      "kind" : "reasoning",
+      "sequence" : "4"
+    } ]
+  },
+  "storedMetadata" : {
+    "turnId" : "turn-tools",
+    "phase" : "COMPLETED",
+    "statusText" : "回复完成",
+    "processStartedAt" : "1789696574313",
+    "knowledgeBaseIds" : [ ],
+    "retrievalScope" : { },
+    "sources" : [ ],
+    "agentTrace" : [ ],
+    "toolResults" : [ ],
+    "review" : { },
+    "usage" : {
+      "promptTokens" : 0,
+      "completionTokens" : 0,
+      "callCount" : 0,
+      "estimatedCostMicros" : "0",
+      "measurementSource" : "PENDING"
+    },
+    "usedMemories" : [ ],
+    "memoryExclusions" : {
+      "conflicted" : 0,
+      "sensitive" : 0,
+      "governed" : 0
+    },
+    "memoryExplanationVersion" : "v1",
+    "debugTruncated" : false,
+    "debugCounts" : {
+      "agentTrace" : 0,
+      "sources" : 0,
+      "toolResults" : 0,
+      "usedMemories" : 0
+    },
+    "agentProgress" : [ {
+      "turnId" : "turn-tools",
+      "sequence" : "101",
+      "step" : "tool_agent",
+      "status" : "completed"
+    } ],
+    "processTimeline" : [ {
+      "type" : "agent",
+      "id" : "tool_agent"
+    }, {
+      "type" : "reasoning",
+      "id" : "r-1",
+      "text" : "先检查需求\uD83D\uDE42。",
+      "kind" : "reasoning",
+      "sequence" : "1"
+    }, {
+      "type" : "tool",
+      "id" : "first"
+    }, {
+      "type" : "reasoning",
+      "id" : "r-2",
+      "text" : "确认查询结果。",
+      "kind" : "reasoning",
+      "sequence" : "2"
+    }, {
+      "type" : "tool",
+      "id" : "second"
+    }, {
+      "type" : "reasoning",
+      "id" : "r-3",
+      "text" : "准备等待确认。将保留操作。",
+      "kind" : "reasoning",
+      "sequence" : "4"
+    } ],
+    "reasoning" : {
+      "kind" : "reasoning",
+      "text" : "先检查需求\uD83D\uDE42。确认查询结果。准备等待确认。将保留操作。",
+      "sequence" : "4"
+    },
+    "toolCalls" : [ {
+      "turnId" : "turn-tools",
+      "sequence" : "2",
+      "callId" : "first",
+      "tool" : "weather",
+      "title" : "查询天气",
+      "status" : "completed",
+      "summary" : "天气工具执行状态",
+      "durationMs" : 20.0
+    }, {
+      "turnId" : "turn-tools",
+      "sequence" : "4",
+      "callId" : "second",
+      "tool" : "weather",
+      "title" : "查询天气",
+      "status" : "awaiting_confirmation",
+      "summary" : "天气工具执行状态",
+      "durationMs" : 20.0
+    } ],
+    "processCompletedAt" : "1789696574327"
+  }
+}

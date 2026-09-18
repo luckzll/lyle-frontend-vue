@@ -2,6 +2,8 @@ import type { ChatMessage } from '@/api/types'
 import { historyMessage, isActiveTurnPhase, type RecoveredChatMessage } from './chat-history'
 import { mergeAgentProgress } from './chat-progress'
 import { mergeReasoning } from './chat-reasoning'
+import { mergeToolCalls } from './chat-tool-calls'
+import { mergeProcessTimeline } from './chat-process-timeline'
 
 export type ChatRecoveryState = 'checking' | 'polling' | 'unconfirmed'
 export type RecoverableMessage = RecoveredChatMessage & { recoveryState?: ChatRecoveryState }
@@ -17,9 +19,12 @@ export function reconcileChatTurn(local: RecoverableMessage, history: ChatMessag
   const stored = history.find((item) => item.role === 'assistant' && (item.turnId || item.metadata?.turnId) === local.turnId)
   if (!stored) return { ...local, recoveryState: 'unconfirmed' }
   const recovered = historyMessage(stored)
+  const agentProgress = mergeAgentProgress(local.agentProgress, recovered.agentProgress, local.turnId)
+  const toolCalls = mergeToolCalls(local.toolCalls, recovered.toolCalls, local.turnId)
+  const processTimeline = mergeProcessTimeline(local.processTimeline, recovered.processTimeline, agentProgress, toolCalls)
   if (recovered.phase === 'COMPLETED' || recovered.phase === 'FAILED') return {
     ...local, ...recovered,
-    agentProgress: mergeAgentProgress(local.agentProgress, recovered.agentProgress, local.turnId),
+    agentProgress, toolCalls, processTimeline,
     reasoning: mergeReasoning(local.reasoning, recovered.reasoning),
     processStartedAt: recovered.processStartedAt ?? local.processStartedAt,
     processCompletedAt: recovered.processCompletedAt ?? local.processCompletedAt,
@@ -31,7 +36,7 @@ export function reconcileChatTurn(local: RecoverableMessage, history: ChatMessag
     ...recovered,
     // Persistence may trail the last received delta. Do not erase visible output during polling.
     content: recovered.content.length >= local.content.length ? recovered.content : local.content,
-    agentProgress: mergeAgentProgress(local.agentProgress, recovered.agentProgress, local.turnId),
+    agentProgress, toolCalls, processTimeline,
     reasoning: mergeReasoning(local.reasoning, recovered.reasoning),
     processStartedAt: recovered.processStartedAt ?? local.processStartedAt,
     processCompletedAt: recovered.processCompletedAt ?? local.processCompletedAt,

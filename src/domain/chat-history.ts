@@ -13,6 +13,8 @@ import type {
 import type { ChatAttachment } from '@/domain/chat-attachment'
 import { mergeAgentProgress, type AgentStepEvent } from '@/domain/chat-progress'
 import { sanitizeReasoning, processTimestamp, type ChatReasoning } from '@/domain/chat-reasoning'
+import { mergeToolCalls, type ChatToolCall } from '@/domain/chat-tool-calls'
+import { sanitizeProcessTimeline, type ProcessTimelineEntry } from '@/domain/chat-process-timeline'
 import {
   sanitizeAgentTrace,
   sanitizeChatSources,
@@ -53,6 +55,8 @@ export type RecoveredChatMessage = {
   sources?: ChatSource[]
   agentTrace?: AgentTraceItem[]
   agentProgress?: AgentStepEvent[]
+  toolCalls?: ChatToolCall[]
+  processTimeline?: ProcessTimelineEntry[]
   reasoning?: ChatReasoning
   processStartedAt?: number
   processCompletedAt?: number
@@ -75,6 +79,8 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
   const turnId = item.turnId || (typeof metadata.turnId === 'string' ? metadata.turnId : undefined)
   const debugVersion = sanitizeDebugVersion(metadata.debugVersion)
   const resolvedDebugDataState = resolveChatDebugDataState(metadata.debugVersion)
+  const agentProgress = mergeAgentProgress([], metadata.agentProgress, turnId)
+  const toolCalls = item.role === 'assistant' ? mergeToolCalls([], metadata.toolCalls, turnId) : []
   const debugDataState = item.role === 'assistant'
     ? isActiveTurnPhase(phase) && resolvedDebugDataState === 'legacy'
       ? 'pending'
@@ -94,7 +100,9 @@ export function historyMessage(item: ChatMessage): RecoveredChatMessage {
     usage: historyUsage(metadata.usage),
     sources: sanitizeChatSources(metadata.sources),
     agentTrace: sanitizeAgentTrace(metadata.agentTrace),
-    agentProgress: mergeAgentProgress([], metadata.agentProgress, turnId),
+    agentProgress,
+    toolCalls,
+    processTimeline: item.role === 'assistant' ? sanitizeProcessTimeline(metadata.processTimeline, agentProgress, toolCalls) : undefined,
     reasoning: item.role === 'assistant' ? sanitizeReasoning(metadata.reasoning) : undefined,
     processStartedAt: processTimestamp(metadata.processStartedAt),
     processCompletedAt: processTimestamp(metadata.processCompletedAt),
