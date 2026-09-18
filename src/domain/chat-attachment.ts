@@ -53,10 +53,33 @@ export interface ChatAttachmentDraft {
 
 export const CHAT_ATTACHMENT_LIMITS = {
   maxCount: 8,
+  maxProjectCount: 200,
+  maxImages: 8,
   maxFileBytes: 5 * 1024 * 1024,
   maxTotalBytes: 20 * 1024 * 1024,
   uploadConcurrency: 3
 } as const
+
+export const CHAT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const
+export const CHAT_FILE_EXTENSIONS = ['pdf', 'docx', 'txt', 'md', 'csv', 'json', 'log', 'xlsx',
+  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'vue', 'svelte', 'py', 'java', 'kt', 'kts', 'go', 'rs',
+  'c', 'h', 'cpp', 'hpp', 'cs', 'php', 'rb', 'swift', 'sh', 'bash', 'zsh', 'ps1', 'sql', 'yaml',
+  'yml', 'toml', 'ini', 'cfg', 'xml', 'html', 'htm', 'css', 'scss', 'sass', 'less', 'graphql',
+  'gql', 'proto', 'properties', 'gradle', 'scala', 'r', 'dart', 'ipynb'] as const
+export const CHAT_EXACT_FILENAMES = ['Dockerfile', 'Makefile', 'Containerfile', 'Jenkinsfile', 'Procfile',
+  'README', 'LICENSE', '.gitignore', '.dockerignore', '.editorconfig'] as const
+export const ALLOWED_PROJECT_DOTFILES = new Set<string>(['.gitignore', '.dockerignore', '.editorconfig'])
+export const CHAT_FILE_ACCEPT = [...CHAT_IMAGE_TYPES, ...CHAT_FILE_EXTENSIONS.map(extension => `.${extension}`)].join(',')
+
+export function isChatImage(file: Pick<File, 'name'>) {
+  return /\.(?:jpg|jpeg|png|webp|gif)$/i.test(file.name)
+}
+
+export function isSupportedChatFile(file: Pick<File, 'name' | 'type'>) {
+  if (file.name.startsWith('.') && !ALLOWED_PROJECT_DOTFILES.has(file.name)) return false
+  return isChatImage(file) || (CHAT_EXACT_FILENAMES as readonly string[]).includes(file.name)
+    || (CHAT_FILE_EXTENSIONS as readonly string[]).includes(file.name.split('.').pop()?.toLowerCase() || '')
+}
 
 export function attachmentContentUrl(value?: string) {
   if (!value) return ''

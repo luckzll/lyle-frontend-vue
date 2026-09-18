@@ -80,6 +80,8 @@ import type {
 } from './types'
 
 export type StreamMeta = {
+  attachmentContextInherited?: boolean
+  attachmentContextSourceMessageId?: string
   toolCalls?: ChatToolCall[]
   processTimeline?: ProcessTimelineEntry[]
   agentProgress?: AgentStepEvent[]

@@ -4,6 +4,7 @@ import { Download, FileText } from '@lucide/vue'
 import FolderAttachmentGroup from './FolderAttachmentGroup.vue'
 import type { ChatAttachment } from '@/domain/chat-attachment'
 import { attachmentContentUrl } from '@/domain/chat-attachment'
+import { attachmentTreeFiles } from '@/domain/attachment-tree'
 import { getAuthToken } from '@/auth'
 
 const props = defineProps<{ attachments: ChatAttachment[] }>()
@@ -44,6 +45,7 @@ async function download(attachment: ChatAttachment) {
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = attachment.name; anchor.click()
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
+function downloadById(id: string) { const attachment = props.attachments.find(item => item.id === id); if (attachment) void download(attachment) }
 onMounted(async () => {
   for (const attachment of props.attachments) {
     if (attachment.kind !== 'image' || !attachment.previewUrl) continue
@@ -63,14 +65,7 @@ onBeforeUnmount(() => Object.values(previewUrls.value).forEach((url) => URL.revo
         <span v-if="block.attachment.kind === 'file'" class="file-meta"><strong>{{ block.attachment.name }}</strong><small>{{ block.attachment.mimeType }} · {{ formatBytes(block.attachment.size) }}</small></span>
         <Download v-if="block.attachment.kind === 'file'" :size="16" aria-hidden="true" />
       </button>
-      <FolderAttachmentGroup v-else :name="block.name" :count="block.items.length">
-        <button v-for="attachment in block.items" :key="attachment.id" class="message-attachment folder-file" :class="attachment.kind" type="button" @click="download(attachment)">
-          <img v-if="attachment.kind === 'image' && previewUrls[attachment.id]" :src="previewUrls[attachment.id]" :alt="attachment.name" loading="lazy" />
-          <span v-else class="file-icon"><FileText :size="22" aria-hidden="true" /></span>
-          <span class="file-meta"><strong>{{ attachment.name }}</strong><small>{{ attachment.relativePath || attachment.mimeType }} · {{ formatBytes(attachment.size) }}</small></span>
-          <Download :size="16" aria-hidden="true" />
-        </button>
-      </FolderAttachmentGroup>
+      <FolderAttachmentGroup v-else :name="block.name" :items="attachmentTreeFiles(block.items)" readonly @download="downloadById" />
     </template>
   </div>
 </template>

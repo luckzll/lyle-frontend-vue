@@ -454,9 +454,11 @@ test('folder picker uploads stable relative paths and renders a grouped draft', 
   })
 
   await expect(page.locator('.folder-attachment-group')).toContainText('资料')
-  await expect(page.locator('.folder-attachment-group .attachment-card')).toHaveCount(2)
-  await expect(page.locator('.folder-attachment-group .attachment-card').nth(0)).toContainText('2.txt')
-  await expect(page.locator('.folder-attachment-group .attachment-card').nth(1)).toContainText('10.txt')
+  await expect(page.locator('.folder-attachment-group .project-toggle')).toHaveAttribute('aria-expanded', 'false')
+  await page.locator('.folder-attachment-group .project-toggle').click()
+  await expect(page.locator('.folder-attachment-group .tree-file')).toHaveCount(2)
+  await expect(page.locator('.folder-attachment-group .tree-file').nth(0)).toContainText('2.txt')
+  await expect(page.locator('.folder-attachment-group .tree-file').nth(1)).toContainText('10.txt')
   expect(multipartBodies).toHaveLength(2)
   expect(multipartBodies.every((body) => body.includes('folder_picker') && body.includes('资料/'))).toBe(true)
   expect(multipartBodies.some((body) => body.includes('/Users/') || body.includes('C:\\'))).toBe(false)
@@ -494,7 +496,7 @@ test('nested folder drop preserves top-level file and folder delivery order', as
       isFile: true,
       isDirectory: false,
       name,
-      file: (success) => success(new File([name], name, { type: 'text/plain' }))
+      file: (success) => { queueMicrotask(() => success(new File([name], name, { type: 'text/plain' }))) }
     })
     const directory = (name: string, children: Entry[]): Entry => ({
       isFile: false,
@@ -522,10 +524,13 @@ test('nested folder drop preserves top-level file and folder delivery order', as
     dispatch('drop')
   })
 
-  await expect(page.locator('.attachment-card').filter({ hasText: '已就绪' })).toHaveCount(4)
+  await expect(page.locator('.attachment-card').filter({ hasText: '已就绪' })).toHaveCount(2)
   await expect(page.locator('.folder-attachment-group')).toContainText('资料')
-  await expect(page.locator('.folder-attachment-group .attachment-card').nth(0)).toContainText('2.txt')
-  await expect(page.locator('.folder-attachment-group .attachment-card').nth(1)).toContainText('10.txt')
+  await expect(page.locator('.folder-attachment-group')).toContainText('已就绪 2/2')
+  await page.locator('.folder-attachment-group .project-toggle').click()
+  await page.locator('.folder-attachment-group .tree-folder > summary').click()
+  await expect(page.locator('.folder-attachment-group .tree-file').nth(0)).toContainText('2.txt')
+  await expect(page.locator('.folder-attachment-group .tree-file').nth(1)).toContainText('10.txt')
   const topLevelText = await page.locator('.attachment-tray').locator(':scope > *').allTextContents()
   expect(topLevelText[0]).toContain('before.txt')
   expect(topLevelText[1]).toContain('资料')

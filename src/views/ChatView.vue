@@ -45,6 +45,7 @@ import { useWorkspaceStore, type WorkspaceProjectContext } from '@/stores/worksp
 import { isConversationNearBottom } from '@/domain/chat-scroll'
 import {
   historyMessage,
+  attachmentContextMetadata,
   isActiveTurnPhase,
   resolveLiveChatDebugDataState,
   resolveTerminalChatDebugDataState,
@@ -115,6 +116,8 @@ interface Message {
     previewUrl?: string
   }>
   attachments?: ChatAttachment[]
+  attachmentContextInherited?: boolean
+  attachmentContextSourceMessageId?: string
   turnId?: string
   phase?: TurnStatusEvent['phase']
   statusText?: string
@@ -247,6 +250,7 @@ const {
   addFiles: addAttachmentFiles,
   retry: retryAttachment,
   remove: removeAttachment,
+  removeGroup: removeAttachmentGroup,
   commitReady: commitReadyAttachments,
   reset: resetAttachments
 } = useChatAttachments({
@@ -981,6 +985,7 @@ async function submit(retryContext?: RetryTurnContext) {
       onMeta: (meta) => {
         const target = liveTarget()
         if (!target) return
+        if (typeof meta.attachmentContextInherited === 'boolean') Object.assign(target, attachmentContextMetadata(meta))
         applyProcessSnapshot(target, meta, turnId)
         target.sources = sanitizeChatSources(meta.sources)
         target.agentTrace = sanitizeAgentTrace(meta.agentTrace)
@@ -2545,6 +2550,7 @@ function escapeHtml(text: string) {
         </template>
 
         <template v-else>
+          <p v-if="message.attachmentContextInherited" class="attachment-context-note">沿用本会话已上传的文件</p>
           <ChatThinkingProcess
             :key="message.turnId || message.id || index"
             :items="message.agentProgress || []"
@@ -3295,6 +3301,7 @@ function escapeHtml(text: string) {
       @stop="cancelStreaming"
       @files="handleAttachmentFiles"
       @remove="removeAttachment"
+      @remove-group="removeAttachmentGroup"
       @retry="retryAttachment"
       @dismiss-hint="dismissAttachmentHint"
     />
@@ -3303,6 +3310,7 @@ function escapeHtml(text: string) {
 </template>
 
 <style scoped>
+.attachment-context-note { margin: 0 0 10px; color: var(--muted-foreground); font-size: 11px; line-height: 1.6; }
 .page {
   --chat-content-width: 920px;
 }

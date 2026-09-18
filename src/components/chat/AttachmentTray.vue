@@ -2,10 +2,13 @@
 import { computed } from 'vue'
 import AttachmentCard from './AttachmentCard.vue'
 import FolderAttachmentGroup from './FolderAttachmentGroup.vue'
+import AttachmentSkipSummary from './AttachmentSkipSummary.vue'
 import type { ChatAttachmentDraft } from '@/domain/chat-attachment'
+import { attachmentTreeFiles } from '@/domain/attachment-tree'
+import type { DirectorySkip } from '@/domain/directory-entry'
 
-const props = defineProps<{ attachments: ChatAttachmentDraft[] }>()
-defineEmits<{ remove: [localId: string]; retry: [localId: string] }>()
+const props = defineProps<{ attachments: ChatAttachmentDraft[]; skipped?: DirectorySkip[] }>()
+defineEmits<{ remove: [localId: string]; removeGroup: [id: string]; retry: [localId: string] }>()
 
 type AttachmentBlock =
   | { kind: 'attachment'; key: string; attachment: ChatAttachmentDraft }
@@ -28,17 +31,20 @@ const blocks = computed<AttachmentBlock[]>(() => {
     return [{ kind: 'folder', key: `folder-${attachment.folderGroupId}`, id: attachment.folderGroupId, name: items[0]?.folderRoot || '文件夹', items }]
   })
 })
+function groupSkips(name: string) { return (props.skipped || []).filter(item => item.relativePath === name || item.relativePath?.startsWith(`${name}/`)) }
+const looseSkips = computed(() => (props.skipped || []).filter(item => !blocks.value.some(block => block.kind === 'folder'
+  && (item.relativePath === block.name || item.relativePath?.startsWith(`${block.name}/`)))))
 </script>
 
 <template>
   <div v-if="attachments.length" class="attachment-tray" aria-label="待发送附件">
     <template v-for="block in blocks" :key="block.key">
       <AttachmentCard v-if="block.kind === 'attachment'" :attachment="block.attachment" @remove="$emit('remove', block.attachment.localId)" @retry="$emit('retry', block.attachment.localId)" />
-      <FolderAttachmentGroup v-else :name="block.name" :count="block.items.length" open>
-        <AttachmentCard v-for="attachment in block.items" :key="attachment.localId" :attachment="attachment" @remove="$emit('remove', attachment.localId)" @retry="$emit('retry', attachment.localId)" />
-      </FolderAttachmentGroup>
+      <FolderAttachmentGroup v-else :name="block.name" :items="attachmentTreeFiles(block.items)" :skipped="groupSkips(block.name)"
+        @remove="$emit('remove', $event)" @retry="$emit('retry', $event)" @remove-group="$emit('removeGroup', block.id)" />
     </template>
   </div>
+  <AttachmentSkipSummary :skipped="looseSkips" />
 </template>
 
 <style scoped>
