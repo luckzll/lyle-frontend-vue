@@ -31,6 +31,7 @@ const emit = defineEmits<{
   dismissHint: []
   'update:chatModelId': [value: ChatModelId]
   'open-context': []
+  'local-project': []
 }>()
 
 const root = ref<HTMLElement | null>(null)
@@ -91,7 +92,8 @@ function choose(command: 'image' | 'file' | 'folder') {
   attachmentOpen.value = false
   slashDismissed.value = true
   emit('update:modelValue', props.modelValue.replace(/^\s*\/[\p{L}]*$/u, ''))
-  const input = command === 'image' ? imageInput.value : command === 'folder' ? folderInput.value : fileInput.value
+  if (command === 'folder') { emit('local-project'); return }
+  const input = command === 'image' ? imageInput.value : fileInput.value
   input?.click()
 }
 

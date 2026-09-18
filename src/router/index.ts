@@ -20,6 +20,11 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
+      path: '/local-project', name: 'local-project',
+      component: () => import('@/views/LocalWorkspaceView.vue'),
+      meta: { title: '本地项目', navGroup: 'start', requiresAuth: true, requiresAdmin: false, layout: 'default' }
+    },
+    {
       path: '/login',
       name: 'login',
       component: () => import('@/views/LoginView.vue'),

@@ -63,6 +63,7 @@ import type { ChatAttachment } from '@/domain/chat-attachment'
 import { useChatAttachments } from '@/composables/useChatAttachments'
 import { scanDataTransfer, scanFlatFiles, scanPickerFiles } from '@/composables/useDirectoryEntries'
 import { useWorkspaceDrop } from '@/composables/useWorkspaceDrop'
+import { stageLocalDrop } from '@/domain/local-workspace'
 import { useRuntimeFeatures } from '@/composables/useRuntimeFeatures'
 import type { DirectorySkip } from '@/domain/directory-entry'
 import { formatEstimatedCost, formatTokens, measurementLabel } from '@/domain/usage'
@@ -260,6 +261,10 @@ const {
 const attachmentHintDismissed = ref(window.localStorage.getItem('lyle.chat.attachment-hint-dismissed') === '1')
 const showAttachmentHint = computed(() => !attachmentHintDismissed.value && !hasUserMessages.value)
 const dropController = useWorkspaceDrop(async (dataTransfer, signal) => {
+  if (stageLocalDrop(dataTransfer)) {
+    await router.push('/local-project')
+    return
+  }
   const startedAt = performance.now()
   const result = runtimeFeatures.chatFolderAttachmentsEnabled
     ? await scanDataTransfer(dataTransfer, signal)
@@ -2462,6 +2467,7 @@ function escapeHtml(text: string) {
         </p>
       </div>
       <div class="row toolbar-controls">
+        <button class="secondary" type="button" @click="router.push('/local-project')">连接本地项目</button>
         <div v-if="debugControlsEnabled" class="debug-controls">
           <label class="debug-toggle">
             <input v-model="showDebug" type="checkbox" />
@@ -3283,6 +3289,7 @@ function escapeHtml(text: string) {
     </button>
 
     <ChatComposer
+      @local-project="router.push('/local-project')"
       ref="composerRef"
       class="chat-input"
       v-model="input"
