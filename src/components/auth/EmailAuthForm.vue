@@ -170,7 +170,7 @@ async function submit() {
 .email-auth { color: #0f172a; }
 .email-auth form { display: grid; gap: 26px; }
 .login-methods { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; margin-bottom: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f1f5f9; }
-.login-methods button { min-height: 42px; border: 0; border-radius: 8px; background: transparent; color: #64748b; font-size: 15px; font-weight: 600; box-shadow: none; }
+.login-methods button { min-height: 42px; border: 0; border-radius: 8px; background: transparent; color: #475569; font-size: 15px; font-weight: 600; box-shadow: none; }
 .login-methods button.active { background: #fff; color: #4f46e5; box-shadow: 0 1px 3px #0f172a12; }
 .password-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .password-link { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 4px; padding: 0; color: #4f46e5; background: transparent; font-size: 13px; line-height: 1.6; box-shadow: none; }
