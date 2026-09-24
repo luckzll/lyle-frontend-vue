@@ -22,7 +22,7 @@ const router = createRouter({
     {
       path: '/local-project', name: 'local-project',
       component: () => import('@/views/LocalWorkspaceView.vue'),
-      meta: { title: '本地项目', navGroup: 'start', requiresAuth: true, requiresAdmin: false, layout: 'default' }
+      meta: { title: '项目', navGroup: 'start', requiresAuth: true, requiresAdmin: false, layout: 'default' }
     },
     {
       path: '/login',
@@ -93,7 +93,7 @@ const router = createRouter({
       name: 'conversations',
       component: () => import('@/views/ConversationView.vue'),
       meta: {
-        title: '会话',
+        title: '聊天记录',
         navGroup: 'knowledge',
         icon: 'messages-square',
         requiresAuth: true,
@@ -343,7 +343,7 @@ const router = createRouter({
       name: 'projects',
       component: () => import('@/views/ProjectView.vue'),
       meta: {
-        title: '项目',
+        title: '任务 · 项目计划',
         navGroup: 'progress',
         icon: 'folder-kanban',
         requiresAuth: true,
@@ -356,7 +356,7 @@ const router = createRouter({
       name: 'project-detail',
       component: () => import('@/views/ProjectView.vue'),
       meta: {
-        title: '项目详情',
+        title: '任务 · 项目计划',
         navGroup: 'progress',
         icon: 'folder-kanban',
         requiresAuth: true,

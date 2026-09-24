@@ -115,13 +115,13 @@ function button(label: string, container = root) {
 function dialog(title: string) { return nodes(root).find(item => item.props.role === 'dialog' && item.props['aria-label'] === title) }
 function rowTitles() { return nodes(root).filter(item => item.tag === 'h3').map(text) }
 async function openCreator(title: string) {
-  await button('新建会话').props.onClick({ currentTarget: null })
-  const input = nodes(dialog('新建会话')!).find(item => item.tag === 'input')!
+  await button('新建对话').props.onClick({ currentTarget: null })
+  const input = nodes(dialog('新建对话')!).find(item => item.tag === 'input')!
   input.props['onUpdate:modelValue'](title)
   await settle()
 }
 async function submitCreator() {
-  nodes(dialog('新建会话')!).find(item => item.tag === 'form')!.props.onSubmit({ preventDefault() {} })
+  nodes(dialog('新建对话')!).find(item => item.tag === 'form')!.props.onSubmit({ preventDefault() {} })
   await settle()
 }
 const conversation = (id: string, title: string) => ({ id, title, createdAt: '2026-09-11T00:00:00Z', updatedAt: '2026-09-11T00:00:00Z' })
@@ -141,7 +141,7 @@ describe('conversation state recovery', () => {
     api.list.mockRejectedValue(new Error('历史会话读取失败'))
     mount()
     await settle()
-    expect(text(root)).toContain('会话暂时无法加载')
+    expect(text(root)).toContain('对话暂时无法加载')
     expect(text(root)).not.toContain('把想法留下')
 
     await openCreator(created.title)
@@ -149,15 +149,15 @@ describe('conversation state recovery', () => {
     expect(api.create).toHaveBeenCalledWith(created.title)
     expect(api.list).toHaveBeenCalledTimes(2)
     expect(rowTitles()).toContain(created.title)
-    expect(text(root)).toContain('会话列表未完整加载')
+    expect(text(root)).toContain('对话列表未完整加载')
     expect(text(root)).toContain('历史会话读取失败')
-    expect(dialog('新建会话')).toBeUndefined()
+    expect(dialog('新建对话')).toBeUndefined()
 
     api.list.mockResolvedValue({ data: [existing, created] })
-    await button('刷新会话').props.onClick()
+    await button('刷新聊天记录').props.onClick()
     await settle()
     expect(rowTitles()).toEqual(expect.arrayContaining([existing.title, created.title]))
-    expect(text(root)).not.toContain('会话列表未完整加载')
+    expect(text(root)).not.toContain('对话列表未完整加载')
   })
 
   it('does not allow an older list response to erase a successfully created conversation', async () => {
@@ -165,7 +165,7 @@ describe('conversation state recovery', () => {
     await settle()
     let finishOldRead!: (value: { data: typeof existing[] }) => void
     api.list.mockImplementationOnce(() => new Promise(resolve => { finishOldRead = resolve }))
-    button('刷新会话').props.onClick()
+    button('刷新聊天记录').props.onClick()
     await settle()
 
     await openCreator(created.title)
@@ -175,7 +175,7 @@ describe('conversation state recovery', () => {
     await settle()
     expect(rowTitles()).toEqual(expect.arrayContaining([existing.title, created.title]))
     expect(api.list).toHaveBeenCalledTimes(2)
-    expect(button('刷新会话').props.disabled).toBe(false)
+    expect(button('刷新聊天记录').props.disabled).toBe(false)
   })
 
   it('retains the delete target and inline failure so retry deletes the same conversation', async () => {
@@ -183,12 +183,12 @@ describe('conversation state recovery', () => {
     api.remove.mockRejectedValueOnce(new Error('删除请求暂时失败'))
     mount()
     await settle()
-    button('删除会话：' + existing.title).props.onClick()
+    button('删除对话：' + existing.title).props.onClick()
     await settle()
-    button('确认删除', dialog('删除会话')!).props.onClick()
+    button('确认删除', dialog('删除对话')!).props.onClick()
     await settle()
 
-    const confirmation = dialog('删除会话')!
+    const confirmation = dialog('删除对话')!
     expect(confirmation).toBeDefined()
     expect(text(confirmation)).toContain(existing.title)
     expect(text(confirmation)).toContain('删除请求暂时失败')
@@ -198,9 +198,9 @@ describe('conversation state recovery', () => {
     button('确认删除', confirmation).props.onClick()
     await settle()
     expect(api.remove.mock.calls).toEqual([[existing.id], [existing.id]])
-    expect(dialog('删除会话')).toBeUndefined()
+    expect(dialog('删除对话')).toBeUndefined()
     expect(rowTitles()).toEqual([created.title])
-    expect(text(root)).toContain('会话已删除。')
+    expect(text(root)).toContain('对话已删除。')
   })
 
   it('keeps a failed creation draft in the drawer and allows retry without retyping', async () => {
@@ -209,14 +209,14 @@ describe('conversation state recovery', () => {
     await settle()
     await openCreator(created.title)
     await submitCreator()
-    expect(dialog('新建会话')).toBeDefined()
-    expect(text(dialog('新建会话')!)).toContain('创建暂时失败')
+    expect(dialog('新建对话')).toBeDefined()
+    expect(text(dialog('新建对话')!)).toContain('创建暂时失败')
     expect(rowTitles()).toEqual([existing.title])
-    expect(button('创建会话', dialog('新建会话')!).props.disabled).toBe(false)
+    expect(button('创建对话', dialog('新建对话')!).props.disabled).toBe(false)
 
     await submitCreator()
     expect(api.create.mock.calls).toEqual([[created.title], [created.title]])
-    expect(dialog('新建会话')).toBeUndefined()
+    expect(dialog('新建对话')).toBeUndefined()
     expect(rowTitles()).toContain(created.title)
   })
 })

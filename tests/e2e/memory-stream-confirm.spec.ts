@@ -14,7 +14,7 @@ test('streamed explicit memory becomes a confirmable candidate with profile evid
   await page.getByTestId('password-input').fill('123456')
   await page.getByTestId('auth-submit').click()
   await expect(page).toHaveURL('/dashboard')
-  await page.getByRole('link', { name: '聊天', exact: true }).click()
+  await page.getByRole('button', { name: '新建聊天', exact: true }).click()
 
   await page.getByTestId('chat-input').fill('请记住：我不喜欢帽子。')
   await page.getByTestId('chat-submit').click()
@@ -50,15 +50,14 @@ test('streamed explicit memory becomes a confirmable candidate with profile evid
   await page.getByTestId('manual-todo-submit').click()
   await expect(page.locator('.task-row').filter({ hasText: todoTitle })).toBeVisible()
 
-  await page.getByRole('link', { name: '聊天', exact: true }).click()
-  await page.getByRole('button', { name: '新建', exact: true }).click()
+  await page.getByRole('button', { name: '新建聊天', exact: true }).click()
   await page.getByTestId('chat-input').fill(`创建日历：明天下午三点${operationTitle}`)
   await page.getByTestId('chat-submit').click()
   const rejectButton = page.getByTestId('chat-operation-reject').first()
   await expect(rejectButton).toBeVisible()
   await rejectButton.click()
 
-  await page.getByRole('button', { name: '新建', exact: true }).click()
+  await page.getByRole('button', { name: '新对话', exact: true }).click()
   await page.getByTestId('chat-input').fill('你记得我什么？')
   await page.getByTestId('chat-submit').click()
   const recalledAnswer = page.locator('.message.assistant').last()

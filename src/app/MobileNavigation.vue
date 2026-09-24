@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { X } from '@lucide/vue'
+import { ChevronDown, X } from '@lucide/vue'
 import type { User } from '@/api/types'
 import AccountMenu from '@/components/layout/AccountMenu.vue'
+import WorkspaceNavigation from './WorkspaceNavigation.vue'
 import {
   getNavigationBadge,
   getNavigationBadgeLabel,
   getVisibleNavigationGroups,
   isNavigationItemActive,
+  type NavigationGroup,
+  type NavigationGroupId,
   type NavigationItem
 } from './navigation'
 import { useRoute } from 'vue-router'
@@ -28,6 +31,12 @@ const emit = defineEmits<{
 const route = useRoute()
 const drawer = ref<HTMLElement | null>(null)
 const visibleGroups = computed(() => getVisibleNavigationGroups(props.user?.role === 'ADMIN', props.user?.id))
+
+const groupOverrides = ref<Partial<Record<NavigationGroupId, boolean>>>({})
+function isGroupExpanded(group: NavigationGroup) {
+  return groupOverrides.value[group.id] ?? (group.id === 'start' || group.id === 'progress' || group.items.some(isActive))
+}
+function toggleGroup(group: NavigationGroup) { groupOverrides.value[group.id] = !isGroupExpanded(group) }
 
 let previouslyFocusedElement: HTMLElement | null = null
 let previousBodyOverflow = ''
@@ -61,7 +70,7 @@ function focusableElements(): HTMLElement[] {
     drawer.value.querySelectorAll<HTMLElement>(
       'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
     )
-  ).filter((element) => !element.hasAttribute('hidden'))
+  ).filter((element) => !element.hasAttribute('hidden') && element.getClientRects().length > 0)
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -152,11 +161,17 @@ onBeforeUnmount(() => {
 
           <nav class="mobile-navigation__content" aria-label="移动端主导航">
             <section v-for="group in visibleGroups" :key="group.id" class="mobile-navigation__group">
-              <h2>{{ group.label }}</h2>
-              <ul>
+              <button class="mobile-navigation__group-toggle" type="button" :aria-expanded="isGroupExpanded(group)" :aria-controls="`mobile-navigation-items-${group.id}`" :aria-label="`${isGroupExpanded(group) ? '收起' : '展开'}${group.label}`" @click="toggleGroup(group)"><span>{{ group.label }}</span><ChevronDown :size="15" :class="{ expanded: isGroupExpanded(group) }" aria-hidden="true" /></button>
+              <ul v-show="isGroupExpanded(group)" :id="`mobile-navigation-items-${group.id}`">
                 <li v-for="item in group.items" :key="item.id">
+                  <WorkspaceNavigation
+                    v-if="item.id === 'chat' || item.id === 'projects'"
+                    :section="item.id"
+                    :user="user"
+                    @navigate="close"
+                  />
                   <button
-                    v-if="!user && item.id !== 'chat'"
+                    v-else-if="!user && item.id !== 'chat'"
                     class="mobile-navigation__link mobile-navigation__link--button"
                     type="button"
                     @click="openGuestItem(item)"
@@ -204,6 +219,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.mobile-navigation__group-toggle { display:flex; align-items:center; justify-content:space-between; width:100%; border:0; border-radius:6px; background:transparent; color:var(--muted-foreground); padding:8px 10px; margin-bottom:6px; font-size:12px; font-weight:600; text-align:left; }
+.mobile-navigation__group-toggle:hover { background:var(--surface-muted); color:var(--foreground); }
+.mobile-navigation__group-toggle:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.mobile-navigation__group-toggle svg.expanded { transform:rotate(180deg); }
+
 .mobile-navigation__backdrop {
   position: fixed;
   inset: 0;
@@ -396,4 +416,6 @@ onBeforeUnmount(() => {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+.mobile-navigation__group ul { grid-template-columns: minmax(0, 1fr); }
+.mobile-navigation__group li { min-width: 0; }
 </style>

@@ -11,8 +11,8 @@ type CorePage = {
 const corePages: CorePage[] = [
   { path: '/dashboard', heading: '工作台', readyText: '这里还很安静' },
   { path: '/', heading: 'AI 聊天', readyTestId: 'chat-input' },
-  { path: '/tasks', heading: '任务', readyText: '从一件小事，开始推进' },
-  { path: '/projects', heading: '项目', readyText: '把一个想法，变成一个项目' },
+  { path: '/tasks', heading: '待办与日程', readyText: '从一件小事，开始推进' },
+  { path: '/projects', heading: '项目计划', readyText: '把一个想法，变成一个项目' },
   { path: '/automations', heading: '自动化', readyText: '还没有启用的自动化' },
   { path: '/execution-center', heading: '执行中心', readyText: '暂时没有需要你确认的事' },
   { path: '/connections', heading: '连接', readyText: '暂无推荐连接' },

@@ -597,7 +597,7 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
   <section class="tasks-page" :class="{ 'tasks-page--empty': isEmpty }" :aria-busy="loading">
     <header class="tasks-header" :class="{ 'tasks-header--empty': isEmpty }">
       <div :class="{ 'sr-only': isEmpty }">
-        <h1>任务</h1>
+        <h1>待办与日程</h1>
         <p>整理待办，安排时间，让每一步都有进展。</p>
       </div>
       <div class="header-actions">
@@ -933,7 +933,7 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
 </template>
 
 <style scoped>
-.tasks-page { display: grid; gap: 24px; width: min(100%, 1180px); min-width: 0; margin: 0 auto; }
+.tasks-page { --task-page-padding: var(--lyle-space-6); display: grid; box-sizing: border-box; gap: 24px; width: 100%; max-width: calc(1180px + var(--task-page-padding) + var(--task-page-padding)); min-width: 0; margin: 0 auto; padding: var(--task-page-padding); }
 .tasks-page--empty { gap: 0; }
 .tasks-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .tasks-header--empty { min-height: 40px; justify-content: flex-end; }
@@ -1060,6 +1060,12 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
   .task-secondary { grid-template-columns: minmax(0, 1fr); }
   .task-capabilities { gap: 18px; }
   .task-capabilities article { gap: 12px; }
+}
+@media (max-width: 959px) {
+  .tasks-page { --task-page-padding: var(--lyle-space-4); }
+}
+@media (max-width: 639px) {
+  .tasks-page { --task-page-padding: var(--lyle-space-3); }
 }
 @media (max-width: 680px) {
   .tasks-page { gap: 18px; }

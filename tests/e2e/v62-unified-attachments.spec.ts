@@ -229,7 +229,7 @@ test('short viewports keep Home and End menu targets visible without scrolling t
     }
   })
   await page.keyboard.press('End')
-  await expect(menu.getByRole('menuitem', { name: /^连接本地项目\s/ })).toBeFocused()
+  await expect(menu.getByRole('menuitem', { name: /^打开本地项目\s/ })).toBeFocused()
   const end = await visiblePosition()
   expect(end.menuScrollTop).toBeGreaterThan(0)
   await page.keyboard.press('Home')
@@ -322,7 +322,7 @@ test('drop and paste share the attachment queue and preserve the text draft', as
     Object.defineProperty(event, 'dataTransfer', { value: transfer })
     composer?.dispatchEvent(event)
   })
-  await expect(page.getByText('释放以添加到对话', { exact: true })).toBeVisible()
+  await expect(page.getByText('释放以使用文件或文件夹', { exact: true })).toBeVisible()
   await page.evaluate(() => {
     const files = [
       new File([new Uint8Array([1])], 'drop-1.png', { type: 'image/png' }),
@@ -510,14 +510,14 @@ test('upload rollback disables file drop but preserves local project entry', asy
   await page.getByTestId('chat-input').press('Escape')
   await page.getByTestId('chat-attach-trigger').click()
   await expect(page.getByRole('menu', { name: '附件命令' })).toBeVisible()
-  await expect(page.getByRole('menuitem', { name: /^连接本地项目\s/ })).toHaveCount(1)
+  await expect(page.getByRole('menuitem', { name: /^打开本地项目\s/ })).toHaveCount(1)
   await page.keyboard.press('Escape')
   await page.evaluate(() => {
     const transfer = new DataTransfer()
     transfer.items.add(new File(['x'], 'disabled.txt', { type: 'text/plain' }))
     document.querySelector('.chat-composer')?.dispatchEvent(new DragEvent('dragenter', { bubbles: true, dataTransfer: transfer }))
   })
-  await expect(page.getByText('释放以添加到对话', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('释放以使用文件或文件夹', { exact: true })).toHaveCount(0)
 })
 
 async function installAuthenticatedSession(page: Page) {

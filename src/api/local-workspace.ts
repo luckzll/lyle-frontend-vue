@@ -1,13 +1,16 @@
 import { getAuthToken, initializeAuth } from '@/auth'
 import type { WorkspaceMessage } from '@/domain/local-workspace'
 
-export async function workspaceStep(messages: WorkspaceMessage[], signal: AbortSignal, onDelta: (text: string) => void) {
+export type WorkspaceMode = 'chat' | 'agent'
+export interface WorkspaceStepOptions { mode?: WorkspaceMode; workspaceConnected?: boolean }
+
+export async function workspaceStep(messages: WorkspaceMessage[], signal: AbortSignal, onDelta: (text: string) => void, options: WorkspaceStepOptions = {}) {
   if (!await initializeAuth()) throw new Error('请重新登录后连接本地项目')
   const token = getAuthToken()
   const response = await fetch('/api/local-workspace/step/stream', {
     method: 'POST', credentials: 'include', cache: 'no-store', signal,
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ messages })
+    body: JSON.stringify({ messages, mode: options.mode ?? 'agent', workspaceConnected: options.workspaceConnected ?? true })
   })
   if (!response.ok || !response.body) throw new Error(response.status === 401 ? '请重新登录后连接本地项目' : '模型服务暂不可用，请检查额度或稍后重试')
   const reader = response.body.getReader(); const decoder = new TextDecoder()

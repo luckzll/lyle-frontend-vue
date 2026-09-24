@@ -1271,7 +1271,7 @@ async function openProjectChat() {
   <section class="page projects-page" :class="{ 'projects-page--empty': isProjectEmpty }">
     <header class="projects-header">
       <div :class="{ 'visually-hidden': isProjectEmpty }">
-        <h1>项目</h1>
+        <h1>项目计划</h1>
         <p>让目标、行动和资料，围绕同一件事有序推进。</p>
       </div>
       <div class="project-header-actions">
@@ -1878,7 +1878,7 @@ async function openProjectChat() {
 </template>
 
 <style scoped>
-.projects-page { max-width: 1180px; min-width: 0; width: 100%; margin: 0 auto; gap: 24px; }
+.projects-page { --project-page-padding: var(--lyle-space-6); box-sizing: border-box; max-width: calc(1180px + var(--project-page-padding) + var(--project-page-padding)); min-width: 0; width: 100%; margin: 0 auto; padding: var(--project-page-padding); gap: 24px; }
 .projects-page--empty { gap: 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 .projects-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 42px; }
@@ -2015,6 +2015,12 @@ async function openProjectChat() {
   .project-sidebar .section-title, .project-list, .project-filter-empty { grid-column: 1 / -1; }
   .project-capabilities { gap: 18px; }
   .project-capabilities article { gap: 12px; }
+}
+@media (max-width: 959px) {
+  .projects-page { --project-page-padding: var(--lyle-space-4); }
+}
+@media (max-width: 639px) {
+  .projects-page { --project-page-padding: var(--lyle-space-3); }
 }
 @media (max-width: 680px) {
   .projects-page { gap: 18px; }.projects-page--empty { gap: 0; }

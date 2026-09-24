@@ -259,6 +259,8 @@ test('new chat keeps one empty state and a compact composer across breakpoints',
   await expect(page.getByText('你好，我是 Lyle。')).toHaveCount(0)
   await expect(page.getByText('新的会话已经准备好。')).toHaveCount(0)
 
+  // The first-use attachment hint adds a dismissible row above the compact footer.
+  await page.getByRole('button', { name: '关闭附件提示' }).click()
   const desktopComposerHeight = await page.locator('.chat-input').evaluate((element) => (
     element.getBoundingClientRect().height
   ))
@@ -374,7 +376,8 @@ test('V4.2 dashboard presents work and hands a project draft to chat once', asyn
   expect(await page.evaluate((text) => JSON.stringify(sessionStorage).includes(text), draft)).toBe(false)
 
   await page.getByRole('link', { name: '工作台', exact: true }).click()
-  await page.getByRole('link', { name: '聊天', exact: true }).click()
+  await page.locator('.workspace-heading').filter({ has: page.getByRole('button', { name: '新建聊天', exact: true }) }).hover()
+  await page.getByRole('button', { name: '新建聊天', exact: true }).click()
   await expect(page.getByTestId('chat-input')).toHaveValue('')
 })
 
@@ -388,7 +391,7 @@ test('chat context can be selected from the composer and survives navigation unt
 
   await page.goto('/')
   const summary = page.getByTestId('chat-context-summary')
-  await expect(summary).toHaveText('选择项目 / 知识库')
+  await expect(summary).toHaveText('选择项目计划 / 知识库')
   await summary.click()
 
   const projectSelect = page.getByTestId('chat-project-select')
@@ -400,17 +403,18 @@ test('chat context can be selected from the composer and survives navigation unt
   expect(await page.evaluate(() => localStorage.getItem('lyle.chat.knowledge-base-id'))).toBe(knowledgeBase.id)
 
   await page.getByRole('link', { name: '工作台', exact: true }).click()
-  await page.getByRole('link', { name: '聊天', exact: true }).click()
+  await page.locator('.workspace-heading').filter({ has: page.getByRole('button', { name: '新建聊天', exact: true }) }).hover()
+  await page.getByRole('button', { name: '新建聊天', exact: true }).click()
   await expect(summary).toHaveText(`${PROJECT_NAME} / ${knowledgeBase.name}`)
 
-  await page.getByRole('button', { name: '新建', exact: true }).click()
+  await page.getByRole('button', { name: '新对话', exact: true }).click()
   await summary.click()
   await expect(projectSelect).toHaveValue(String(PROJECT_ID))
   await expect(knowledgeSelect).toHaveValue(knowledgeBase.id)
 
   await projectSelect.selectOption('')
   await knowledgeSelect.selectOption('')
-  await expect(summary).toHaveText('选择项目 / 知识库')
+  await expect(summary).toHaveText('选择项目计划 / 知识库')
   expect(await page.evaluate(() => localStorage.getItem('lyle.chat.project-id'))).toBeNull()
   expect(await page.evaluate(() => localStorage.getItem('lyle.chat.knowledge-base-id'))).toBeNull()
 })
@@ -436,7 +440,7 @@ test('chat accepts a knowledge-base handoff and removes unavailable stored conte
     localStorage.setItem('lyle.chat.project-id', '999')
   })
   await page.reload()
-  await expect(summary).toHaveText('选择项目 / 知识库')
+  await expect(summary).toHaveText('选择项目计划 / 知识库')
   await summary.click()
   await expect(page.getByTestId('chat-knowledge-select')).toHaveValue('')
   await expect(page.getByTestId('chat-project-select')).toHaveValue('')
@@ -513,9 +517,10 @@ test('unscoped chat automation handoff does not inherit the automation page defa
   await workflowCard.getByRole('button', { name: '生成安全预览' }).click()
 
   await expect(page).toHaveURL('/automations')
-  await expect(page.getByRole('dialog').filter({ hasText: '此预览不会执行任何操作' })).toBeVisible()
-  expect(draftPayload).toMatchObject({ text: originalIntent })
-  expect(draftPayload).not.toHaveProperty('projectId')
+  // An unscoped handoff must wait for an explicit project selection.
+  await expect(page.getByRole('textbox', { name: '自动化意图' })).toHaveValue(originalIntent)
+  await expect(page.getByRole('status')).toContainText('先创建一个项目或连接工作区')
+  expect(draftPayload).toBeNull()
 })
 
 test('V4.2 shell mobile navigation restores focus and avoids horizontal overflow', async ({ page }) => {

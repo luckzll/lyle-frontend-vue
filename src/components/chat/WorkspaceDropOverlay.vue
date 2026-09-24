@@ -9,8 +9,8 @@ defineProps<{ scanning?: boolean }>()
       <FolderOpen v-if="scanning" :size="30" />
       <Upload v-else :size="30" />
     </span>
-    <strong>{{ scanning ? '正在读取文件夹…' : '释放以添加到对话' }}</strong>
-    <small>{{ scanning ? '正在处理选中的内容' : '文件夹连接为本地项目；普通文件作为附件上传' }}</small>
+    <strong>{{ scanning ? '正在读取文件夹…' : '释放以使用文件或文件夹' }}</strong>
+    <small>{{ scanning ? '正在处理选中的内容' : '文件夹在本地项目中打开；普通文件作为聊天附件上传' }}</small>
   </div>
 </template>
 

@@ -12,6 +12,6 @@ const authenticated = computed(() => {
 </script>
 
 <template>
-  <ChatView v-if="authenticated" />
+  <ChatView v-if="authenticated" :key="authState.user?.id" />
   <GuestChatView v-else />
 </template>

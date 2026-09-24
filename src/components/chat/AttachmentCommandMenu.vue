@@ -73,7 +73,7 @@ defineExpose({ focusEdge, containsTarget: (target: Node) => Boolean(menu.value?.
     <div class="attachment-menu-heading">添加到对话</div>
     <button type="button" role="menuitem" @click="$emit('select', 'image')"><ImageIcon :size="17" aria-hidden="true" /><span><strong>{{ showCommands ? '/图片' : '图片' }}</strong><small>选择一张或多张图片</small></span></button>
     <button type="button" role="menuitem" @click="$emit('select', 'file')"><FileText :size="17" aria-hidden="true" /><span><strong>{{ showCommands ? '/文件' : '文件' }}</strong><small>文档、源代码与项目配置</small></span></button>
-    <button type="button" role="menuitem" @click="$emit('select', 'folder')"><FolderOpen :size="17" aria-hidden="true" /><span><strong>{{ showCommands ? '/项目' : '连接本地项目' }}</strong><small>文件留在本机，按需读取和修改</small></span></button>
+    <button type="button" role="menuitem" @click="$emit('select', 'folder')"><FolderOpen :size="17" aria-hidden="true" /><span><strong>{{ showCommands ? '/项目' : '打开本地项目' }}</strong><small>按项目保存多段聊天与智能体对话</small></span></button>
   </div>
 </template>
 

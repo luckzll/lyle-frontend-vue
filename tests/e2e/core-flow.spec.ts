@@ -55,7 +55,7 @@ test('registers, uploads knowledge, debugs RAG, and chats with sources', async (
   await page.getByTestId('rag-debug-button').click()
   await expect(page.getByText(answerText)).toBeVisible()
 
-  await page.getByRole('link', { name: '聊天' }).click()
+  await page.getByRole('button', { name: '新建聊天', exact: true }).click()
   await page.getByRole('button', { name: '上下文', exact: true }).click()
   await page.getByTestId('chat-knowledge-select').selectOption({ label: knowledgeName })
   const chatQuestion = '请根据知识库回答：答案是什么？'
