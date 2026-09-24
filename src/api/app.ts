@@ -1,7 +1,8 @@
 import { http, publicHttp } from './http'
 import type { MemorySchemaStatus } from './types'
 import type { MemoryFact } from './types'
-import { getAuthToken } from '@/auth'
+import { authState, getAuthToken } from '@/auth'
+import { notifyChatNavigationChanged } from '@/domain/chat-navigation'
 import { sanitizeAgentStep, type AgentStepEvent } from '@/domain/chat-progress'
 import { sanitizeReasoningDelta, type ChatReasoning, type ReasoningDelta } from '@/domain/chat-reasoning'
 import { sanitizeToolCall, type ChatToolCall } from '@/domain/chat-tool-calls'
@@ -219,20 +220,29 @@ export function deleteChatAttachment(attachmentId: string) {
   return http.delete(`/chat/attachments/${encodeURIComponent(attachmentId)}`)
 }
 
-export function createConversation(title: string) {
-  return http.post<Conversation>('/conversations', { title })
+export async function createConversation(title: string) {
+  const owner = authState.user?.id
+  const response = await http.post<Conversation>('/conversations', { title })
+  notifyChatNavigationChanged(owner)
+  return response
 }
 
 export function listConversations() {
   return http.get<Conversation[]>('/conversations')
 }
 
-export function updateConversationTitle(conversationId: string, title: string) {
-  return http.patch<Conversation>(`/conversations/${conversationId}`, { title })
+export async function updateConversationTitle(conversationId: string, title: string) {
+  const owner = authState.user?.id
+  const response = await http.patch<Conversation>(`/conversations/${conversationId}`, { title })
+  notifyChatNavigationChanged(owner)
+  return response
 }
 
-export function deleteConversation(conversationId: string) {
-  return http.delete(`/conversations/${conversationId}`)
+export async function deleteConversation(conversationId: string) {
+  const owner = authState.user?.id
+  const response = await http.delete(`/conversations/${conversationId}`)
+  notifyChatNavigationChanged(owner)
+  return response
 }
 
 export function createKnowledgeBase(name: string) {

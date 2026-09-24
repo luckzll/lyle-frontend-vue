@@ -13,7 +13,7 @@ test('confirms operation idempotently and prevents rejected operation confirmati
   await page.getByTestId('password-input').fill('123456')
   await page.getByTestId('auth-submit').click()
   await expect(page).toHaveURL('/dashboard')
-  await page.getByRole('link', { name: '聊天', exact: true }).click()
+  await page.getByRole('button', { name: '新建聊天', exact: true }).click()
 
   await page.getByTestId('chat-input').fill(`帮我创建待办：明天下午三点提交操作验收 ${suffix}`)
   await page.getByTestId('chat-submit').click()
@@ -29,7 +29,7 @@ test('confirms operation idempotently and prevents rejected operation confirmati
   const replay = await replayConfirmedOperation(page, `提交操作验收 ${suffix}`)
   expect(replay.idempotentReplay).toBe(true)
 
-  await page.getByRole('link', { name: '聊天', exact: true }).click()
+  await page.getByRole('button', { name: '新建聊天', exact: true }).click()
   await page.getByTestId('chat-input').fill(`帮我创建待办：明天上午九点拒绝操作验收 ${suffix}`)
   await page.getByTestId('chat-submit').click()
   await page.getByTestId('chat-operation-reject').first().click()

@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { ChevronDown } from '@lucide/vue'
 import type { User } from '@/api/types'
 import AccountMenu from '@/components/layout/AccountMenu.vue'
+import WorkspaceNavigation from './WorkspaceNavigation.vue'
 import { requestAuth } from '@/composables/useAuthGate'
 import {
   getNavigationBadge,
@@ -28,7 +29,7 @@ const emit = defineEmits<{
 
 const route = useRoute()
 const visibleGroups = computed(() => getVisibleNavigationGroups(props.user?.role === 'ADMIN', props.user?.id))
-const expandedOptionalGroups = ref<Set<NavigationGroupId>>(new Set())
+const groupOverrides = ref<Partial<Record<NavigationGroupId, boolean>>>({})
 
 function isActive(item: NavigationItem) {
   return isNavigationItemActive(item, route)
@@ -47,17 +48,11 @@ function isGroupActive(group: NavigationGroup) {
 }
 
 function isGroupExpanded(group: NavigationGroup) {
-  return props.collapsed
-    || isPrimaryGroup(group.id)
-    || isGroupActive(group)
-    || expandedOptionalGroups.value.has(group.id)
+  return props.collapsed || (groupOverrides.value[group.id] ?? (isPrimaryGroup(group.id) || isGroupActive(group)))
 }
 
-function toggleGroup(groupId: NavigationGroupId) {
-  const next = new Set(expandedOptionalGroups.value)
-  if (next.has(groupId)) next.delete(groupId)
-  else next.add(groupId)
-  expandedOptionalGroups.value = next
+function toggleGroup(group: NavigationGroup) {
+  groupOverrides.value[group.id] = !isGroupExpanded(group)
 }
 
 function openGuestItem(item: NavigationItem) {
@@ -88,13 +83,14 @@ function openGuestItem(item: NavigationItem) {
         :aria-labelledby="`desktop-navigation-${group.id}`"
       >
         <button
-          v-if="!collapsed && !isPrimaryGroup(group.id)"
+          v-if="!collapsed"
           :id="`desktop-navigation-${group.id}`"
           class="app-sidebar__group-toggle"
           type="button"
           :aria-expanded="isGroupExpanded(group)"
+          :aria-controls="`desktop-navigation-items-${group.id}`"
           :aria-label="`${isGroupExpanded(group) ? '收起' : '展开'}${group.label}`"
-          @click="toggleGroup(group.id)"
+          @click="toggleGroup(group)"
         >
           <span>{{ group.label }}</span>
           <ChevronDown :size="15" :class="{ expanded: isGroupExpanded(group) }" aria-hidden="true" />
@@ -105,10 +101,16 @@ function openGuestItem(item: NavigationItem) {
           class="app-sidebar__group-label"
           :class="{ 'sr-only': collapsed }"
         >{{ group.label }}</p>
-        <ul v-if="isGroupExpanded(group)" class="app-sidebar__list">
+        <ul v-show="isGroupExpanded(group)" class="app-sidebar__list" :id="`desktop-navigation-items-${group.id}`">
           <li v-for="item in group.items" :key="item.id">
+            <WorkspaceNavigation
+              v-if="item.id === 'chat' || item.id === 'projects'"
+              :section="item.id"
+              :collapsed="collapsed"
+              :user="user"
+            />
             <button
-              v-if="!user && item.id !== 'chat'"
+              v-else-if="!user && item.id !== 'chat'"
               class="app-sidebar__link app-sidebar__link--button"
               type="button"
               :title="collapsed ? `${item.label} · ${item.description}` : undefined"
@@ -263,11 +265,14 @@ function openGuestItem(item: NavigationItem) {
 
 .app-sidebar__list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.15rem;
   margin: 0;
   padding: 0;
   list-style: none;
 }
+
+.app-sidebar__list > li { min-width: 0; }
 
 .app-sidebar__link {
   position: relative;

@@ -14,7 +14,6 @@ import {
   LibraryBig,
   ListTodo,
   MessageSquare,
-  MessagesSquare,
   Inbox,
   PlugZap,
   ShieldCheck,
@@ -62,34 +61,12 @@ export const navigationGroups: NavigationGroup[] = [
         match: { routeNames: ['dashboard'] }
       },
       {
-        id: 'chat',
-        label: '聊天',
-        description: '与 Lyle AI 对话',
-        to: '/',
-        icon: MessageSquare,
-        match: { routeNames: ['chat'] }
-      }
-    ]
-  },
-  {
-    id: 'progress',
-    label: '推进',
-    items: [
-      {
-        id: 'projects',
-        label: '项目',
-        description: '管理项目上下文',
-        to: '/projects',
-        icon: FolderKanban,
-        match: { routeNames: ['projects', 'project-detail'] }
-      },
-      {
         id: 'tasks',
         label: '任务',
-        description: '查看和处理任务',
+        description: '处理待办与日程，推进项目计划',
         to: '/tasks',
         icon: ListTodo,
-        match: { routeNames: ['tasks'] },
+        match: { routeNames: ['tasks', 'projects', 'project-detail'] },
         badgeSource: 'reminders'
       },
       {
@@ -136,6 +113,28 @@ export const navigationGroups: NavigationGroup[] = [
     ]
   },
   {
+    id: 'progress',
+    label: '推进',
+    items: [
+      {
+        id: 'chat',
+        label: '聊天',
+        description: '与 Lyle AI 对话',
+        to: '/',
+        icon: MessageSquare,
+        match: { routeNames: ['chat', 'conversations'] }
+      },
+      {
+        id: 'projects',
+        label: '项目',
+        description: '连接本机目录，围绕项目继续对话',
+        to: '/local-project',
+        icon: FolderKanban,
+        match: { routeNames: ['local-project'] }
+      }
+    ]
+  },
+  {
     id: 'knowledge',
     label: '资料',
     items: [
@@ -154,14 +153,6 @@ export const navigationGroups: NavigationGroup[] = [
         to: '/memory',
         icon: Brain,
         match: { routeNames: ['memory'] }
-      },
-      {
-        id: 'conversations',
-        label: '会话',
-        description: '浏览历史会话',
-        to: '/conversations',
-        icon: MessagesSquare,
-        match: { routeNames: ['conversations'] }
       }
     ]
   },
@@ -221,6 +212,15 @@ export const navigationGroups: NavigationGroup[] = [
     ]
   }
 ]
+
+export type TaskAreaMode = 'todos' | 'projects'
+
+/** Existing project management deep links belong to the task area. */
+export function getTaskAreaMode(route: RouteLocationNormalizedLoaded): TaskAreaMode | null {
+  if (route.name === 'tasks') return 'todos'
+  if (route.name === 'projects' || route.name === 'project-detail') return 'projects'
+  return null
+}
 
 export function getVisibleNavigationGroups(isAdmin: boolean, userId?: string | number | null): NavigationGroup[] {
   return navigationGroups

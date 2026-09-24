@@ -66,7 +66,7 @@ test('shows execution suggestions and requires an explicit user action', async (
   await page.getByTestId('password-input').fill('123456')
   await page.getByTestId('auth-submit').click()
   await expect(page).toHaveURL('/dashboard')
-  await page.getByRole('link', { name: '聊天', exact: true }).click()
+  await page.getByRole('button', { name: '新建聊天', exact: true }).click()
 
   await page.getByTestId('chat-input').fill(originalIntent)
   await page.getByTestId('chat-submit').click()
@@ -90,7 +90,7 @@ test('shows execution suggestions and requires an explicit user action', async (
   await expect(page.getByTestId('workbench-tab-cli')).toBeVisible()
 
   await page.getByRole('button', { name: '打开主导航' }).click()
-  await page.getByRole('dialog', { name: 'Lyle AI' }).getByRole('link', { name: '聊天', exact: true }).click()
+  await page.getByRole('dialog', { name: 'Lyle AI' }).getByRole('button', { name: '新建聊天', exact: true }).click()
   await page.getByTestId('chat-input').fill(originalIntent)
   await page.getByTestId('chat-submit').click()
   const workflowCard = page.locator('.candidate-memory-card').filter({ hasText: '保存为工作流' })

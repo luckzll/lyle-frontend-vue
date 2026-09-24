@@ -3,6 +3,7 @@ import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import {
   getNavigationBadge,
   getNavigationBadgeLabel,
+  getTaskAreaMode,
   getVisibleNavigationGroups,
   isNavigationItemActive,
   navigationGroups
@@ -27,12 +28,41 @@ describe('application navigation', () => {
     expect(Object.fromEntries(
       navigationGroups.map((group) => [group.label, group.items.map((item) => item.label)])
     )).toEqual({
-      开始: ['工作台', '聊天'],
-      推进: ['项目', '任务', '自动化', 'Agent Task', '持续任务', '异常收件箱', '执行中心'],
-      资料: ['知识库', '记忆', '会话'],
+      开始: ['工作台', '任务', '自动化', 'Agent Task', '持续任务', '异常收件箱', '执行中心'],
+      推进: ['聊天', '项目'],
+      资料: ['知识库', '记忆'],
       系统: ['连接', '高级设置'],
       管理员: ['评测', 'Prompt', '管理']
     })
+  })
+
+  it('keeps conversation history inside chat without a separate primary entry', () => {
+    const items = navigationGroups.flatMap(group => group.items)
+    for (const currentRoute of [route('chat'), route('chat', { conversationId: 'saved-conversation' }), route('conversations')]) {
+      expect(items.filter(item => isNavigationItemActive(item, currentRoute)).map(item => item.id)).toEqual(['chat'])
+    }
+    expect(items.some(item => item.id === 'conversations' || item.to === '/conversations')).toBe(false)
+    expect(navigationGroups.find(group => group.id === 'knowledge')?.items.map(item => item.id)).toEqual(['knowledge-bases', 'memory'])
+  })
+
+  it('opens local directories from projects and keeps planning deep links under tasks', () => {
+    const items = navigationGroups.flatMap((group) => group.items)
+    expect(items.filter(item => isNavigationItemActive(item, route('local-project'))).map(item => item.id)).toEqual(['projects'])
+    for (const routeName of ['tasks', 'projects', 'project-detail']) {
+      expect(items.filter(item => isNavigationItemActive(item, route(routeName))).map(item => item.id)).toEqual(['tasks'])
+    }
+    expect(items.some(item => item.id === 'local-project')).toBe(false)
+    expect(items.find(item => item.id === 'projects')?.to).toBe('/local-project')
+    expect(items.find(item => item.id === 'tasks')?.to).toBe('/tasks')
+  })
+
+  it('shows task subnavigation only on todo and managed project routes', () => {
+    expect(getTaskAreaMode(route('tasks'))).toBe('todos')
+    expect(getTaskAreaMode(route('projects'))).toBe('projects')
+    expect(getTaskAreaMode(route('project-detail'))).toBe('projects')
+    for (const routeName of ['local-project', 'chat', 'conversations', 'dashboard', 'automations']) {
+      expect(getTaskAreaMode(route(routeName))).toBeNull()
+    }
   })
 
   it('keeps settings in the account menu instead of the primary sidebar', () => {

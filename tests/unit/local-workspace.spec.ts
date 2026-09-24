@@ -61,14 +61,14 @@ describe('local workspace file boundary', () => {
     const read = await ws.read('src/a.ts')
     const change = await ws.preview({ id: '2', name: 'workspace_edit', args: { path: 'src/a.ts', expectedHash: read.hash, oldText: 'before', newText: '$& after' } })
     expect(f.counts().writes).toBe(0)
-    const result = await ws.apply(change, signal())
+    const result = await ws.apply(change, signal(), { confirmed: true })
     expect(result.status).toBe('applied'); expect(f.disk.get('src/a.ts')).toBe('const text = "$& after";\n')
   })
   it('preserves an external edit made while approval was pending', async () => {
     const f = fixture({ 'a.py': 'old' }); const ws = new LocalWorkspace(f.root); const read = await ws.read('a.py')
     const change = await ws.preview({ id: '2', name: 'workspace_edit', args: { path: 'a.py', expectedHash: read.hash, oldText: 'old', newText: 'new' } })
     f.disk.set('a.py', 'external')
-    await expect(ws.apply(change, signal())).rejects.toThrow('已被修改')
+    await expect(ws.apply(change, signal(), { confirmed: true })).rejects.toThrow('已被修改')
     expect(f.disk.get('a.py')).toBe('external'); expect(f.counts().writes).toBe(0)
   })
   it('rejects ambiguous replacements, existing creates and cancelled writes', async () => {
@@ -77,7 +77,7 @@ describe('local workspace file boundary', () => {
     await expect(ws.preview({ id: '2', name: 'workspace_create', args: { path: 'a.ts', content: 'overwrite' } })).rejects.toThrow('已存在')
     const change = await ws.preview({ id: '3', name: 'workspace_create', args: { path: 'new.ts', content: 'new' } })
     const controller = new AbortController(); controller.abort()
-    await expect(ws.apply(change, controller.signal)).rejects.toThrow()
+    await expect(ws.apply(change, controller.signal, { confirmed: true })).rejects.toThrow()
     expect(f.disk.has('new.ts')).toBe(false)
   })
   it('searches only authorized source files and reports real matches', async () => {
@@ -85,5 +85,82 @@ describe('local workspace file boundary', () => {
     const result = await ws.search('', 'answer', signal())
     expect(result.matches).toEqual([{ path: 'src/a.ts', line: 1, text: 'const answer = 42' }])
     expect(f.counts().writes).toBe(0)
+  })
+  it('enforces read-only even when the browser already grants write permission', async () => {
+    const f = fixture({ 'a.ts': 'before' }); const ws = new LocalWorkspace(f.root)
+    await ws.permissions.select('read-only')
+    const read = await ws.read('a.ts')
+    const change = await ws.preview({ id: '1', name: 'workspace_edit', args: { path: 'a.ts', expectedHash: read.hash, oldText: 'before', newText: 'after' } })
+    const created = await ws.preview({ id: '2', name: 'workspace_create', args: { path: 'new.ts', content: 'new' } })
+    await expect(ws.apply(change, signal(), { confirmed: true })).rejects.toThrow('只读')
+    await expect(ws.apply(created, signal())).rejects.toThrow('只读')
+    expect(f.disk.get('a.ts')).toBe('before'); expect(f.disk.has('new.ts')).toBe(false)
+    expect(f.counts().writes).toBe(0)
+  })
+  it('requires per-change confirmation by default and allows auto after explicit browser authorization', async () => {
+    const f = fixture({ 'a.ts': 'before' }); const ws = new LocalWorkspace(f.root)
+    const read = await ws.read('a.ts')
+    const change = await ws.preview({ id: '1', name: 'workspace_edit', args: { path: 'a.ts', expectedHash: read.hash, oldText: 'before', newText: 'after' } })
+    await expect(ws.apply(change, signal())).rejects.toThrow('逐项确认')
+    await ws.permissions.select('auto')
+    expect((await ws.apply(change, signal())).status).toBe('applied')
+    expect(f.disk.get('a.ts')).toBe('after')
+    expect(new LocalWorkspace(f.root).permissions.mode).toBe('confirm')
+  })
+  it('still checks browser permissions and concurrent file changes in auto mode', async () => {
+    const f = fixture({ 'a.ts': 'before' }); const ws = new LocalWorkspace(f.root)
+    await ws.permissions.select('auto')
+    const read = await ws.read('a.ts')
+    const change = await ws.preview({ id: '1', name: 'workspace_edit', args: { path: 'a.ts', expectedHash: read.hash, oldText: 'before', newText: 'after' } })
+    f.root.queryPermission = async () => 'denied'
+    await expect(ws.apply(change, signal())).rejects.toThrow('尚未授予')
+    f.root.queryPermission = async () => 'granted'; f.disk.set('a.ts', 'external')
+    await expect(ws.apply(change, signal())).rejects.toThrow('已被修改')
+    expect(f.disk.get('a.ts')).toBe('external'); expect(f.counts().writes).toBe(0)
+  })
+  it('aborts a staged change if the user revokes auto mode before commit', async () => {
+    const f = fixture({ 'a.ts': 'before' }); const ws = new LocalWorkspace(f.root)
+    await ws.permissions.select('auto')
+    const read = await ws.read('a.ts')
+    const change = await ws.preview({ id: '1', name: 'workspace_edit', args: { path: 'a.ts', expectedHash: read.hash, oldText: 'before', newText: 'after' } })
+    const getFileHandle = f.root.getFileHandle.bind(f.root)
+    f.root.getFileHandle = async (name, options) => {
+      const handle = await getFileHandle(name, options)
+      const createWritable = handle.createWritable.bind(handle)
+      handle.createWritable = async (...args) => {
+        const writer = await createWritable(...args)
+        const write = writer.write.bind(writer)
+        writer.write = async text => { await write(text); await ws.permissions.select('read-only') }
+        return writer
+      }
+      return handle
+    }
+    await expect(ws.apply(change, signal())).rejects.toThrow('只读')
+    expect(f.disk.get('a.ts')).toBe('before'); expect(f.counts().writes).toBe(0)
+  })
+  it('does not commit an existing file when stopped during the final conflict check', async () => {
+    const f = fixture({ 'a.ts': 'before' }); const ws = new LocalWorkspace(f.root)
+    await ws.permissions.select('auto')
+    const read = await ws.read('a.ts')
+    const change = await ws.preview({ id: '1', name: 'workspace_edit', args: { path: 'a.ts', expectedHash: read.hash, oldText: 'before', newText: 'after' } })
+    const controller = new AbortController()
+    let announceRead!: () => void; let resumeRead!: () => void; let applyReads = 0
+    const beforeCommitRead = new Promise<void>(resolve => { announceRead = resolve })
+    const canFinishRead = new Promise<void>(resolve => { resumeRead = resolve })
+    const getFileHandle = f.root.getFileHandle.bind(f.root)
+    f.root.getFileHandle = async (name, options) => {
+      const handle = await getFileHandle(name, options)
+      const getFile = handle.getFile.bind(handle)
+      handle.getFile = async () => {
+        if (++applyReads === 2) { announceRead(); await canFinishRead }
+        return getFile()
+      }
+      return handle
+    }
+    const applying = ws.apply(change, controller.signal)
+    await beforeCommitRead
+    controller.abort(); resumeRead()
+    await expect(applying).rejects.toThrow()
+    expect(f.disk.get('a.ts')).toBe('before'); expect(f.counts().writes).toBe(0)
   })
 })

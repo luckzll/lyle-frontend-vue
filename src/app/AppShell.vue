@@ -10,6 +10,8 @@ import AppHeader from './AppHeader.vue'
 import AppSidebar from './AppSidebar.vue'
 import MobileNavigation from './MobileNavigation.vue'
 import AuthRequiredDialog from '@/components/auth/AuthRequiredDialog.vue'
+import TaskModeNav from '@/components/tasks/TaskModeNav.vue'
+import { getTaskAreaMode } from './navigation'
 import { isSettingsLocation } from './settings-navigation'
 
 const SIDEBAR_PREFERENCE_KEY = 'lyle-ui:v4.2:sidebar-collapsed'
@@ -38,7 +40,9 @@ const pageContext = computed(() => (
     : '个人 AI 工作台'
 ))
 const isSettingsRoute = computed(() => isSettingsLocation(route))
-const isChatRoute = computed(() => route.name === 'chat')
+const isChatRoute = computed(() => route.name === 'chat' || route.name === 'local-project')
+const isLocalProjectRoute = computed(() => route.name === 'local-project')
+const taskAreaMode = computed(() => getTaskAreaMode(route))
 
 const {
   reminders,
@@ -135,9 +139,12 @@ watch(
         class="lyle-shell__main"
         :class="{
           'lyle-shell__main--settings': isSettingsRoute,
-          'lyle-shell__main--chat': isChatRoute
+          'lyle-shell__main--chat': isChatRoute,
+          'lyle-shell__main--local-project': isLocalProjectRoute,
+          'lyle-shell__main--tasks': Boolean(taskAreaMode)
         }"
       >
+        <TaskModeNav v-if="taskAreaMode" :active="taskAreaMode" />
         <section v-if="!isSettingsRoute && reminders.length > 0" class="lyle-reminder" aria-live="polite">
           <div class="lyle-reminder__message">
             <span class="lyle-reminder__icon" aria-hidden="true">
@@ -190,6 +197,7 @@ watch(
 
 <style scoped>
 .lyle-shell {
+  --lyle-sidebar-width: 280px;
   display: grid;
   width: 100%;
   min-width: 0;
@@ -253,6 +261,11 @@ watch(
 .lyle-shell__main--chat {
   min-height: 0;
   overflow: hidden;
+}
+
+.lyle-shell__main.lyle-shell__main--local-project,
+.lyle-shell__main.lyle-shell__main--tasks {
+  padding: 0;
 }
 
 .lyle-shell__main :deep(.page) {

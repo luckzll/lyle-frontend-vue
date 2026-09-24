@@ -1,5 +1,6 @@
 import { ALLOWED_PROJECT_DOTFILES, CHAT_EXACT_FILENAMES, CHAT_FILE_EXTENSIONS } from './chat-attachment'
 import { IGNORED_PROJECT_DIRECTORIES } from './directory-entry'
+import { LocalWorkspacePermissions } from './local-workspace-permissions'
 
 export interface LocalFileHandle {
   kind: 'file'; name: string
@@ -8,6 +9,7 @@ export interface LocalFileHandle {
 }
 export interface LocalDirectoryHandle {
   kind: 'directory'; name: string
+  isSameEntry?(other: LocalDirectoryHandle): Promise<boolean>
   entries(): AsyncIterableIterator<[string, LocalDirectoryHandle | LocalFileHandle]>
   getDirectoryHandle(name: string): Promise<LocalDirectoryHandle>
   getFileHandle(name: string, options?: { create?: boolean }): Promise<LocalFileHandle>
@@ -53,7 +55,8 @@ function string(value: unknown) { if (typeof value !== 'string') throw new Error
 
 export class LocalWorkspace {
   private observed = new Map<string, string>()
-  constructor(readonly root: LocalDirectoryHandle) {}
+  readonly permissions: LocalWorkspacePermissions
+  constructor(readonly root: LocalDirectoryHandle) { this.permissions = new LocalWorkspacePermissions(root) }
   async directory(path: string) {
     let dir = this.root
     for (const part of safeParts(path, true)) dir = await dir.getDirectoryHandle(part)
@@ -145,9 +148,11 @@ export class LocalWorkspace {
     const after = file.text.replace(oldText, () => newText); validateText(after)
     return { path, before: file.text, after, hash: expected, oldText, newText }
   }
-  async apply(change: ChangePreview, signal: AbortSignal) {
+  async apply(change: ChangePreview, signal: AbortSignal, options: { confirmed?: boolean } = {}) {
+    this.permissions.assertCanWrite(options.confirmed)
     const write = async () => {
       signal.throwIfAborted()
+      this.permissions.assertCanWrite(options.confirmed)
       if (await this.root.queryPermission({ mode: 'readwrite' }) !== 'granted') throw new Error('尚未授予本地目录写入权限')
       const { dir, name } = await this.target(change.path)
       let handle: LocalFileHandle
@@ -155,20 +160,25 @@ export class LocalWorkspace {
         try { await dir.getFileHandle(name); throw new Error('文件已被创建，已停止覆盖') }
         catch (error) { if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error }
         signal.throwIfAborted()
+        this.permissions.assertCanWrite(options.confirmed)
         handle = await dir.getFileHandle(name, { create: true })
       } else {
         const current = await this.text(change.path)
         if (current.hash !== change.hash) throw new Error('文件已被修改，未应用此变更；请重新读取')
         handle = current.handle
       }
+      this.permissions.assertCanWrite(options.confirmed)
       const writer = await handle.createWritable({ mode: 'exclusive' })
       try {
         // Finish an already-created file rather than leaving an empty file on cancellation.
         if (change.hash !== null) signal.throwIfAborted()
+        this.permissions.assertCanWrite(options.confirmed)
         await writer.write(change.after)
         if (change.hash !== null) signal.throwIfAborted()
         const beforeCommit = await this.text(change.path)
         if (beforeCommit.hash !== (change.hash ?? await hashText(''))) throw new Error('写入期间文件发生变化，已停止应用')
+        if (change.hash !== null) signal.throwIfAborted()
+        this.permissions.assertCanWrite(options.confirmed)
         await writer.close()
       }
       catch (error) { await writer.abort().catch(() => undefined); throw error }

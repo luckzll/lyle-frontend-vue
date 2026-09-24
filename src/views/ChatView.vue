@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
+import { authState } from '@/auth'
+import { newChatLocation, notifyChatNavigationChanged } from '@/domain/chat-navigation'
 import { memoryReasonLabel, memoryTargetKey, setCandidateTargetKey } from '@/domain/memory-presentation'
 import { ArrowDown, ArrowRight, BrainCircuit, ChevronRight, Circle, Database, GitBranch, PanelRightOpen, Sparkles, Wrench } from '@lucide/vue'
 import {
@@ -185,6 +187,7 @@ const input = ref('')
 const chatModelId = ref<ChatModelId>(resolveChatModelId(window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY)))
 const route = useRoute()
 const router = useRouter()
+const navigationOwner = authState.user?.id
 const runtimeFeatures = useRuntimeFeatures()
 const workspace = useWorkspaceStore()
 const handoffProject = ref<WorkspaceProjectContext | null>(null)
@@ -298,8 +301,8 @@ const starterPrompts = [
   { title: '运行巡检', description: '优先指出风险、阻塞和建议动作', draft: '帮我运行一次项目巡检，优先指出风险、阻塞和建议动作。' }
 ]
 const activeConversationTitle = computed(() => {
-  if (!conversationId.value) return '新会话'
-  return conversations.value.find((item) => String(item.id) === conversationId.value)?.title || '当前会话'
+  if (!conversationId.value) return '新对话'
+  return conversations.value.find((item) => String(item.id) === conversationId.value)?.title || '当前对话'
 })
 const activeKnowledgeBaseName = computed(() => {
   if (!selectedKnowledgeBaseId.value) return '未使用知识库'
@@ -321,7 +324,7 @@ const activeProjectName = computed(() => {
   if (!activeProjectId.value) return ''
   if (selectedProject.value?.id === activeProjectId.value) return selectedProject.value.name
   if (handoffProject.value?.id === activeProjectId.value && handoffProject.value.name) return handoffProject.value.name
-  return `项目 #${activeProjectId.value}`
+  return `项目计划 #${activeProjectId.value}`
 })
 const activeContextSummary = computed(() => {
   const project = activeProjectName.value
@@ -329,7 +332,7 @@ const activeContextSummary = computed(() => {
   if (project && knowledge) return `${project} / ${knowledge}`
   if (project) return project
   if (knowledge) return knowledge
-  return '选择项目 / 知识库'
+  return '选择项目计划 / 知识库'
 })
 const hasUserMessages = computed(() => messages.value.some((message) => message.role === 'user'))
 const latestAssistantMessage = computed(() => [...messages.value].reverse().find((message) => message.role === 'assistant'))
@@ -425,6 +428,7 @@ const memoryKeyLabels: Record<string, string> = {
 }
 
 onMounted(async () => {
+  const initialEpoch = conversationEpoch
   const handoff = workspace.consumeChatDraft()
   if (handoff) {
     input.value = handoff.draft
@@ -441,8 +445,10 @@ onMounted(async () => {
   void refreshBrief()
   try {
     await refreshConversations()
+    if (viewDisposed || initialEpoch !== conversationEpoch) return
     const requestedConversationId = routeQueryText(route.query.conversationId) || undefined
-    const initialConversationId = resolveConversationToRestore({
+    const requestedNewChat = routeQueryText(route.query.newChat)
+    const initialConversationId = requestedNewChat ? '' : resolveConversationToRestore({
       requestedId: requestedConversationId,
       storedId: window.localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY),
       conversationIds: conversations.value.map((item) => String(item.id)),
@@ -450,10 +456,10 @@ onMounted(async () => {
     })
     if (initialConversationId) {
       await loadConversation(initialConversationId)
-    }
+    } else if (requestedNewChat) resetNewConversation()
     syncPendingMemoriesToLatestAssistant()
   } catch {
-    error.value = '会话列表暂时无法加载，你仍然可以开始新会话。'
+    error.value = '对话列表暂时无法加载，你仍然可以开始新对话。'
   } finally {
     initializing.value = false
     await nextTick()
@@ -465,17 +471,24 @@ onMounted(async () => {
 })
 
 watch(
-  [() => route.query.conversationId, () => route.query.messageId],
-  async ([rawConversationId, rawMessageId], previous) => {
-    if (initializing.value) return
+  [() => route.query.conversationId, () => route.query.messageId, () => route.query.newChat],
+  async ([rawConversationId, rawMessageId, rawNewChat], previous) => {
+    if (viewDisposed) return
+    const requestedNewChat = routeQueryText(rawNewChat)
+    if (requestedNewChat && requestedNewChat !== routeQueryText(previous?.[2])) {
+      showContextPanel.value = false
+      showMemoryExplanation.value = false
+      resetNewConversation()
+      return
+    }
     const requestedConversationId = routeQueryText(rawConversationId)
     const requestedMessageId = routeQueryText(rawMessageId)
-    if (!requestedConversationId || !requestedMessageId) return
+    if (!requestedConversationId) return
     if (previous && routeQueryText(previous[0]) === requestedConversationId && routeQueryText(previous[1]) === requestedMessageId) return
     showContextPanel.value = false
     showMemoryExplanation.value = false
     if (conversationId.value !== requestedConversationId) await loadConversation(requestedConversationId)
-    await revealSourceMessage(requestedMessageId)
+    if (requestedMessageId && requestedConversationId === conversationId.value) await revealSourceMessage(requestedMessageId)
   }
 )
 
@@ -534,7 +547,7 @@ async function refreshProjects() {
       : null
     writeStoredContext(CHAT_PROJECT_STORAGE_KEY, selectedProjectId.value)
   } catch {
-    projectsError.value = '项目列表暂时无法加载。'
+    projectsError.value = '项目计划列表暂时无法加载。'
   } finally {
     projectsLoading.value = false
   }
@@ -621,10 +634,11 @@ async function ensureConversationId(firstMessage: string, epoch = conversationEp
   if (conversationId.value) return conversationId.value
 
   const title = firstMessage.length > 18 ? `${firstMessage.slice(0, 18)}...` : firstMessage
-  const response = await createConversation(title || '新会话')
+  const response = await createConversation(title || '新对话')
   if (epoch !== conversationEpoch) return ''
   conversationId.value = String(response.data.id)
   window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, conversationId.value)
+  await syncConversationLocation(conversationId.value)
   await refreshConversations()
   return conversationId.value
 }
@@ -659,9 +673,10 @@ async function loadConversation(id: string) {
     if (epoch !== conversationEpoch) return
     messages.value = response.data.map(historyMessage)
     window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, String(id))
+    await syncConversationLocation(String(id))
     await refreshBrief()
   } catch {
-    if (epoch === conversationEpoch) error.value = '会话加载失败，请稍后重试。'
+    if (epoch === conversationEpoch) error.value = '对话加载失败，请稍后重试。'
   } finally {
     if (epoch === conversationEpoch) {
       loading.value = false
@@ -704,6 +719,7 @@ async function pollRecoveredConversation() {
     if (!current()) return
     Object.assign(target, reconcileChatTurn(target, response.data))
     recoveryFailures = target.recoveryState === 'unconfirmed' ? recoveryFailures + 1 : 0
+    if (!isActiveTurnPhase(target.phase) && !target.recoveryState) notifyChatNavigationChanged(navigationOwner)
   } catch {
     if (!current()) return
     target.recoveryState = 'unconfirmed'
@@ -745,7 +761,16 @@ function changeConversation() {
   else newConversation()
 }
 
-function newConversation() {
+function newConversation() { void router.push(newChatLocation()) }
+
+async function syncConversationLocation(id: string) {
+  if (viewDisposed || route.name !== 'chat' || (routeQueryText(route.query.conversationId) === id && !route.query.newChat)) return
+  const query: LocationQueryRaw = { ...route.query, conversationId: id }
+  delete query.newChat
+  await router.replace({ query })
+}
+
+function resetNewConversation() {
   detachConversation()
   error.value = ''
   commercialQuotaError.value = false
@@ -756,6 +781,7 @@ function newConversation() {
   conversationId.value = ''
   window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, NEW_CONVERSATION_STORAGE_VALUE)
   messages.value = []
+  input.value = ''
   nextTick(() => composerRef.value?.focus())
 }
 
@@ -778,7 +804,7 @@ async function saveTitle() {
       editingConversationId.value = ''
     }
   } catch (exception) {
-    error.value = getRequestErrorMessage(exception, '会话标题保存失败，请稍后重试。')
+    error.value = getRequestErrorMessage(exception, '对话标题保存失败，请稍后重试。')
   } finally {
     titleSaving.value = false
   }
@@ -843,7 +869,7 @@ async function revealSourceMessage(messageId: string) {
     .find((element) => element.dataset.messageId === messageId)
   if (!target) {
     highlightedMessageId.value = ''
-    sourceReplayNotice.value = '原消息已删除、无权访问或不在当前会话中。'
+    sourceReplayNotice.value = '原消息已删除、无权访问或不在当前对话中。'
     return
   }
   showContextPanel.value = false
@@ -951,7 +977,7 @@ async function submit(retryContext?: RetryTurnContext) {
   try {
     activeConversationId = retryContext ? conversationId.value : await ensureConversationId(message, epoch)
     if (epoch !== conversationEpoch) return
-    if (!activeConversationId) throw new Error('会话尚未保存，无法重试。')
+    if (!activeConversationId) throw new Error('对话尚未保存，无法重试。')
     const pending: Message = {
       role: 'assistant', content: '', turnId, phase: 'THINKING',
       statusText: '正在等待执行进度…', debugDataState: 'pending', agentProgress: [], toolCalls: [], processTimeline: [], processStartedAt: Date.now()
@@ -1097,6 +1123,7 @@ async function submit(retryContext?: RetryTurnContext) {
       error.value = fallback
     }
   } finally {
+    if (activeConversationId) notifyChatNavigationChanged(navigationOwner)
     if (epoch === conversationEpoch) {
       if (streamController.value === controller) streamController.value = null
       syncRecoveredTurnPolling()
@@ -1767,7 +1794,7 @@ function recalledMemoryItems(message: Message): DebugMemoryItem[] {
         kind: 'short-term',
         label: String(turn.role || '').toLowerCase() === 'assistant' ? '短期记忆 · 助手' : '短期记忆 · 用户',
         value,
-        meta: '当前会话上下文'
+        meta: '当前对话上下文'
       })
     }
   }
@@ -2452,7 +2479,7 @@ function escapeHtml(text: string) {
       <div>
         <h1>AI 聊天</h1>
         <form v-if="editingTitle" class="title-editor" @submit.prevent="saveTitle">
-          <input v-model="titleDraft" maxlength="120" aria-label="会话标题" />
+          <input v-model="titleDraft" maxlength="120" aria-label="对话标题" />
           <button type="submit" :disabled="titleSaving || !titleDraft.trim()">{{ titleSaving ? '保存中…' : '保存' }}</button>
           <button
             class="secondary"
@@ -2467,7 +2494,7 @@ function escapeHtml(text: string) {
         </p>
       </div>
       <div class="row toolbar-controls">
-        <button class="secondary" type="button" @click="router.push('/local-project')">连接本地项目</button>
+        <button class="secondary" type="button" @click="router.push('/local-project')">打开本地项目</button>
         <div v-if="debugControlsEnabled" class="debug-controls">
           <label class="debug-toggle">
             <input v-model="showDebug" type="checkbox" />
@@ -2479,7 +2506,7 @@ function escapeHtml(text: string) {
           <PanelRightOpen :size="16" aria-hidden="true" />
           当前上下文
         </button>
-        <button class="secondary" type="button" @click="newConversation">新建</button>
+        <button class="secondary" type="button" @click="newConversation">新对话</button>
       </div>
     </div>
 
@@ -2556,7 +2583,7 @@ function escapeHtml(text: string) {
         </template>
 
         <template v-else>
-          <p v-if="message.attachmentContextInherited" class="attachment-context-note">沿用本会话已上传的文件</p>
+          <p v-if="message.attachmentContextInherited" class="attachment-context-note">沿用本对话已上传的文件</p>
           <ChatThinkingProcess
             :key="message.turnId || message.id || index"
             :items="message.agentProgress || []"
@@ -2636,7 +2663,7 @@ function escapeHtml(text: string) {
             <span class="badge">{{ projectConfidenceText(message) }}</span>
           </div>
           <p class="muted">{{ projectResolver(message)?.reason }}</p>
-          <RouterLink class="inline-link" :to="`/projects/${projectResolver(message)?.projectId}`">打开项目页</RouterLink>
+          <RouterLink class="inline-link" :to="`/projects/${projectResolver(message)?.projectId}`">打开项目计划</RouterLink>
           <div v-if="projectContext(message)?.goals?.length" class="memory-used-card">
             <strong>进行中目标</strong>
             <span>{{ projectContext(message)?.goals?.slice(0, 3).map((goal) => goal.title).join('、') }}</span>
@@ -3195,38 +3222,39 @@ function escapeHtml(text: string) {
     <ContextPanel title="当前上下文" :open="showContextPanel" @close="showContextPanel = false">
       <section class="context-section context-controls">
         <small>切换上下文</small>
-        <p class="context-persistence-note">项目和知识库会持续用于新消息与新会话，直到你在这里切换为不使用。</p>
+        <p class="context-persistence-note">关联的项目计划和知识库会持续用于新消息与新对话，直到你在这里切换为不使用。</p>
         <label>
-          <span>会话</span>
+          <span>切换对话</span>
           <select
             v-model="conversationId"
             data-testid="conversation-select"
-            aria-label="选择会话"
+            aria-label="选择对话"
             :disabled="titleSaving"
             @change="changeConversation"
           >
-            <option value="">新会话</option>
+            <option value="">新对话</option>
             <option v-for="item in conversations" :key="item.id" :value="String(item.id)">
               {{ item.title }}
             </option>
           </select>
         </label>
         <label>
-          <span>项目</span>
+          <span>关联项目计划</span>
           <select
             v-model="selectedProjectId"
             data-testid="chat-project-select"
-            aria-label="选择项目"
+            aria-label="选择关联项目计划"
             :disabled="loading || projectsLoading"
             @change="changeProjectContext"
           >
-            <option value="">不关联项目</option>
+            <option value="">不关联项目计划</option>
             <option v-for="item in projects" :key="item.id" :value="String(item.id)">
               {{ item.name }}
             </option>
           </select>
-          <small v-if="projectsLoading" class="context-load-note">项目正在后台加载…</small>
+          <small v-if="projectsLoading" class="context-load-note">项目计划正在后台加载…</small>
           <small v-else-if="projectsError" class="context-load-note danger">{{ projectsError }}</small>
+          <small class="context-load-note">使用“任务”中项目计划的目标、任务和资料。</small>
         </label>
         <label>
           <span>知识库</span>
@@ -3247,12 +3275,12 @@ function escapeHtml(text: string) {
         </label>
       </section>
       <section class="context-section">
-        <small>项目</small>
-        <strong>{{ activeProjectName || '未关联项目' }}</strong>
-        <RouterLink v-if="activeProjectId" class="inline-link" :to="`/projects/${activeProjectId}`">打开项目</RouterLink>
-        <p v-else class="muted">从工作台或项目页发起对话，可自动携带项目上下文。</p>
+        <small>关联项目计划</small>
+        <strong>{{ activeProjectName || '未关联项目计划' }}</strong>
+        <RouterLink v-if="activeProjectId" class="inline-link" :to="`/projects/${activeProjectId}`">打开项目计划</RouterLink>
+        <p v-else class="muted">从任务或项目计划发起对话，可自动携带项目计划上下文。</p>
         <span v-if="contextProject?.projectId && contextProject.projectId !== activeProjectId">
-          最近回答使用了 {{ contextProject.projectName || `项目 #${contextProject.projectId}` }}
+          最近回答使用了 {{ contextProject.projectName || `项目计划 #${contextProject.projectId}` }}
         </span>
       </section>
       <section class="context-section">

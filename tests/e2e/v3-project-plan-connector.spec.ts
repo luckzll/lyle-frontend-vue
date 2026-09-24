@@ -16,11 +16,13 @@ test('covers V3 project plan controls and connector states', async ({ page }) =>
   await page.getByTestId('auth-submit').click()
   await expect(page).toHaveURL('/dashboard')
 
-  await page.getByRole('link', { name: '项目', exact: true }).click()
-  await page.getByRole('button', { name: '新建', exact: true }).click()
-  await page.getByPlaceholder('项目名称').fill(projectName)
-  await page.getByPlaceholder('一句话定位').fill('验证 V3 项目空间')
-  await page.getByPlaceholder('当前阶段').fill('E2E 验收')
+  await page.getByRole('link', { name: '任务', exact: true }).click()
+  await page.getByRole('navigation', { name: '任务分类' }).getByRole('link', { name: '项目计划', exact: true }).click()
+  await page.getByRole('button', { name: '创建第一个项目', exact: true }).click()
+  await page.getByLabel('项目名称', { exact: true }).fill(projectName)
+  await page.getByLabel('一句话定位（选填）', { exact: true }).fill('验证 V3 项目空间')
+  await page.getByText('更多设置（选填）', { exact: true }).click()
+  await page.getByLabel('当前阶段', { exact: true }).fill('E2E 验收')
   await page.getByRole('button', { name: '创建项目', exact: true }).click()
   await expect(page.getByRole('heading', { name: projectName })).toBeVisible()
 

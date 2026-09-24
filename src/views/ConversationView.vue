@@ -43,7 +43,7 @@ async function refresh() {
     conversations.value = response.data
     hasLoaded.value = true
   } catch (error) {
-    if (!disposed && version === refreshVersion) loadError.value = toAppError(error, '会话暂时无法加载，请重试。').message
+    if (!disposed && version === refreshVersion) loadError.value = toAppError(error, '对话暂时无法加载，请重试。').message
   } finally {
     if (!disposed && version === refreshVersion) loading.value = false
   }
@@ -77,12 +77,12 @@ async function create() {
     conversations.value = [response.data, ...conversations.value.filter((item) => item.id !== response.data.id)]
     query.value = ''
     title.value = ''
-    notice.value = '会话已创建，点击标题即可开始聊天。'
+    notice.value = '对话已创建，点击标题即可开始聊天。'
     creating.value = false
     await closeCreator()
     if (needsListReload) await refresh()
   } catch (error) {
-    if (!disposed) createError.value = toAppError(error, '会话创建失败，请重试。').message
+    if (!disposed) createError.value = toAppError(error, '对话创建失败，请重试。').message
   } finally {
     if (!disposed) creating.value = false
   }
@@ -102,13 +102,13 @@ async function remove() {
     ++refreshVersion
     loading.value = false
     conversations.value = conversations.value.filter((entry) => entry.id !== item.id)
-    notice.value = '会话已删除。'
+    notice.value = '对话已删除。'
     pendingDelete.value = null
     await nextTick()
     await nextTick()
     pageHeading.value?.focus()
   } catch (error) {
-    if (!disposed) deleteError.value = toAppError(error, '会话删除失败，请重试。').message
+    if (!disposed) deleteError.value = toAppError(error, '对话删除失败，请重试。').message
   } finally {
     if (!disposed) removingId.value = ''
   }
@@ -121,70 +121,74 @@ onBeforeUnmount(() => { disposed = true; ++refreshVersion })
 <template>
   <section class="conversations-page" :class="{ 'conversations-page--empty': isEmpty }" :aria-busy="loading">
     <header class="conversations-heading">
-      <div><h1 ref="pageHeading" tabindex="-1">会话</h1><p>每一次对话，都可以接着聊。</p></div>
+      <div><h1 ref="pageHeading" tabindex="-1">聊天记录</h1><p>查找普通聊天，继续上次的话题。</p></div>
       <div class="heading-actions">
-        <AppButton variant="ghost" size="icon" aria-label="刷新会话" :loading="loading" :disabled="creating || Boolean(removingId)" @click="refresh"><RefreshCw v-if="!loading" :size="18" aria-hidden="true" /></AppButton>
-        <AppButton v-if="!isEmpty" :disabled="loading && !hasLoaded" @click="openCreator"><Plus :size="17" aria-hidden="true" />新建会话</AppButton>
+        <AppButton variant="ghost" size="icon" aria-label="刷新聊天记录" :loading="loading" :disabled="creating || Boolean(removingId)" @click="refresh"><RefreshCw v-if="!loading" :size="18" aria-hidden="true" /></AppButton>
+        <AppButton v-if="!isEmpty" :disabled="loading && !hasLoaded" @click="openCreator"><Plus :size="17" aria-hidden="true" />新建对话</AppButton>
       </div>
     </header>
+    <p class="local-history-link">本地项目的对话按项目保存在此浏览器。<RouterLink to="/local-project">查看项目对话<ArrowRight :size="14" aria-hidden="true" /></RouterLink></p>
     <p v-if="notice" class="conversation-notice" role="status">{{ notice }}</p>
-    <LoadingState v-if="loading && !hasLoaded" label="正在读取会话…" :cards="3" />
-    <ErrorState v-else-if="loadError && !conversations.length" title="会话暂时无法加载" :message="loadError" :retrying="loading" @retry="refresh" />
+    <LoadingState v-if="loading && !hasLoaded" label="正在读取对话…" :cards="3" />
+    <ErrorState v-else-if="loadError && !conversations.length" title="对话暂时无法加载" :message="loadError" :retrying="loading" @retry="refresh" />
     <template v-else>
-      <div v-if="loadError" class="conversation-warning" role="alert"><span>会话列表未完整加载，当前仅显示已读取的内容。{{ loadError }}</span><AppButton variant="secondary" size="sm" :loading="loading" @click="refresh">重试</AppButton></div>
+      <div v-if="loadError" class="conversation-warning" role="alert"><span>对话列表未完整加载，当前仅显示已读取的内容。{{ loadError }}</span><AppButton variant="secondary" size="sm" :loading="loading" @click="refresh">重试</AppButton></div>
       <template v-if="isEmpty">
         <section class="conversations-welcome" aria-labelledby="conversations-welcome-title">
           <span class="welcome-icon"><MessagesSquare :size="36" :stroke-width="1.6" aria-hidden="true" /></span>
           <h2 id="conversations-welcome-title"><span>把想法留下，</span><span>下次接着聊</span></h2>
-          <p>从一个问题开始，和 Lyle 一起理清思路。<br />对话会保存在这里，随时回来继续。</p>
+          <p>从一个问题开始，和 Lyle 一起理清思路。<br />普通聊天记录会保存在这里，随时回来继续。</p>
           <div class="welcome-actions">
-            <AppButton class="welcome-primary" @click="openCreator"><Plus :size="19" aria-hidden="true" />新建会话</AppButton>
+            <AppButton class="welcome-primary" @click="openCreator"><Plus :size="19" aria-hidden="true" />新建对话</AppButton>
             <RouterLink class="text-action" :to="{ name: 'chat' }">直接去聊天<ArrowRight :size="17" aria-hidden="true" /></RouterLink>
           </div>
         </section>
         <section class="conversation-guide" aria-labelledby="conversation-guide-title">
           <div class="guide-heading"><h2 id="conversation-guide-title">让对话，成为思路的延续</h2><p>按主题整理，轻松找回之前的讨论。</p></div>
           <div class="guide-grid">
-            <article><span class="guide-icon"><MessageSquare :size="22" aria-hidden="true" /></span><div><h3>一个话题，一段对话</h3><p>为工作、学习或灵感单独开启会话。</p></div></article>
-            <article><span class="guide-icon guide-icon--blue"><Clock3 :size="22" aria-hidden="true" /></span><div><h3>随时继续</h3><p>最近更新的会话排在前面，方便接着聊。</p></div></article>
+            <article><span class="guide-icon"><MessageSquare :size="22" aria-hidden="true" /></span><div><h3>一个话题，一段对话</h3><p>为工作、学习或灵感单独开启对话。</p></div></article>
+            <article><span class="guide-icon guide-icon--blue"><Clock3 :size="22" aria-hidden="true" /></span><div><h3>随时继续</h3><p>最近更新的对话排在前面，方便接着聊。</p></div></article>
             <article><span class="guide-icon guide-icon--amber"><TextCursorInput :size="22" aria-hidden="true" /></span><div><h3>起个好找的名字</h3><p>用清楚的主题命名，之后搜索更方便。</p></div></article>
           </div>
         </section>
       </template>
-      <section v-else class="conversation-library" aria-label="会话列表">
+      <section v-else class="conversation-library" aria-label="普通聊天记录">
         <div class="library-toolbar">
-          <div class="library-title"><h2>{{ loadError ? '已读取的会话' : '全部会话' }}</h2><span>{{ conversations.length }}</span></div>
-          <label class="conversation-search"><Search :size="18" aria-hidden="true" /><input v-model="query" type="search" aria-label="搜索会话" placeholder="搜索会话标题" /><button v-if="query" type="button" aria-label="清除搜索" @click="query = ''"><X :size="16" aria-hidden="true" /></button></label>
+          <div class="library-title"><h2>{{ loadError ? '已读取的聊天记录' : '普通聊天记录' }}</h2><span>{{ conversations.length }}</span></div>
+          <label class="conversation-search"><Search :size="18" aria-hidden="true" /><input v-model="query" type="search" aria-label="搜索对话" placeholder="搜索对话标题" /><button v-if="query" type="button" aria-label="清除搜索" @click="query = ''"><X :size="16" aria-hidden="true" /></button></label>
         </div>
         <div v-if="filteredConversations.length" class="conversation-list">
           <article v-for="item in filteredConversations" :key="item.id" class="conversation-item">
             <span class="conversation-item-icon"><MessageSquare :size="21" :stroke-width="1.7" aria-hidden="true" /></span>
             <RouterLink class="conversation-open" :to="{ name: 'chat', query: { conversationId: item.id } }">
-              <div class="conversation-item-title"><h3>{{ item.title || '未命名会话' }}</h3><span v-if="item.id === sortedConversations[0]?.id" class="recent-tag">最近</span></div>
+              <div class="conversation-item-title"><h3>{{ item.title || '未命名对话' }}</h3><span v-if="item.id === sortedConversations[0]?.id" class="recent-tag">最近</span></div>
               <p>更新于 {{ formatBeijingTimeShort(item.updatedAt || item.createdAt, '暂无时间') }}</p>
             </RouterLink>
-            <AppButton class="delete-conversation" variant="ghost" size="icon" :aria-label="'删除会话：' + item.title" :title="'删除会话：' + item.title" :disabled="Boolean(removingId)" @click="askToDelete(item)"><Trash2 :size="17" aria-hidden="true" /></AppButton>
-            <RouterLink class="continue-conversation" :to="{ name: 'chat', query: { conversationId: item.id } }" :aria-label="'继续会话：' + item.title"><span>继续对话</span><ArrowRight :size="17" aria-hidden="true" /></RouterLink>
+            <AppButton class="delete-conversation" variant="ghost" size="icon" :aria-label="'删除对话：' + item.title" :title="'删除对话：' + item.title" :disabled="Boolean(removingId)" @click="askToDelete(item)"><Trash2 :size="17" aria-hidden="true" /></AppButton>
+            <RouterLink class="continue-conversation" :to="{ name: 'chat', query: { conversationId: item.id } }" :aria-label="'继续对话：' + item.title"><span>继续对话</span><ArrowRight :size="17" aria-hidden="true" /></RouterLink>
           </article>
         </div>
-        <div v-else class="search-empty" role="status"><Search :size="28" aria-hidden="true" /><h3>没有找到相关会话</h3><p>换个关键词，或查看全部会话。</p><AppButton variant="secondary" size="sm" @click="query = ''">清除搜索</AppButton></div>
-        <footer class="library-footer"><span aria-live="polite">{{ query.trim() ? '找到 ' + filteredConversations.length + ' 个会话' : conversations.length + ' 个会话' }}</span><span>按最近更新排序</span></footer>
+        <div v-else class="search-empty" role="status"><Search :size="28" aria-hidden="true" /><h3>没有找到相关对话</h3><p>换个关键词，或查看全部对话。</p><AppButton variant="secondary" size="sm" @click="query = ''">清除搜索</AppButton></div>
+        <footer class="library-footer"><span aria-live="polite">{{ query.trim() ? '找到 ' + filteredConversations.length + ' 个对话' : conversations.length + ' 个对话' }}</span><span>按最近更新排序</span></footer>
       </section>
     </template>
-    <DetailDrawer :open="showCreate" title="新建会话" description="给这次讨论起个名字，之后更容易找到。" @update:open="(open) => { if (!open) closeCreator() }">
+    <DetailDrawer :open="showCreate" title="新建对话" description="给这次讨论起个名字，之后更容易找到。" @update:open="(open) => { if (!open) closeCreator() }">
       <form class="conversation-create-form" @submit.prevent="create">
-        <label for="conversation-title">会话标题</label>
+        <label for="conversation-title">对话标题</label>
         <input id="conversation-title" ref="titleInput" v-model="title" autofocus required maxlength="255" placeholder="例如：产品方案讨论" :disabled="creating" :aria-invalid="Boolean(createError)" :aria-describedby="createError ? 'conversation-create-error' : 'conversation-title-hint'" @input="createError = ''" />
         <p id="conversation-title-hint" class="form-hint">可以用项目名称、问题或一个想法作为标题。</p>
         <p v-if="createError" id="conversation-create-error" class="form-error" role="alert">{{ createError }}</p>
-        <div class="create-actions"><AppButton variant="secondary" :disabled="creating" @click="closeCreator">取消</AppButton><AppButton type="submit" :loading="creating" :disabled="!title.trim()">{{ creating ? '创建中…' : '创建会话' }}</AppButton></div>
+        <div class="create-actions"><AppButton variant="secondary" :disabled="creating" @click="closeCreator">取消</AppButton><AppButton type="submit" :loading="creating" :disabled="!title.trim()">{{ creating ? '创建中…' : '创建对话' }}</AppButton></div>
       </form>
     </DetailDrawer>
-    <ConfirmActionDialog :open="Boolean(pendingDelete)" title="删除会话" :description="'删除“' + (pendingDelete?.title || '') + '”后，会话和聊天消息将被移除；由它创建的任务、项目关联和已确认记忆会保留。'" confirm-label="确认删除" danger :busy="Boolean(removingId)" @update:open="(open) => { if (!open) pendingDelete = null }" @confirm="remove"><p v-if="deleteError" class="form-error" role="alert">{{ deleteError }}</p></ConfirmActionDialog>
+    <ConfirmActionDialog :open="Boolean(pendingDelete)" title="删除对话" :description="'删除“' + (pendingDelete?.title || '') + '”后，对话和聊天消息将被移除；由它创建的任务、项目关联和已确认记忆会保留。'" confirm-label="确认删除" danger :busy="Boolean(removingId)" @update:open="(open) => { if (!open) pendingDelete = null }" @confirm="remove"><p v-if="deleteError" class="form-error" role="alert">{{ deleteError }}</p></ConfirmActionDialog>
   </section>
 </template>
 
 <style scoped>
+.local-history-link { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 0; padding: 12px 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.7; }
+.local-history-link a { display: inline-flex; align-items: center; gap: 4px; color: var(--primary); text-decoration: none; }
+.local-history-link a:hover { text-decoration: underline; }
 .conversations-page { display: grid; gap: 24px; width: min(100%, 1180px); min-width: 0; margin: 0 auto; }
 .conversations-page--empty { gap: 0; }
 .conversations-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
