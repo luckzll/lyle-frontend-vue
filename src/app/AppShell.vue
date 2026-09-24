@@ -180,6 +180,9 @@ watch(
 
         <RouterView />
       </main>
+      <footer class="lyle-shell__filing">
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">豫ICP备2025147423号-1</a>
+      </footer>
     </div>
 
     <MobileNavigation
@@ -241,8 +244,27 @@ watch(
   display: grid;
   height: 100dvh;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
+}
+
+.lyle-shell__filing {
+  padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.lyle-shell__filing a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.lyle-shell__filing a:hover,
+.lyle-shell__filing a:focus-visible {
+  color: var(--primary);
+  text-decoration: underline;
 }
 
 .lyle-shell__main {
