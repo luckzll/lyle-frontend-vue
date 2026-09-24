@@ -22,6 +22,10 @@ test('anonymous visitors can preview chat and are prompted only when they use a 
 
   await expect(page).toHaveURL('/')
   await expect(page.getByTestId('guest-chat-preview')).toBeVisible()
+  const filing = page.getByRole('link', { name: '豫ICP备2025147423号-1', exact: true })
+  await expect(filing).toBeVisible()
+  await expect(filing).toHaveAttribute('href', 'https://beian.miit.gov.cn/')
+  await expect(filing).toHaveAttribute('rel', 'noopener noreferrer')
   await expect(page.getByRole('heading', { name: '今天想推进什么？' })).toBeVisible()
   await expect(page.getByRole('link', { name: '登录或注册，解锁完整工作台' }).first()).toBeVisible()
 
