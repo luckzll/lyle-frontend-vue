@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ArrowUp, Bot, Check, ChevronDown, ChevronRight, Code, Download, FileCode, FolderOpen, FolderPlus, History, LoaderCircle, MessageSquare, Pencil, Plus, Search, ShieldCheck, Sparkles, Square, Trash2, X } from '@lucide/vue'
+import { ArrowLeft, ArrowUp, Bot, Check, ChevronDown, ChevronRight, Code, Download, FileCode, FolderOpen, FolderPlus, History, LoaderCircle, Pencil, Plus, Search, ShieldCheck, Sparkles, Square, Trash2, X } from '@lucide/vue'
 import { authState } from '@/auth'
 import { workspaceStep } from '@/api/local-workspace'
 import { CHAT_MODEL_OPTIONS, CHAT_MODEL_STORAGE_KEY, resolveChatModelId, type ChatModelId } from '@/domain/chat-model'
@@ -56,11 +56,7 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined
 const busy = computed(() => loading.value || connecting.value || permissionBusy.value || applying.value)
 const canSend = computed(() => !!activeSession.value && !!input.value.trim() && !busy.value && isActive())
 const labels: Record<string, string> = { workspace_list: '查看目录', workspace_read: '读取文件', workspace_search: '搜索项目', workspace_edit: '修改文件', workspace_create: '新建文件' }
-const suggestions = computed(() => sessionKind.value === 'chat' ? [
-  { icon: MessageSquare, title: '讨论一个想法', detail: '先理清需求与实现思路', prompt: '我想和你讨论这个项目的一个想法：' },
-  { icon: Search, title: '读懂这个项目', detail: '了解结构、用途与关键实现', prompt: '查看项目结构，按需读取关键文件，说明项目用途和启动入口。' },
-  { icon: Code, title: '评审一段代码', detail: '解释问题，给出修改建议', prompt: '请分析项目代码，先给出改进建议，不修改文件。' }
-] : [
+const suggestions = computed(() => [
   { icon: FolderOpen, title: '了解这个项目', detail: '梳理用途、结构与启动入口', prompt: '查看项目结构，按需读取关键文件，说明项目用途和启动入口。' },
   { icon: Search, title: '帮我排查问题', detail: '定位原因，给出修改建议', prompt: '请帮我排查这个项目的问题：' },
   { icon: Code, title: '一起改个功能', detail: '描述需求，查看实际修改', prompt: '我想修改一个功能：' }
@@ -377,7 +373,7 @@ async function send() {
       if (step === 15) throw new Error('已达到本轮 16 步上限；已完成的文件修改保留，请检查后继续')
     }
   } catch (e) {
-    const message = signal.aborted ? executionKind === 'chat' ? '对话已停止。' : '任务已停止，已完成的文件修改保留。' : e instanceof Error ? e.message : '任务失败'
+    const message = signal.aborted ? '任务已停止，已完成的文件修改保留。' : e instanceof Error ? e.message : '任务失败'
     error.value = message
     current.activities.push({ label: message, status: 'error' })
     transcript.splice(checkpoint)
@@ -400,7 +396,7 @@ async function drop(event: DragEvent) {
 function exportConversation() {
   const session = activeSession.value
   if (!session) return
-  const text = '# ' + session.title + '\n\n项目：' + (activeProject.value?.name || session.projectName || '未归类') + '\n\n模式：' + (session.kind === 'chat' ? '聊天' : '智能体') + '\n\n' + turns.value.map(turn =>
+  const text = '# ' + session.title + '\n\n项目：' + (activeProject.value?.name || session.projectName || '未归类') + '\n\n模式：智能体\n\n' + turns.value.map(turn =>
     '## 我\n\n' + turn.question + '\n\n## Lyle AI\n\n' + (turn.answer || '（本轮未完成）') + '\n\n' +
     (turn.activities.length ? '### 执行记录\n\n' + turn.activities.map(a => '- ' + a.label + (a.path ? ' · ' + a.path : '') + (a.detail ? '\n  ' + a.detail : '')).join('\n') : '')
   ).join('\n\n')
@@ -527,28 +523,28 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
 
       <div v-if="!workspace && activeProject" class="reconnect-note"><FolderOpen :size="17" /><p><strong>项目目录未连接。</strong> 可以先讨论任务；读取或修改文件前，请重新连接“{{ activeProject.directoryName }}”。</p></div>
       <div v-if="mode === 'auto'" class="auto-note"><ShieldCheck :size="16" /><span>已允许 AI 直接修改当前目录；每次写入仍会检查文件冲突。</span></div>
-      <div v-if="activeSession" class="conversation-bar"><span><span class="session-kind-badge"><Bot v-if="sessionKind === 'agent'" :size="13" /><MessageSquare v-else :size="13" />{{ sessionKind === 'agent' ? '智能体' : '聊天' }}</span>{{ activeSession.title || '新对话' }}</span><div class="conversation-actions"><button class="text-button" :disabled="!turns.length" @click="exportConversation"><Download :size="14" />导出对话</button><button class="icon-button" :disabled="busy" aria-label="删除当前项目对话" title="删除当前对话" @click="deleteId = activeSession.id"><Trash2 :size="14" /></button></div></div>
+      <div v-if="activeSession" class="conversation-bar"><span><span class="session-kind-badge"><Bot :size="13" />智能体</span>{{ activeSession.title || '新对话' }}</span><div class="conversation-actions"><button class="text-button" :disabled="!turns.length" @click="exportConversation"><Download :size="14" />导出对话</button><button class="icon-button" :disabled="busy" aria-label="删除当前项目对话" title="删除当前对话" @click="deleteId = activeSession.id"><Trash2 :size="14" /></button></div></div>
 
       <div ref="scroller" class="conversation-scroll">
         <div class="conversation-content">
           <section v-if="!turns.length" class="project-empty" :class="{ 'without-project': !activeProject }">
             <span class="welcome-icon"><FolderOpen :size="30" /></span>
             <p class="eyebrow-label">{{ activeProject ? activeProject.name : '从一个项目开始，把工作接着做' }}</p>
-            <h2>{{ !activeProject ? '每个项目，都有自己的工作空间' : sessionKind === 'chat' ? '先聊想法，再决定怎么做' : '把任务交给智能体' }}</h2>
-            <p>{{ !activeProject ? '添加本地文件夹，在项目里讨论方案、执行修改，随时找回每段对话。' : sessionKind === 'chat' ? '讨论需求、理解代码、比较方案。聊天模式只分析和读取文件。' : '描述需要完成的改动，逐步查看执行过程和文件变更。' }}</p>
+            <h2>{{ !activeProject ? '每个项目，都有自己的工作空间' : '把问题和任务交给智能体' }}</h2>
+            <p>{{ !activeProject ? '添加本地文件夹，在一个智能体里讨论方案、读取代码和执行修改。' : '可以先提问；连接目录后，智能体会按权限读取和修改文件。' }}</p>
             <button v-if="!activeProject" class="connect-button" :disabled="busy" @click="connect()"><FolderPlus :size="17" />添加本地项目</button>
             <div v-if="activeProject" class="starter-grid"><button v-for="item in suggestions" :key="item.title" :disabled="busy" @click="useSuggestion(item.prompt)"><component :is="item.icon" :size="19" /><strong>{{ item.title }}</strong><small>{{ item.detail }}</small><ArrowUp :size="15" class="starter-arrow" /></button></div>
-            <div v-else class="workspace-intro"><div><MessageSquare :size="22" /><strong>聊天</strong><span>围绕项目讨论和分析</span></div><div><Bot :size="22" /><strong>智能体</strong><span>按权限完成文件修改</span></div><div><History :size="22" /><strong>项目历史</strong><span>不同对话分别保存</span></div></div>
-            <p class="empty-hint">{{ !activeProject ? '也可以拖入文件夹 · 文件访问需桌面版 Chrome / Edge' : sessionKind === 'chat' ? '需要执行修改时，在下方切换到智能体对话。' : '当前支持源码读取、新建和修改；命令执行暂未接入。' }}</p>
+            <div v-else class="workspace-intro"><div><Bot :size="22" /><strong>智能体</strong><span>提问、讨论与执行都在这里</span></div><div><FolderOpen :size="22" /><strong>本地目录</strong><span>连接后按权限读取和修改</span></div><div><History :size="22" /><strong>项目历史</strong><span>不同对话分别保存</span></div></div>
+            <p class="empty-hint">{{ !activeProject ? '也可以拖入文件夹 · 文件访问需桌面版 Chrome / Edge' : '当前支持源码读取、新建和修改；命令执行暂未接入。' }}</p>
           </section>
           <article v-for="(turn, index) in turns" :key="index" class="project-turn">
             <p class="user-message">{{ turn.question }}</p>
-            <div class="assistant-label"><span class="assistant-mark"><Bot v-if="sessionKind === 'agent'" :size="15" /><span v-else>L</span></span><strong>{{ sessionKind === 'agent' ? 'Lyle 智能体' : 'Lyle AI' }}</strong><span v-if="loading && index === turns.length - 1" role="status">{{ preview ? '等待你确认修改' : '正在处理' }}</span></div>
+            <div class="assistant-label"><span class="assistant-mark"><Bot :size="15" /></span><strong>Lyle 智能体</strong><span v-if="loading && index === turns.length - 1" role="status">{{ preview ? '等待你确认修改' : '正在处理' }}</span></div>
             <details v-if="turn.activities.length" :open="turn.open" class="process"><summary @click.prevent="turn.open = !turn.open"><ChevronRight :size="14" :class="{ expanded: turn.open }" /><LoaderCircle v-if="loading && index === turns.length - 1" :size="14" class="spin" /><span>执行过程 · {{ turn.completed ? '已完成' : loading && index === turns.length - 1 ? preview ? '待确认' : '进行中' : '已停止' }}</span><small>{{ turn.activities.length }} 项</small></summary>
               <div v-for="(activity, activityIndex) in turn.activities" :key="activityIndex" class="activity" :class="{ 'activity-error': activity.status === 'error' }"><LoaderCircle v-if="activity.status === 'running'" :size="15" class="spin" /><X v-else-if="activity.status === 'error'" :size="15" /><Check v-else-if="activity.status === 'done'" :size="15" /><Square v-else :size="15" /><div><span>{{ activity.label }}</span><code v-if="activity.path">{{ activity.path }}</code><small v-if="activity.status === 'waiting'">等待你确认修改</small><p v-if="activity.detail">{{ activity.detail }}</p></div></div>
             </details>
             <LocalProjectText v-if="turn.answer" class="final-answer" :text="turn.answer" />
-            <p v-else-if="!loading || index !== turns.length - 1" class="stopped-note">本轮未完成，可以继续提问。{{ sessionKind === 'agent' ? '已写入的文件修改保留。' : '' }}</p>
+            <p v-else-if="!loading || index !== turns.length - 1" class="stopped-note">本轮未完成，可以继续提问。已写入的文件修改保留。</p>
           </article>
           <section v-if="preview" class="change-card" aria-label="本地修改预览"><h2>{{ preview.hash === null ? '新建文件' : '确认修改' }} <code>{{ preview.path }}</code></h2><p>确认后写入当前目录；若文件已变化，将停止写入。</p><div class="diff-grid"><div v-if="preview.hash !== null"><small>原内容</small><pre>{{ preview.oldText }}</pre></div><div><small>{{ preview.hash === null ? '文件内容' : '替换为' }}</small><pre>{{ preview.newText }}</pre></div></div><footer><button class="secondary" :disabled="applying" @click="rejectPreview">不修改</button><button class="connect-button" :disabled="applying" @click="applyPreview">{{ applying ? '正在授权…' : '应用到本地文件' }}</button></footer></section>
           <div ref="bottom" />
