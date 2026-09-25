@@ -77,6 +77,11 @@ describe('local workspace file boundary', () => {
     expect(change.after).toBe('class MainActivity {\r\n  fun new() {\r\n    println("after")\r\n  }\r\n}\r\n')
     await ws.apply(change, signal(), { confirmed: true })
     expect(f.disk.get('MainActivity.kt')).toBe(change.after)
+    await expect(ws.preview({ id: 'same', name: 'workspace_edit', args: {
+      path: 'MainActivity.kt', expectedHash: (await ws.read('MainActivity.kt')).hash,
+      oldText: '  fun new() {\n    println("after")\n  }',
+      newText: '  fun new() {\r\n    println("after")\r\n  }'
+    } })).rejects.toThrow('相同')
   })
   it('preserves an external edit made while approval was pending', async () => {
     const f = fixture({ 'a.py': 'old' }); const ws = new LocalWorkspace(f.root); const read = await ws.read('a.py')

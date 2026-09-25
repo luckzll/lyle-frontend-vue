@@ -150,9 +150,12 @@ export class LocalWorkspace {
     const usesCrLf = file.text.includes('\r\n') && !file.text.replace(/\r\n/g, '').includes('\n')
     const lineEnding = usesCrLf ? '\r\n' : '\n'
     const adapt = (value: string) => value.replace(/\r\n/g, '\n').replace(/\n/g, lineEnding)
-    const oldText = file.text.split(requestedOldText).length === 2 ? requestedOldText : adapt(requestedOldText)
+    const exactMatches = file.text.split(requestedOldText).length - 1
+    if (exactMatches > 1) throw new Error('替换内容必须精确匹配且只出现一次；请重新读取文件并核对原文')
+    const oldText = exactMatches === 1 ? requestedOldText : adapt(requestedOldText)
     if (file.text.split(oldText).length !== 2) throw new Error('替换内容必须精确匹配且只出现一次；请重新读取文件并核对原文')
     const newText = adapt(requestedNewText)
+    if (oldText === newText) throw new Error('替换前后内容相同，文件未修改')
     const after = file.text.replace(oldText, () => newText); validateText(after)
     return { path, before: file.text, after, hash: expected, oldText, newText }
   }
