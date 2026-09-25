@@ -22,7 +22,7 @@ const activeProject = computed(() => projects.value.find(project => project.id =
 const sessions = ref<LocalSession[]>(loaded.history.sessions)
 const activeId = ref(loaded.history.activeId)
 const activeSession = computed(() => sessions.value.find(s => s.id === activeId.value))
-const sessionKind = computed<SessionKind>(() => activeSession.value?.kind || 'chat')
+const sessionKind = computed<SessionKind>(() => activeSession.value?.kind || 'agent')
 const renaming = ref(false); const projectNameDraft = ref('')
 const workspace = shallowRef<LocalWorkspace>()
 const input = ref(''); const error = ref(''); const storageError = ref(loaded.error || '')
@@ -54,7 +54,7 @@ const handledRouteRequests = new Set<string>()
 const isActive = () => mounted && !inactive && authState.user?.id === owner
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 const busy = computed(() => loading.value || connecting.value || permissionBusy.value || applying.value)
-const canSend = computed(() => !!activeSession.value && (sessionKind.value === 'chat' || !!workspace.value) && !!input.value.trim() && !busy.value && isActive())
+const canSend = computed(() => !!activeSession.value && !!input.value.trim() && !busy.value && isActive())
 const labels: Record<string, string> = { workspace_list: '查看目录', workspace_read: '读取文件', workspace_search: '搜索项目', workspace_edit: '修改文件', workspace_create: '新建文件' }
 const suggestions = computed(() => sessionKind.value === 'chat' ? [
   { icon: MessageSquare, title: '讨论一个想法', detail: '先理清需求与实现思路', prompt: '我想和你讨论这个项目的一个想法：' },
@@ -118,7 +118,6 @@ async function restoreSession(session: LocalSession) {
         if (!isActive() || activeId.value !== session.id) return
         if (owner != null && session.projectId) rememberProjectHandle(owner, session.projectId, handle)
         workspace.value = new LocalWorkspace(handle)
-        if (session.kind === 'chat') await workspace.value.permissions.select('read-only')
         mode.value = workspace.value.permissions.mode
         await browse('')
       }
@@ -143,16 +142,16 @@ async function selectProject(project: LocalProject) {
   persist(); railOpen.value = false
   await syncActiveRoute()
 }
-async function newSession(kind: SessionKind = sessionKind.value, project = activeProject.value, force = false) {
+async function newSession(project = activeProject.value, force = false) {
   if (busy.value || !project) return
   if (!force && activeSession.value && !turns.value.length && !input.value && activeSession.value.projectId === project.id) {
-    activeSession.value.kind = kind
-    if (workspace.value) await workspace.value.permissions.select(kind === 'chat' ? 'read-only' : 'confirm')
-    mode.value = kind === 'chat' ? 'read-only' : 'confirm'; permissionsOpen.value = false; persist()
+    activeSession.value.kind = 'agent'
+    if (workspace.value) await workspace.value.permissions.select('confirm')
+    mode.value = 'confirm'; permissionsOpen.value = false; persist()
     railOpen.value = false; await syncActiveRoute(); await nextTick(); questionInput.value?.focus(); return
   }
   persist()
-  const session = createLocalSessionForProject(project, kind)
+  const session = createLocalSessionForProject(project)
   sessions.value.unshift(session)
   project.updatedAt = Date.now()
   connecting.value = true
@@ -228,7 +227,7 @@ async function applyRouteQuery(query: Record<string, unknown>) {
         if (!session || (project && session.projectId !== project.id)) { error.value = '此对话已被移除或不属于该项目'; return }
         deleteId.value = session.id
       }
-      else if (project) await newSession('chat', project, true)
+      else if (project) await newSession(project, true)
       return
     }
     if (requested.sessionId) {
@@ -307,10 +306,11 @@ async function applyPreview() {
   finally { applying.value = false }
 }
 function rejectPreview() { answerChange?.(false) }
-async function useSuggestion(prompt: string) { if (!activeSession.value) await newSession('chat'); input.value = prompt; railOpen.value = false; await nextTick(); questionInput.value?.focus() }
+async function useSuggestion(prompt: string) { if (!activeSession.value) await newSession(); input.value = prompt; railOpen.value = false; await nextTick(); questionInput.value?.focus() }
 function composerKeydown(event: KeyboardEvent) {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
-  event.preventDefault(); void send()
+  event.preventDefault()
+  void send()
 }
 async function send() {
   if (!canSend.value) return
@@ -525,7 +525,7 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
         <button v-if="activeProject" class="secondary toolbar-new-chat" :disabled="busy" @click="newSession()"><Plus :size="15" />新对话</button>
       </header>
 
-      <div v-if="!workspace && activeProject" class="reconnect-note"><FolderOpen :size="17" /><p><strong>项目记录已恢复。</strong> {{ sessionKind === 'chat' ? '可以继续聊天；读取文件前需要重新连接目录。' : '执行文件任务前，请重新连接“' + activeProject.directoryName + '”。' }}</p></div>
+      <div v-if="!workspace && activeProject" class="reconnect-note"><FolderOpen :size="17" /><p><strong>项目目录未连接。</strong> 可以先讨论任务；读取或修改文件前，请重新连接“{{ activeProject.directoryName }}”。</p></div>
       <div v-if="mode === 'auto'" class="auto-note"><ShieldCheck :size="16" /><span>已允许 AI 直接修改当前目录；每次写入仍会检查文件冲突。</span></div>
       <div v-if="activeSession" class="conversation-bar"><span><span class="session-kind-badge"><Bot v-if="sessionKind === 'agent'" :size="13" /><MessageSquare v-else :size="13" />{{ sessionKind === 'agent' ? '智能体' : '聊天' }}</span>{{ activeSession.title || '新对话' }}</span><div class="conversation-actions"><button class="text-button" :disabled="!turns.length" @click="exportConversation"><Download :size="14" />导出对话</button><button class="icon-button" :disabled="busy" aria-label="删除当前项目对话" title="删除当前对话" @click="deleteId = activeSession.id"><Trash2 :size="14" /></button></div></div>
 
@@ -537,7 +537,7 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
             <h2>{{ !activeProject ? '每个项目，都有自己的工作空间' : sessionKind === 'chat' ? '先聊想法，再决定怎么做' : '把任务交给智能体' }}</h2>
             <p>{{ !activeProject ? '添加本地文件夹，在项目里讨论方案、执行修改，随时找回每段对话。' : sessionKind === 'chat' ? '讨论需求、理解代码、比较方案。聊天模式只分析和读取文件。' : '描述需要完成的改动，逐步查看执行过程和文件变更。' }}</p>
             <button v-if="!activeProject" class="connect-button" :disabled="busy" @click="connect()"><FolderPlus :size="17" />添加本地项目</button>
-            <div v-if="activeProject" class="starter-grid"><button v-for="item in suggestions" :key="item.title" :disabled="busy || (sessionKind === 'agent' && !workspace)" @click="useSuggestion(item.prompt)"><component :is="item.icon" :size="19" /><strong>{{ item.title }}</strong><small>{{ item.detail }}</small><ArrowUp :size="15" class="starter-arrow" /></button></div>
+            <div v-if="activeProject" class="starter-grid"><button v-for="item in suggestions" :key="item.title" :disabled="busy" @click="useSuggestion(item.prompt)"><component :is="item.icon" :size="19" /><strong>{{ item.title }}</strong><small>{{ item.detail }}</small><ArrowUp :size="15" class="starter-arrow" /></button></div>
             <div v-else class="workspace-intro"><div><MessageSquare :size="22" /><strong>聊天</strong><span>围绕项目讨论和分析</span></div><div><Bot :size="22" /><strong>智能体</strong><span>按权限完成文件修改</span></div><div><History :size="22" /><strong>项目历史</strong><span>不同对话分别保存</span></div></div>
             <p class="empty-hint">{{ !activeProject ? '也可以拖入文件夹 · 文件访问需桌面版 Chrome / Edge' : sessionKind === 'chat' ? '需要执行修改时，在下方切换到智能体对话。' : '当前支持源码读取、新建和修改；命令执行暂未接入。' }}</p>
           </section>
@@ -560,10 +560,7 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
         <p v-if="error" class="error-note" role="alert">{{ error }}<button class="icon-button" aria-label="关闭提示" @click="error = ''"><X :size="15" /></button></p>
         <form v-if="activeSession" class="local-composer" @submit.prevent="send">
           <div class="composer-settings">
-            <div class="session-kind-switch" role="group" aria-label="对话模式">
-              <button type="button" :class="{ selected: sessionKind === 'chat' }" :aria-pressed="sessionKind === 'chat'" :disabled="busy || !activeProject" :title="turns.length || input ? '新建聊天对话，保留当前记录' : '讨论和分析，只读取文件'" @click="sessionKind !== 'chat' && newSession('chat')"><MessageSquare :size="14" />聊天</button>
-              <button type="button" :class="{ selected: sessionKind === 'agent' }" :aria-pressed="sessionKind === 'agent'" :disabled="busy || !activeProject" :title="turns.length || input ? '新建智能体对话，保留当前记录' : '按文件权限执行修改'" @click="sessionKind !== 'agent' && newSession('agent')"><Bot :size="14" />智能体</button>
-            </div>
+            <span class="workspace-agent-label"><Bot :size="15" />智能体</span>
             <label class="workspace-model-picker">
               <Sparkles :size="15" aria-hidden="true" />
               <span class="sr-only">项目对话模型</span>
@@ -572,11 +569,11 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
               </select>
               <ChevronDown :size="14" aria-hidden="true" />
             </label>
-            <span class="composer-mode-hint">{{ turns.length || input ? '切换模式将新建对话' : sessionKind === 'chat' ? '讨论和分析 · 只读文件' : modeLabels[mode] }}</span>
+            <span class="composer-mode-hint">{{ workspace ? modeLabels[mode] : '未连接目录 · 可先讨论' }}</span>
           </div>
-          <label class="sr-only" for="local-question">{{ sessionKind === 'chat' ? '项目聊天消息' : '项目任务' }}</label>
-          <textarea id="local-question" ref="questionInput" v-model="input" :disabled="loading || connecting || (sessionKind === 'agent' && !workspace)" :placeholder="sessionKind === 'chat' ? '聊聊这个项目：需求、问题或实现思路…' : workspace ? '描述要完成的任务，智能体将逐步执行…' : '先连接项目目录，再开始执行…'" rows="2" @keydown="composerKeydown" />
-          <footer><span class="composer-mode"><FolderOpen :size="14" />{{ activeProject?.name || '历史对话' }}<span class="mode-label">{{ sessionKind === 'chat' ? '只读分析' : modeLabels[mode] }}</span></span><span class="keyboard-hint">Enter 发送 · Shift + Enter 换行</span><button v-if="loading" class="send-button" type="button" aria-label="停止任务" @click="stop"><Square :size="16" /></button><button v-else class="send-button" type="submit" :disabled="!canSend" aria-label="发送任务"><ArrowUp :size="19" /></button></footer>
+          <label class="sr-only" for="local-question">项目任务</label>
+          <textarea id="local-question" ref="questionInput" v-model="input" :disabled="loading || connecting" :placeholder="workspace ? '描述任务或提问，智能体会按需读取和修改…' : '描述任务或先提问；需要文件时再连接目录…'" rows="2" @keydown="composerKeydown" />
+          <footer><span class="composer-mode"><FolderOpen :size="14" />{{ activeProject?.name || '历史对话' }}<span class="mode-label">{{ workspace ? modeLabels[mode] : '未连接目录' }}</span></span><span class="keyboard-hint">Enter 发送 · Shift + Enter 换行</span><button v-if="!workspace && !loading" class="composer-connect-button" type="button" :disabled="busy" @click="connect(!!activeProject)"><FolderOpen :size="15" />连接目录</button><button v-if="loading" class="send-button" type="button" aria-label="停止任务" @click="stop"><Square :size="16" /></button><button v-else class="send-button" type="submit" :disabled="!canSend" aria-label="发送任务"><ArrowUp :size="19" /></button></footer>
         </form>
         <p class="privacy-note"><ShieldCheck :size="12" />{{ storageError ? '本机保存不可用，请及时导出。' : '项目与对话保存在此浏览器。' }}所需代码片段会发送给模型。</p>
       </div>
@@ -681,6 +678,12 @@ button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:
 .send-button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 12px rgb(79 70 229 / .22)}
 .send-button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .send-button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+.workspace-agent-label{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:0 11px;border:1px solid var(--primary-border);border-radius:10px;background:var(--primary-soft);color:var(--accent-foreground);font-size:12px;font-weight:600;white-space:nowrap}
+.composer-connect-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:38px;padding:0 12px;border:1px solid var(--primary-border);border-radius:10px;background:var(--primary-soft);color:var(--accent-foreground);font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer}
+.composer-connect-button:hover:not(:disabled){background:var(--surface-muted);border-color:var(--primary)}
+.composer-connect-button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.composer-connect-button:disabled{opacity:.55;cursor:not-allowed}
+@container(max-width:1000px){.composer-connect-button{margin-left:auto}}
 @media(max-width:639px){.composer-dock{padding-left:12px;padding-right:12px}.local-composer{padding:11px 12px}.composer-settings{gap:7px}.session-kind-switch button{padding:6px 9px}.workspace-model-picker{min-height:36px;padding:0 8px}.workspace-model-picker select{max-width:130px;font-size:11px}.composer-mode-hint{width:100%;margin-left:2px}.local-composer textarea{height:48px;min-height:48px}.mode-label{display:none}}
 .recovery-export{margin-bottom:8px}
 </style>

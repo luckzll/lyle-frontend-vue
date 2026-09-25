@@ -246,7 +246,7 @@ describe('project-first local history', () => {
     return row
   }
 
-  it('stores independent chat and agent conversations inside one stable project', () => {
+  it('stores independent agent conversations inside one stable project', () => {
     const project = createLocalProject('source-code', '我的网站')
     const chat = createLocalSessionForProject(project)
     const agent = createLocalSessionForProject(project, 'agent')
@@ -263,9 +263,22 @@ describe('project-first local history', () => {
     expect(loaded.history.sessions.find(item => item.id === agent.id)).toEqual(agent)
     expect(agent.turns).toEqual([])
     expect(chat.transcript).toEqual([])
-    expect(chat.kind).toBe('chat')
+    expect(chat.kind).toBe('agent')
     expect(agent.kind).toBe('agent')
     expect(JSON.parse(disk.get(key())!).version).toBe(2)
+  })
+
+  it('keeps old project chat contents when loading them as unified agent conversations', () => {
+    const project = createLocalProject('source-code')
+    const oldChat = createLocalSessionForProject(project)
+    oldChat.title = '旧聊天'; oldChat.draft = '继续分析'; oldChat.turns = sample().turns
+    expect(saveLocalHistory(owner, { projects: [project], sessions: [oldChat], activeProjectId: project.id, activeId: oldChat.id }).ok).toBe(true)
+    const raw = JSON.parse(disk.get(key())!)
+    raw.sessions[0].kind = 'chat'
+    disk.set(key(), JSON.stringify(raw))
+    const loaded = loadLocalHistory(owner)
+    expect(loaded.error).toBeNull()
+    expect(loaded.history.sessions[0]).toMatchObject({ id: oldChat.id, kind: 'agent', title: '旧聊天', draft: '继续分析', turns: oldChat.turns })
   })
 
   it('preserves the project and shared directory handle when its last conversation is deleted', () => {

@@ -150,7 +150,8 @@ function session(value: unknown, restore: boolean, legacy = false): LocalSession
   return {
     id: identifier(row.id), title: text(row.title, 120), projectName: text(row.projectName, 255),
     projectId: legacy || row.projectId === null ? null : identifier(row.projectId),
-    kind: legacy ? 'agent' : row.kind as LocalSessionKind,
+    // Existing project chat records remain intact and continue in the unified agent mode.
+    kind: 'agent',
     createdAt: timestamp(row.createdAt), updatedAt: timestamp(row.updatedAt),
     turns: list(row.turns, LOCAL_HISTORY_LIMITS.turns).map(item => turn(item, restore)),
     transcript: recoverLocalTranscript(transcript), draft: text(row.draft, LOCAL_HISTORY_LIMITS.draftChars),
@@ -167,12 +168,12 @@ export function createLocalProject(directoryName: string, name = directoryName):
 export function createLocalSession(projectName = '', options: { projectId?: string | null; kind?: LocalSessionKind } = {}): LocalSession {
   const now = Date.now()
   return {
-    id: newId(), projectId: options.projectId ?? null, kind: options.kind || 'chat',
+    id: newId(), projectId: options.projectId ?? null, kind: options.kind || 'agent',
     title: '新对话', projectName, createdAt: now, updatedAt: now, turns: [], transcript: [], draft: '',
   }
 }
 
-export function createLocalSessionForProject(project: LocalProject, kind: LocalSessionKind = 'chat'): LocalSession {
+export function createLocalSessionForProject(project: LocalProject, kind: LocalSessionKind = 'agent'): LocalSession {
   return createLocalSession(project.directoryName, { projectId: project.id, kind })
 }
 
