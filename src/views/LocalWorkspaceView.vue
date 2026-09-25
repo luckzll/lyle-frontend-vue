@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ArrowUp, Bot, Check, ChevronDown, ChevronRight, Code, Download, FileCode, FolderOpen, FolderPlus, History, LoaderCircle, MessageSquare, Pencil, Plus, Search, ShieldCheck, Square, Trash2, X } from '@lucide/vue'
+import { ArrowLeft, ArrowUp, Bot, Check, ChevronDown, ChevronRight, Code, Download, FileCode, FolderOpen, FolderPlus, History, LoaderCircle, MessageSquare, Pencil, Plus, Search, ShieldCheck, Sparkles, Square, Trash2, X } from '@lucide/vue'
 import { authState } from '@/auth'
 import { workspaceStep } from '@/api/local-workspace'
+import { CHAT_MODEL_OPTIONS, CHAT_MODEL_STORAGE_KEY, resolveChatModelId, type ChatModelId } from '@/domain/chat-model'
 import LocalProjectText from '@/components/chat/LocalProjectText.vue'
 import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
 import { LocalWorkspace, chooseLocalDirectory, takeLocalDrop, stageLocalDrop, type ChangePreview, type WorkspaceMessage, type LocalDirectoryHandle } from '@/domain/local-workspace'
@@ -29,6 +30,7 @@ const loading = ref(false); const connecting = ref(false); const dragging = ref(
 const hasRecovery = ref(owner != null && !!getLocalHistoryRecovery(owner))
 const turns = ref<LocalTurn[]>([]); let transcript: WorkspaceMessage[] = []
 const mode = ref<'read-only' | 'confirm' | 'auto'>('confirm'); const permissionBusy = ref(false)
+const chatModelId = ref<ChatModelId>(resolveChatModelId(window.localStorage?.getItem(CHAT_MODEL_STORAGE_KEY)))
 const modeLabels = { 'read-only': '仅查看', confirm: '修改前确认', auto: '允许直接修改' }
 const permissionsOpen = ref(false); const permissionTrigger = ref<HTMLButtonElement>()
 const railOpen = ref(false)
@@ -86,6 +88,7 @@ function scheduleSave() {
 }
 watch(input, () => { if (restoring || !isActive()) return; if (activeSession.value) activeSession.value.updatedAt = Date.now(); scheduleSave() }, { flush: 'sync' })
 watch(turns, scheduleSave, { deep: true, flush: 'sync' })
+watch(chatModelId, value => window.localStorage?.setItem(CHAT_MODEL_STORAGE_KEY, value))
 
 async function scrollToBottom(force = false) {
   const el = scroller.value
@@ -329,7 +332,7 @@ async function send() {
       const modelActivity: LocalActivity = { label: '分析下一步', status: 'running' }
       current.activities.push(modelActivity)
       const activity = current.activities[current.activities.length - 1]!
-      const result = await workspaceStep(transcript, signal, text => { commentary += text; activity.detail = commentary; void scrollToBottom() }, { mode: executionKind, workspaceConnected: !!activeWorkspace })
+      const result = await workspaceStep(transcript, signal, text => { commentary += text; activity.detail = commentary; void scrollToBottom() }, { mode: executionKind, workspaceConnected: !!activeWorkspace, modelId: chatModelId.value })
       signal.throwIfAborted()
       activity.status = 'done'; transcript.push(result)
       if (!result.tool_calls?.length) {
@@ -561,6 +564,14 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
               <button type="button" :class="{ selected: sessionKind === 'chat' }" :aria-pressed="sessionKind === 'chat'" :disabled="busy || !activeProject" :title="turns.length || input ? '新建聊天对话，保留当前记录' : '讨论和分析，只读取文件'" @click="sessionKind !== 'chat' && newSession('chat')"><MessageSquare :size="14" />聊天</button>
               <button type="button" :class="{ selected: sessionKind === 'agent' }" :aria-pressed="sessionKind === 'agent'" :disabled="busy || !activeProject" :title="turns.length || input ? '新建智能体对话，保留当前记录' : '按文件权限执行修改'" @click="sessionKind !== 'agent' && newSession('agent')"><Bot :size="14" />智能体</button>
             </div>
+            <label class="workspace-model-picker">
+              <Sparkles :size="15" aria-hidden="true" />
+              <span class="sr-only">项目对话模型</span>
+              <select v-model="chatModelId" aria-label="项目对话模型" :disabled="busy">
+                <option v-for="option in CHAT_MODEL_OPTIONS" :key="option.id" :value="option.id">{{ option.name }}</option>
+              </select>
+              <ChevronDown :size="14" aria-hidden="true" />
+            </label>
             <span class="composer-mode-hint">{{ turns.length || input ? '切换模式将新建对话' : sessionKind === 'chat' ? '讨论和分析 · 只读文件' : modeLabels[mode] }}</span>
           </div>
           <label class="sr-only" for="local-question">{{ sessionKind === 'chat' ? '项目聊天消息' : '项目任务' }}</label>
@@ -648,5 +659,28 @@ button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:
 .local-project .rail-scrim{display:block;position:absolute;inset:0;background:var(--backdrop);border:0;z-index:50}
 .local-project .project-tree{flex:1;min-height:0;overflow:auto}
 .conversation-actions{display:flex;align-items:center;gap:12px;flex-shrink:0}
+.composer-dock{max-width:940px;padding-top:10px;padding-bottom:14px}
+.local-composer{border-radius:17px;padding:13px 15px 11px;box-shadow:0 6px 24px rgb(15 23 42 / .045)}
+.composer-settings{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:12px}
+.session-kind-switch{border-radius:10px;padding:3px;gap:2px}
+.session-kind-switch button{min-height:34px;padding:7px 12px;border-radius:7px;font-weight:550;transition:background-color .15s,color .15s,box-shadow .15s}
+.session-kind-switch button:hover:not(:disabled):not(.selected){background:var(--surface-muted);color:var(--foreground)}
+.session-kind-switch button.selected{background:var(--surface);box-shadow:0 1px 5px rgb(15 23 42 / .1)}
+.workspace-model-picker{display:inline-flex;align-items:center;gap:7px;min-height:40px;padding:0 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--primary);cursor:pointer}
+.workspace-model-picker:hover{border-color:var(--primary-border);background:var(--primary-soft)}
+.workspace-model-picker:focus-within{outline:2px solid var(--primary);outline-offset:2px}
+.workspace-model-picker select{max-width:170px;min-width:0;border:0;outline:0;background:transparent;color:var(--foreground);font:inherit;font-size:12px;font-weight:550;cursor:pointer;appearance:none}
+.workspace-model-picker select:disabled{cursor:not-allowed;opacity:.6}
+.workspace-model-picker>svg:last-child{color:var(--muted-foreground);pointer-events:none}
+.composer-mode-hint{margin-left:auto;line-height:1.5}
+.local-composer textarea{height:52px;min-height:52px}
+.local-composer footer{min-height:40px;padding-top:7px;border-top:1px solid var(--border);margin-top:7px}
+.composer-mode{gap:7px;font-size:11px}
+.mode-label{color:var(--muted-foreground)}
+.send-button{width:38px;height:38px;border-radius:11px;transition:transform .15s,box-shadow .15s,background-color .15s}
+.send-button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 12px rgb(79 70 229 / .22)}
+.send-button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.send-button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+@media(max-width:639px){.composer-dock{padding-left:12px;padding-right:12px}.local-composer{padding:11px 12px}.composer-settings{gap:7px}.session-kind-switch button{padding:6px 9px}.workspace-model-picker{min-height:36px;padding:0 8px}.workspace-model-picker select{max-width:130px;font-size:11px}.composer-mode-hint{width:100%;margin-left:2px}.local-composer textarea{height:48px;min-height:48px}.mode-label{display:none}}
 .recovery-export{margin-bottom:8px}
 </style>

@@ -64,6 +64,20 @@ describe('local workspace file boundary', () => {
     const result = await ws.apply(change, signal(), { confirmed: true })
     expect(result.status).toBe('applied'); expect(f.disk.get('src/a.ts')).toBe('const text = "$& after";\n')
   })
+  it('matches a unique Windows CRLF block when the model supplies LF text', async () => {
+    const original = 'class MainActivity {\r\n  fun old() {\r\n    println("before")\r\n  }\r\n}\r\n'
+    const f = fixture({ 'MainActivity.kt': original }); const ws = new LocalWorkspace(f.root)
+    const read = await ws.read('MainActivity.kt')
+    const change = await ws.preview({ id: 'crlf', name: 'workspace_edit', args: {
+      path: 'MainActivity.kt', expectedHash: read.hash,
+      oldText: '  fun old() {\n    println("before")\n  }',
+      newText: '  fun new() {\n    println("after")\n  }'
+    } })
+    expect(change.oldText).toContain('\r\n')
+    expect(change.after).toBe('class MainActivity {\r\n  fun new() {\r\n    println("after")\r\n  }\r\n}\r\n')
+    await ws.apply(change, signal(), { confirmed: true })
+    expect(f.disk.get('MainActivity.kt')).toBe(change.after)
+  })
   it('preserves an external edit made while approval was pending', async () => {
     const f = fixture({ 'a.py': 'old' }); const ws = new LocalWorkspace(f.root); const read = await ws.read('a.py')
     const change = await ws.preview({ id: '2', name: 'workspace_edit', args: { path: 'a.py', expectedHash: read.hash, oldText: 'old', newText: 'new' } })

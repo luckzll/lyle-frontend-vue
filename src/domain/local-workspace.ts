@@ -143,8 +143,16 @@ export class LocalWorkspace {
     if (!expected || this.observed.get(path) !== expected) throw new Error('修改前必须读取目标文件')
     const file = await this.text(path)
     if (file.hash !== expected) throw new Error('文件已变化，请重新读取后修改')
-    const oldText = string(call.args.oldText); const newText = string(call.args.newText)
-    if (!oldText || oldText === newText || file.text.split(oldText).length !== 2) throw new Error('替换内容必须精确匹配且只出现一次')
+    const requestedOldText = string(call.args.oldText); const requestedNewText = string(call.args.newText)
+    if (!requestedOldText || requestedOldText === requestedNewText) throw new Error('替换内容必须精确匹配且只出现一次')
+    // Model output commonly uses LF even when a Windows source file uses CRLF.
+    // Adapt only line endings; keep the unique-match and hash checks unchanged.
+    const usesCrLf = file.text.includes('\r\n') && !file.text.replace(/\r\n/g, '').includes('\n')
+    const lineEnding = usesCrLf ? '\r\n' : '\n'
+    const adapt = (value: string) => value.replace(/\r\n/g, '\n').replace(/\n/g, lineEnding)
+    const oldText = file.text.split(requestedOldText).length === 2 ? requestedOldText : adapt(requestedOldText)
+    if (file.text.split(oldText).length !== 2) throw new Error('替换内容必须精确匹配且只出现一次；请重新读取文件并核对原文')
+    const newText = adapt(requestedNewText)
     const after = file.text.replace(oldText, () => newText); validateText(after)
     return { path, before: file.text, after, hash: expected, oldText, newText }
   }
