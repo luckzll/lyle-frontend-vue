@@ -32,7 +32,7 @@ const turns = ref<LocalTurn[]>([]); let transcript: WorkspaceMessage[] = []
 const mode = ref<'read-only' | 'confirm' | 'auto'>('confirm'); const permissionBusy = ref(false)
 const chatModelId = ref<ChatModelId>(resolveChatModelId(window.localStorage?.getItem(CHAT_MODEL_STORAGE_KEY)))
 const modeLabels = { 'read-only': '仅查看', confirm: '修改前确认', auto: '允许直接修改' }
-const permissionsOpen = ref(false); const permissionTrigger = ref<HTMLButtonElement>()
+const permissionsOpen = ref(false); const composerPermissionsOpen = ref(false); const permissionTrigger = ref<HTMLButtonElement>()
 const railOpen = ref(false)
 const projectSessions = (id: string) => sessions.value.filter(s => s.projectId === id).slice().sort((a, b) => b.updatedAt - a.updatedAt)
 const tree = ref<{ name: string; kind: string; path: string }[]>([])
@@ -280,7 +280,7 @@ async function selectMode(next: 'read-only' | 'confirm' | 'auto') {
     await activeWorkspace.permissions.select(next)
     if (!isActive() || workspace.value !== activeWorkspace) return
     mode.value = activeWorkspace.permissions.mode
-    permissionsOpen.value = false; permissionTrigger.value?.focus()
+    permissionsOpen.value = false; composerPermissionsOpen.value = false
   } catch (e) { if (isActive() && workspace.value === activeWorkspace) error.value = e instanceof Error ? e.message : '授权失败，权限未改变' }
   finally { permissionBusy.value = false }
 }
@@ -297,6 +297,26 @@ async function applyPreview() {
   try {
     await activeWorkspace.permissions.authorizeConfirmedWrite()
     if (!isActive() || signal?.aborted || workspace.value !== activeWorkspace || preview.value !== change || answerChange !== resolveChange) return
+    resolveChange?.(true)
+  } catch (e) { if (isActive() && preview.value === change) error.value = e instanceof Error ? e.message : '无法获得写入权限' }
+  finally { applying.value = false }
+}
+async function applyPreviewAndEnableAuto() {
+  if (!preview.value || !workspace.value || applying.value || permissionBusy.value) return
+  const activeWorkspace = workspace.value
+  const change = preview.value
+  const resolveChange = answerChange
+  const signal = controller?.signal
+  applying.value = true; error.value = ''
+  try {
+    await activeWorkspace.permissions.select('auto')
+    if (!isActive() || workspace.value !== activeWorkspace) return
+    if (signal?.aborted || preview.value !== change || answerChange !== resolveChange) {
+      await activeWorkspace.permissions.select('confirm')
+      return
+    }
+    mode.value = activeWorkspace.permissions.mode
+    permissionsOpen.value = false; composerPermissionsOpen.value = false
     resolveChange?.(true)
   } catch (e) { if (isActive() && preview.value === change) error.value = e instanceof Error ? e.message : '无法获得写入权限' }
   finally { applying.value = false }
@@ -546,7 +566,7 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
             <LocalProjectText v-if="turn.answer" class="final-answer" :text="turn.answer" />
             <p v-else-if="!loading || index !== turns.length - 1" class="stopped-note">本轮未完成，可以继续提问。已写入的文件修改保留。</p>
           </article>
-          <section v-if="preview" class="change-card" aria-label="本地修改预览"><h2>{{ preview.hash === null ? '新建文件' : '确认修改' }} <code>{{ preview.path }}</code></h2><p>确认后写入当前目录；若文件已变化，将停止写入。</p><div class="diff-grid"><div v-if="preview.hash !== null"><small>原内容</small><pre>{{ preview.oldText }}</pre></div><div><small>{{ preview.hash === null ? '文件内容' : '替换为' }}</small><pre>{{ preview.newText }}</pre></div></div><footer><button class="secondary" :disabled="applying" @click="rejectPreview">不修改</button><button class="connect-button" :disabled="applying" @click="applyPreview">{{ applying ? '正在授权…' : '应用到本地文件' }}</button></footer></section>
+          <section v-if="preview" class="change-card" aria-label="本地修改预览"><h2>{{ preview.hash === null ? '新建文件' : '确认修改' }} <code>{{ preview.path }}</code></h2><p>确认后写入当前目录；若文件已变化，将停止写入。</p><div class="diff-grid"><div v-if="preview.hash !== null"><small>原内容</small><pre>{{ preview.oldText }}</pre></div><div><small>{{ preview.hash === null ? '文件内容' : '替换为' }}</small><pre>{{ preview.newText }}</pre></div></div><footer><button class="secondary" :disabled="applying" @click="rejectPreview">不修改</button><button class="secondary" :disabled="applying" @click="applyPreview">仅应用这次</button><button class="connect-button" :disabled="applying" @click="applyPreviewAndEnableAuto">{{ applying ? '正在授权…' : '应用并允许后续自动修改' }}</button></footer></section>
           <div ref="bottom" />
         </div>
       </div>
@@ -565,7 +585,16 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
               </select>
               <ChevronDown :size="14" aria-hidden="true" />
             </label>
-            <span class="composer-mode-hint">{{ workspace ? modeLabels[mode] : '未连接目录 · 可先讨论' }}</span>
+            <div v-if="workspace" class="composer-permission-control" @keydown.esc="composerPermissionsOpen = false">
+              <button type="button" class="composer-permission-trigger" :class="{ automatic: mode === 'auto' }" :aria-expanded="composerPermissionsOpen" aria-controls="composer-permissions" @click="composerPermissionsOpen = !composerPermissionsOpen"><ShieldCheck :size="14" />{{ modeLabels[mode] }}<ChevronDown :size="13" /></button>
+              <div v-if="composerPermissionsOpen" id="composer-permissions" class="permission-popover composer-permission-popover">
+                <div class="popover-heading"><strong>文件访问权限</strong><button type="button" class="icon-button" aria-label="关闭权限设置" @click="composerPermissionsOpen = false"><X :size="16" /></button></div>
+                <p class="permission-scope">仅作用于 {{ workspace.root.name }}</p>
+                <button v-for="choice in (['read-only', 'confirm', 'auto'] as const)" :key="choice" type="button" class="permission-option" :class="{ selected: mode === choice }" :aria-pressed="mode === choice" :disabled="loading || permissionBusy" @click="selectMode(choice)"><span><strong>{{ modeLabels[choice] }}</strong><small>{{ choice === 'read-only' ? '分析和读取文件，不写入' : choice === 'confirm' ? '先预览变更，由你逐项确认' : '授权后，AI 可直接修改和新建源码文件' }}</small></span><Check v-if="mode === choice" :size="17" /></button>
+                <p class="permission-help">权限仅用于当前连接。切换对话、返回或刷新后恢复为“修改前确认”。</p>
+              </div>
+            </div>
+            <span v-else class="composer-mode-hint">未连接目录 · 可先讨论</span>
           </div>
           <label class="sr-only" for="local-question">项目任务</label>
           <textarea id="local-question" ref="questionInput" v-model="input" :disabled="loading || connecting" :placeholder="workspace ? '描述任务或提问，智能体会按需读取和修改…' : '描述任务或先提问；需要文件时再连接目录…'" rows="2" @keydown="composerKeydown" />
@@ -666,6 +695,13 @@ button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:
 .workspace-model-picker select:disabled{cursor:not-allowed;opacity:.6}
 .workspace-model-picker>svg:last-child{color:var(--muted-foreground);pointer-events:none}
 .composer-mode-hint{margin-left:auto;line-height:1.5}
+.composer-permission-control{position:relative;margin-left:auto}
+.composer-permission-trigger{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--muted-foreground);font-size:11px;white-space:nowrap}
+.composer-permission-trigger:hover{border-color:var(--primary-border);color:var(--foreground);background:var(--primary-soft)}
+.composer-permission-trigger.automatic{border-color:var(--primary-border);background:var(--primary-soft);color:var(--accent-foreground)}
+.composer-permission-trigger:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.composer-permission-popover{top:auto;bottom:calc(100% + 8px)}
+.change-card footer{flex-wrap:wrap}.change-card footer .connect-button{white-space:normal;text-align:center}
 .local-composer textarea{height:52px;min-height:52px}
 .local-composer footer{min-height:40px;padding-top:7px;border-top:1px solid var(--border);margin-top:7px}
 .composer-mode{gap:7px;font-size:11px}
@@ -680,6 +716,6 @@ button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:
 .composer-connect-button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .composer-connect-button:disabled{opacity:.55;cursor:not-allowed}
 @container(max-width:1000px){.composer-connect-button{margin-left:auto}}
-@media(max-width:639px){.composer-dock{padding-left:12px;padding-right:12px}.local-composer{padding:11px 12px}.composer-settings{gap:7px}.session-kind-switch button{padding:6px 9px}.workspace-model-picker{min-height:36px;padding:0 8px}.workspace-model-picker select{max-width:130px;font-size:11px}.composer-mode-hint{width:100%;margin-left:2px}.local-composer textarea{height:48px;min-height:48px}.mode-label{display:none}}
+@media(max-width:639px){.composer-dock{padding-left:12px;padding-right:12px}.local-composer{padding:11px 12px}.composer-settings{gap:7px}.session-kind-switch button{padding:6px 9px}.workspace-model-picker{min-height:36px;padding:0 8px}.workspace-model-picker select{max-width:130px;font-size:11px}.composer-mode-hint{width:100%;margin-left:2px}.composer-permission-control{margin-left:auto}.composer-permission-popover{right:0}.local-composer textarea{height:48px;min-height:48px}.mode-label{display:none}}
 .recovery-export{margin-bottom:8px}
 </style>
