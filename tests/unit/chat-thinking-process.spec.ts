@@ -168,4 +168,16 @@ describe('chat thinking and execution disclosure', () => {
       reasoning: { text: '旧记录摘要', kind: 'summary', sequence: 1 } }))
     expect(html).toContain('历史记录未保存发生顺序，以下为已记录的内容。')
   })
+
+  it('gives each reported step feedback without treating a pending tool as executed', async () => {
+    const html = await renderToString(createSSRApp(ChatThinkingProcess, {
+      items: [{ turnId: 't', sequence: 1, step: 'memory_agent', status: 'completed' }],
+      toolCalls: [{ turnId: 't', sequence: 2, callId: 'confirm', tool: 'calendar.create', title: '创建日程', status: 'awaiting_confirmation' }],
+      active: true
+    }))
+    expect(html).toContain('记忆召回已结束')
+    expect(html).toContain('此操作需要你确认后才会执行。')
+    expect(html).not.toContain('此操作已返回结果。')
+    expect(html).toContain('2 个步骤')
+  })
 })
