@@ -1,4 +1,5 @@
 import type { LocalDirectoryHandle, WorkspaceCall, WorkspaceMessage } from './local-workspace'
+import { validateWorkspaceImages } from './local-workspace-images'
 
 export type LocalActivity = {
   label: string
@@ -6,7 +7,7 @@ export type LocalActivity = {
   status: 'running' | 'done' | 'error' | 'waiting'
   detail?: string
 }
-export type LocalTurn = { question: string; answer: string; activities: LocalActivity[]; open: boolean; completed: boolean }
+export type LocalTurn = { question: string; answer: string; images?: string[]; activities: LocalActivity[]; open: boolean; completed: boolean }
 export type LocalProject = {
   id: string
   name: string
@@ -92,7 +93,8 @@ function turn(value: unknown, restore: boolean): LocalTurn {
   const row = record(value)
   if (typeof row.open !== 'boolean' || typeof row.completed !== 'boolean') throw new Error('本地对话状态格式无效')
   const activities = list(row.activities, 512).map(item => activity(item, restore))
-  return { question: text(row.question), answer: text(row.answer), activities, open: row.open, completed: row.completed }
+  const images = validateWorkspaceImages(row.images, 'user')
+  return { question: text(row.question), answer: text(row.answer), ...(images ? { images } : {}), activities, open: row.open, completed: row.completed }
 }
 function call(value: unknown): WorkspaceCall {
   const row = record(value)
@@ -104,8 +106,10 @@ function call(value: unknown): WorkspaceCall {
 function message(value: unknown): WorkspaceMessage {
   const row = record(value)
   if (!['user', 'assistant', 'tool'].includes(String(row.role))) throw new Error('本地对话消息格式无效')
+  const images = validateWorkspaceImages(row.images, String(row.role))
   return {
     role: row.role as WorkspaceMessage['role'], content: text(row.content),
+    ...(images ? { images } : {}),
     ...(row.tool_calls === undefined ? {} : { tool_calls: list(row.tool_calls, 64).map(call) }),
     ...(row.tool_call_id === undefined ? {} : { tool_call_id: identifier(row.tool_call_id) }),
   }
@@ -119,7 +123,8 @@ export function recoverLocalTranscript(messages: WorkspaceMessage[]): WorkspaceM
   for (let index = 0; index < messages.length; index++) {
     const item = messages[index]!
     if (item.role === 'user') {
-      if (inRound || pending.size || item.tool_calls?.length || item.tool_call_id) break
+      if (pending.size || item.tool_calls?.length || item.tool_call_id || (inRound && item.images === undefined)) break
+      // Image file reads continue the same user round after every tool reply.
       inRound = true
     } else if (item.role === 'assistant') {
       if (!inRound || pending.size || item.tool_call_id) break

@@ -3,14 +3,21 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ArrowUp, Bot, Check, ChevronDown, ChevronRight, Code, Download, FileCode, FolderOpen, FolderPlus, History, LoaderCircle, Pencil, Plus, Search, ShieldCheck, Sparkles, Square, Trash2, X } from '@lucide/vue'
 import { authState } from '@/auth'
-import { workspaceStep } from '@/api/local-workspace'
+import { workspaceStep, workspaceStepBody } from '@/api/local-workspace'
 import { CHAT_MODEL_OPTIONS, CHAT_MODEL_STORAGE_KEY, resolveChatModelId, type ChatModelId } from '@/domain/chat-model'
 import LocalProjectText from '@/components/chat/LocalProjectText.vue'
+import LocalAgentProcess from '@/components/chat/LocalAgentProcess.vue'
+import LocalWorkspaceAttachments from '@/components/chat/LocalWorkspaceAttachments.vue'
+import { localReadFeedback } from '@/domain/local-agent-process'
 import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
-import { LocalWorkspace, chooseLocalDirectory, takeLocalDrop, stageLocalDrop, type ChangePreview, type WorkspaceMessage, type LocalDirectoryHandle } from '@/domain/local-workspace'
+import { LocalWorkspace, chooseLocalDirectory, takeLocalDrop, safeParts, imageName, type ChangePreview, type WorkspaceMessage, type LocalDirectoryHandle } from '@/domain/local-workspace'
 import { createLocalProject, createLocalSessionForProject, loadLocalHistory, saveLocalHistory, getLocalHistoryRecovery, rememberProjectHandle, getProjectHandle, getLocalHandle, forgetLocalHandle, clearLocalHandles, type LocalProject, type LocalSession, type LocalTurn, type LocalActivity } from '@/domain/local-workspace-history'
 import { takeDirectorySelection } from '@/domain/local-directory-selection'
 import { canonicalLocalProjectQuery, parseLocalProjectRoute } from '@/domain/local-project-route'
+import { LocalConversationWorkspace, addLocalAttachment, attachmentManifest, clearLocalAttachments, fileAttachmentWorkspace, folderFilesWorkspace,
+  localAttachments, removeLocalAttachment, resetAttachmentPermissions, type AttachmentScope, type LocalWorkspaceAttachment, type PickedFileHandle } from '@/domain/local-workspace-attachments'
+import { compactWorkspaceImageHistory, compressWorkspaceImage, workspaceImageToolResult, workspaceReadImageMessage, type WorkspaceReadImage } from '@/domain/local-workspace-images'
+import type { LocalPermissionMode } from '@/domain/local-workspace-permissions'
 
 type SessionKind = 'chat' | 'agent'
 const route = useRoute(); const router = useRouter()
@@ -25,6 +32,15 @@ const activeSession = computed(() => sessions.value.find(s => s.id === activeId.
 const sessionKind = computed<SessionKind>(() => activeSession.value?.kind || 'agent')
 const renaming = ref(false); const projectNameDraft = ref('')
 const workspace = shallowRef<LocalWorkspace>()
+const attachments = shallowRef<LocalWorkspaceAttachment[]>([])
+const attachmentBusy = ref(false)
+const attachmentFilesInput = ref<HTMLInputElement>(); const attachmentImagesInput = ref<HTMLInputElement>(); const attachmentFolderInput = ref<HTMLInputElement>()
+let pendingAttachmentInputScope: AttachmentScope | undefined
+const attachmentScope = computed<AttachmentScope | undefined>(() => owner != null && activeSession.value && activeSession.value.projectId === activeProjectId.value
+  ? { owner: String(owner), projectId: activeSession.value.projectId, sessionId: activeSession.value.id } : undefined)
+const scopeMatches = (scope: AttachmentScope) => isActive() && JSON.stringify(attachmentScope.value) === JSON.stringify(scope)
+function refreshAttachments() { attachments.value = attachmentScope.value ? localAttachments(attachmentScope.value) : [] }
+watch(attachmentScope, (scope, previous) => { if (previous) resetAttachmentPermissions(previous); attachments.value = scope ? localAttachments(scope) : [] }, { flush: 'sync', immediate: true })
 const input = ref(''); const error = ref(''); const storageError = ref(loaded.error || '')
 const loading = ref(false); const connecting = ref(false); const dragging = ref(false)
 const hasRecovery = ref(owner != null && !!getLocalHistoryRecovery(owner))
@@ -38,6 +54,7 @@ const projectSessions = (id: string) => sessions.value.filter(s => s.projectId =
 const tree = ref<{ name: string; kind: string; path: string }[]>([])
 const treePath = ref(''); const treeOffset = ref(0); const nextOffset = ref<number | null>(null)
 const preview = shallowRef<ChangePreview>(); const applying = ref(false)
+const previewWorkspace = shallowRef<LocalConversationWorkspace>()
 const bottom = ref<HTMLElement>(); const scroller = ref<HTMLElement>(); const questionInput = ref<HTMLTextAreaElement>()
 const deleteId = ref<string | null>(null)
 const deleteProjectId = ref<string | null>(null)
@@ -53,8 +70,8 @@ let routeReady = false; let applyingRoute = false; let internalRouteTarget: stri
 const handledRouteRequests = new Set<string>()
 const isActive = () => mounted && !inactive && authState.user?.id === owner
 let saveTimer: ReturnType<typeof setTimeout> | undefined
-const busy = computed(() => loading.value || connecting.value || permissionBusy.value || applying.value)
-const canSend = computed(() => !!activeSession.value && !!input.value.trim() && !busy.value && isActive())
+const busy = computed(() => loading.value || connecting.value || permissionBusy.value || applying.value || attachmentBusy.value)
+const canSend = computed(() => !!activeSession.value && (!!input.value.trim() || attachments.value.some(item => item.image)) && !busy.value && isActive())
 const labels: Record<string, string> = { workspace_list: '查看目录', workspace_read: '读取文件', workspace_search: '搜索项目', workspace_edit: '修改文件', workspace_create: '新建文件' }
 const suggestions = computed(() => [
   { icon: FolderOpen, title: '了解这个项目', detail: '梳理用途、结构与启动入口', prompt: '查看项目结构，按需读取关键文件，说明项目用途和启动入口。' },
@@ -285,43 +302,138 @@ async function selectMode(next: 'read-only' | 'confirm' | 'auto') {
   finally { permissionBusy.value = false }
 }
 function stop() {
-  controller?.abort(); answerChange?.(false); answerChange = null; preview.value = undefined
+  controller?.abort(); answerChange?.(false); answerChange = null; preview.value = undefined; previewWorkspace.value = undefined
 }
 async function applyPreview() {
-  if (!preview.value || !workspace.value || applying.value) return
-  const activeWorkspace = workspace.value
+  if (!preview.value || !previewWorkspace.value || applying.value) return
+  const activeWorkspace = previewWorkspace.value
   const change = preview.value
   const resolveChange = answerChange
   const signal = controller?.signal
   applying.value = true; error.value = ''
   try {
-    await activeWorkspace.permissions.authorizeConfirmedWrite()
-    if (!isActive() || signal?.aborted || workspace.value !== activeWorkspace || preview.value !== change || answerChange !== resolveChange) return
+    await activeWorkspace.permissionsFor(change.path).authorizeConfirmedWrite()
+    if (!isActive() || signal?.aborted || previewWorkspace.value !== activeWorkspace || preview.value !== change || answerChange !== resolveChange) return
     resolveChange?.(true)
   } catch (e) { if (isActive() && preview.value === change) error.value = e instanceof Error ? e.message : '无法获得写入权限' }
   finally { applying.value = false }
 }
 async function applyPreviewAndEnableAuto() {
-  if (!preview.value || !workspace.value || applying.value || permissionBusy.value) return
-  const activeWorkspace = workspace.value
+  if (!preview.value || !previewWorkspace.value || applying.value || permissionBusy.value) return
+  const activeWorkspace = previewWorkspace.value
   const change = preview.value
   const resolveChange = answerChange
   const signal = controller?.signal
   applying.value = true; error.value = ''
   try {
-    await activeWorkspace.permissions.select('auto')
-    if (!isActive() || workspace.value !== activeWorkspace) return
+    const permissions = activeWorkspace.permissionsFor(change.path)
+    await permissions.select('auto')
+    if (!isActive() || previewWorkspace.value !== activeWorkspace) { await permissions.select('confirm'); return }
     if (signal?.aborted || preview.value !== change || answerChange !== resolveChange) {
-      await activeWorkspace.permissions.select('confirm')
+      await permissions.select('confirm')
       return
     }
-    mode.value = activeWorkspace.permissions.mode
+    if (!change.path.startsWith('@attachments/')) mode.value = permissions.mode
+    refreshAttachments()
     permissionsOpen.value = false; composerPermissionsOpen.value = false
     resolveChange?.(true)
   } catch (e) { if (isActive() && preview.value === change) error.value = e instanceof Error ? e.message : '无法获得写入权限' }
   finally { applying.value = false }
 }
 function rejectPreview() { answerChange?.(false) }
+function currentAttachmentScope() {
+  if (!attachmentScope.value || !isActive()) throw new Error('请先打开当前项目的一段对话，再添加会话附件')
+  return { ...attachmentScope.value }
+}
+async function addAttachmentFile(scope: AttachmentScope, file: File, handle?: PickedFileHandle) {
+  if (!scopeMatches(scope)) return
+  const image = /\.(?:png|jpe?g|webp)$/i.test(file.name)
+  const fileWorkspace = fileAttachmentWorkspace(file, handle)
+  if (image) {
+    const mime = /\.png$/i.test(file.name) ? 'image/png' : /\.webp$/i.test(file.name) ? 'image/webp' : 'image/jpeg'
+    const picture = await compressWorkspaceImage(new File([file], file.name, { type: mime }))
+    if (!scopeMatches(scope)) return
+    addLocalAttachment(scope, { name: file.name, kind: 'image', image: picture, writable: false })
+  } else addLocalAttachment(scope, { name: file.name, kind: 'file', workspace: fileWorkspace, writable: !!handle?.requestPermission })
+  refreshAttachments()
+}
+async function addAttachmentFolder(scope: AttachmentScope, handle: LocalDirectoryHandle) {
+  if (!scopeMatches(scope)) return
+  safeParts(handle.name)
+  if (await handle.queryPermission({ mode: 'read' }) !== 'granted') throw new Error('附件目录尚未取得读取权限，请通过文件夹按钮重新添加')
+  if (!scopeMatches(scope)) return
+  addLocalAttachment(scope, { name: handle.name, kind: 'folder', workspace: new LocalWorkspace(handle), writable: true })
+  refreshAttachments()
+}
+async function pickAttachmentFiles() {
+  if (busy.value) return
+  const picker = (window as unknown as { showOpenFilePicker?: (options: object) => Promise<PickedFileHandle[]> }).showOpenFilePicker
+  let scope: AttachmentScope
+  try { scope = currentAttachmentScope() } catch (e) { error.value = (e as Error).message; return }
+  if (!picker) { pickAttachmentInput(attachmentFilesInput.value, scope); return }
+  attachmentBusy.value = true; error.value = ''
+  try {
+    const handles = await picker.call(window, { multiple: true, id: 'lyle-conversation-files' })
+    for (const handle of handles) await addAttachmentFile(scope, await handle.getFile(), handle)
+  } catch (e) { if (scopeMatches(scope) && !(e instanceof DOMException && e.name === 'AbortError')) error.value = e instanceof Error ? e.message : '附件添加失败' }
+  finally { attachmentBusy.value = false }
+}
+async function pickAttachmentFolder() {
+  if (busy.value) return
+  let scope: AttachmentScope
+  try { scope = currentAttachmentScope() } catch (e) { error.value = (e as Error).message; return }
+  if (!(window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker) { pickAttachmentInput(attachmentFolderInput.value, scope); return }
+  attachmentBusy.value = true; error.value = ''
+  try { await addAttachmentFolder(scope, await chooseLocalDirectory()) }
+  catch (e) { if (scopeMatches(scope) && !(e instanceof DOMException && e.name === 'AbortError')) error.value = e instanceof Error ? e.message : '附件目录添加失败' }
+  finally { attachmentBusy.value = false }
+}
+function pickAttachmentInput(element: HTMLInputElement | undefined, scope?: AttachmentScope) {
+  if (busy.value || !element) return
+  try { pendingAttachmentInputScope = scope || currentAttachmentScope(); element.click() }
+  catch (e) { error.value = e instanceof Error ? e.message : '无法选择附件' }
+}
+function cancelAttachmentInput() { pendingAttachmentInputScope = undefined }
+async function attachmentInputChanged(event: Event, folder = false) {
+  const element = event.target as HTMLInputElement
+  const files = Array.from(element.files || []); element.value = ''
+  const scope = pendingAttachmentInputScope; pendingAttachmentInputScope = undefined
+  if (!files.length || busy.value) return
+  if (!scope || !scopeMatches(scope)) return
+  attachmentBusy.value = true; error.value = ''
+  try {
+    if (folder) {
+      const folderWorkspace = folderFilesWorkspace(files)
+      if (scopeMatches(scope)) { addLocalAttachment(scope, { name: folderWorkspace.root.name, kind: 'folder', workspace: folderWorkspace, writable: false }); refreshAttachments() }
+    } else for (const file of files) await addAttachmentFile(scope, file)
+  } catch (e) { if (scopeMatches(scope)) error.value = e instanceof Error ? e.message : '附件添加失败' }
+  finally { attachmentBusy.value = false }
+}
+async function changeAttachmentMode(id: string, next: LocalPermissionMode) {
+  if (busy.value || sessionKind.value !== 'agent') return
+  const scope = currentAttachmentScope()
+  const item = localAttachments(scope).find(entry => entry.id === id)
+  if (!item?.workspace || !item.writable) return
+  attachmentBusy.value = true; error.value = ''
+  try {
+    await item.workspace.permissions.select(next)
+    if (!scopeMatches(scope)) await item.workspace.permissions.select('confirm')
+    else refreshAttachments()
+  } catch (e) { if (scopeMatches(scope)) { error.value = e instanceof Error ? e.message : '未获得附件写入权限'; refreshAttachments() } }
+  finally { attachmentBusy.value = false }
+}
+function removeAttachment(id: string) { if (!busy.value && attachmentScope.value) { removeLocalAttachment(attachmentScope.value, id); refreshAttachments() } }
+async function pasteAttachments(event: ClipboardEvent) {
+  const files = Array.from(event.clipboardData?.files || []).filter(file => ['image/png', 'image/jpeg', 'image/webp'].includes(file.type))
+  if (!files.length || busy.value) return
+  event.preventDefault()
+  let scope: AttachmentScope
+  try { scope = currentAttachmentScope() } catch (e) { error.value = (e as Error).message; return }
+  attachmentBusy.value = true; error.value = ''
+  try { for (const file of files) await addAttachmentFile(scope, file) }
+  catch (e) { if (scopeMatches(scope)) error.value = e instanceof Error ? e.message : '图片添加失败' }
+  finally { attachmentBusy.value = false }
+}
 async function useSuggestion(prompt: string) { if (!activeSession.value) await newSession(); input.value = prompt; railOpen.value = false; await nextTick(); questionInput.value?.focus() }
 function composerKeydown(event: KeyboardEvent) {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
@@ -330,32 +442,46 @@ function composerKeydown(event: KeyboardEvent) {
 }
 async function send() {
   if (!canSend.value) return
-  const activeWorkspace = workspace.value
+  const scope = currentAttachmentScope()
+  const currentAttachments = localAttachments(scope)
+  const activeWorkspace = new LocalConversationWorkspace(workspace.value, currentAttachments)
   const executionKind = sessionKind.value
-  const question = input.value.trim(); input.value = ''; error.value = ''; checkpoint = transcript.length; loading.value = true
+  const question = input.value.trim() || '请根据附加图片分析内容，并说明你的发现。'
+  const images = currentAttachments.flatMap(item => item.image ? [item.image] : [])
+  const userMessage: WorkspaceMessage = { role: 'user', content: question + attachmentManifest(currentAttachments, !!workspace.value), ...(images.length ? { images } : {}) }
+  const queuedTranscript = compactWorkspaceImageHistory([...transcript, userMessage])
+  try { workspaceStepBody(queuedTranscript, { mode: executionKind, workspaceConnected: activeWorkspace.connected, modelId: chatModelId.value }) }
+  catch (e) { error.value = e instanceof Error ? e.message : '附件或对话过大'; return }
+  input.value = ''; error.value = ''; checkpoint = transcript.length; loading.value = true
   controller = new AbortController(); const signal = controller.signal
-  const turn: LocalTurn = { question, answer: '', activities: [], open: true, completed: false }
+  const turn: LocalTurn = { question, answer: '', ...(images.length ? { images } : {}), activities: [], open: true, completed: false }
   turns.value.push(turn); const current = turns.value[turns.value.length - 1]!
   activeSession.value!.updatedAt = Date.now()
   if (activeProject.value) activeProject.value.updatedAt = Date.now()
   const rejectedPaths = new Set<string>()
-  transcript.push({ role: 'user', content: question }); persist(); await scrollToBottom(true)
+  let lastExplanation = ''
+  transcript = queuedTranscript
+  for (const attachment of currentAttachments) if (attachment.image) removeLocalAttachment(scope, attachment.id)
+  refreshAttachments(); persist(); await scrollToBottom(true)
   try {
     for (let step = 0; step < 16; step++) {
       signal.throwIfAborted()
-      if (JSON.stringify(transcript).length > 200_000) throw new Error('本地上下文已满，请新建对话；当前记录和文件会保留')
+      transcript = compactWorkspaceImageHistory(transcript)
+      workspaceStepBody(transcript, { mode: executionKind, workspaceConnected: activeWorkspace.connected, modelId: chatModelId.value })
       let commentary = ''
       const modelActivity: LocalActivity = { label: '分析下一步', status: 'running' }
       current.activities.push(modelActivity)
       const activity = current.activities[current.activities.length - 1]!
-      const result = await workspaceStep(transcript, signal, text => { commentary += text; activity.detail = commentary; void scrollToBottom() }, { mode: executionKind, workspaceConnected: !!activeWorkspace, modelId: chatModelId.value })
+      const result = await workspaceStep(transcript, signal, text => { commentary += text; activity.detail = commentary; void scrollToBottom() }, { mode: executionKind, workspaceConnected: activeWorkspace.connected, modelId: chatModelId.value })
       signal.throwIfAborted()
       activity.status = 'done'; transcript.push(result)
+      if (result.content.trim()) lastExplanation = result.content
       if (!result.tool_calls?.length) {
         current.answer = result.content; current.activities.pop(); current.completed = true; current.open = false
         break
       }
       const seen = new Set<string>()
+      const readImages: WorkspaceReadImage[] = []
       for (const call of result.tool_calls) {
         signal.throwIfAborted()
         if (!call.id || seen.has(call.id) || !labels[call.name] || !call.args || typeof call.args !== 'object') throw new Error('模型返回了无效的工具请求，已停止')
@@ -364,23 +490,32 @@ async function send() {
         const row = current.activities[current.activities.length - 1]!
         let outcome: unknown
         try {
-          if (!activeWorkspace) throw new Error('目录未连接，请先基于已有对话回答；需要读取文件时请提示用户重新连接目录。')
           if (call.name === 'workspace_edit' || call.name === 'workspace_create') {
             if (executionKind !== 'agent') throw new Error('聊天模式不会修改文件。请只提供分析和建议，执行修改需要用户新建智能体对话。')
-            if (mode.value === 'read-only') throw new Error('当前为仅查看权限，文件未修改。请提供分析或建议，不要继续请求写入。')
+            const permissionMode = activeWorkspace.modeFor(String(call.args.path))
+            if (permissionMode === 'read-only') throw new Error('当前为仅查看权限，文件未修改。请提供分析或建议，不要继续请求写入。')
             if (rejectedPaths.has(String(call.args.path))) throw new Error('用户已拒绝此文件的修改，本轮不再申请')
             const change = await activeWorkspace.preview(call)
             signal.throwIfAborted()
-            if (mode.value === 'auto') {
+            if (permissionMode === 'auto') {
               outcome = await activeWorkspace.apply(change, signal); row.detail = '已按授权直接写入，并复核文件内容'
             } else {
-              preview.value = change; row.status = 'waiting'; await scrollToBottom(true)
+              previewWorkspace.value = activeWorkspace; preview.value = change; row.status = 'waiting'; await scrollToBottom(true)
               const accepted = await new Promise<boolean>(resolve => { answerChange = resolve })
-              answerChange = null; preview.value = undefined; signal.throwIfAborted()
+              answerChange = null; preview.value = undefined; previewWorkspace.value = undefined; signal.throwIfAborted()
               if (accepted) { row.status = 'running'; outcome = await activeWorkspace.apply(change, signal, { confirmed: true }); row.detail = '已确认写入，并复核文件内容' }
               else { rejectedPaths.add(change.path); outcome = { status: 'rejected', message: '用户拒绝此修改，文件未写入。不得重试这项修改。' }; row.detail = '已拒绝，文件未修改' }
             }
-          } else outcome = await activeWorkspace.executeRead(call, signal)
+          } else {
+            if (call.name === 'workspace_read' && readImages.length >= 2 && imageName(String(call.args.path).split('/').pop() || '')) throw new Error('单批最多读取 2 张图片，请先分析本批，再分批读取其余图片')
+            outcome = await activeWorkspace.executeRead(call, signal)
+            const vision = workspaceImageToolResult(outcome)
+            if (vision.image) {
+              if (readImages.length >= 2) throw new Error('单批最多读取 2 张图片，请在下一步分批读取其余图片')
+              readImages.push(vision.image); outcome = vision.result
+              row.detail = '已读取真实图片，下一步将提供给模型分析；图片仅支持读取'
+            } else row.detail = localReadFeedback(call.name, outcome)
+          }
           row.status = 'done'
         } catch (e) {
           if (signal.aborted) throw e
@@ -390,28 +525,46 @@ async function send() {
         transcript.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(outcome) })
         void scrollToBottom()
       }
+      // The model must receive every tool reply before a new user vision message.
+      const visionMessage = workspaceReadImageMessage(readImages)
+      if (visionMessage) transcript.push(visionMessage)
       if (step === 15) throw new Error('已达到本轮 16 步上限；已完成的文件修改保留，请检查后继续')
     }
   } catch (e) {
     const message = signal.aborted ? '任务已停止，已完成的文件修改保留。' : e instanceof Error ? e.message : '任务失败'
     error.value = message
+    if (lastExplanation) current.answer = lastExplanation
     current.activities.push({ label: message, status: 'error' })
     transcript.splice(checkpoint)
     for (const activity of current.activities) if (activity.status === 'running' || activity.status === 'waiting') activity.status = 'error'
   } finally {
-    loading.value = false; controller = null; answerChange = null; preview.value = undefined
+    loading.value = false; controller = null; answerChange = null; preview.value = undefined; previewWorkspace.value = undefined
     if (isActive()) { persist(); await scrollToBottom(); await browse(treePath.value, treeOffset.value) }
   }
 }
 async function drop(event: DragEvent) {
   dragging.value = false
-  if (loading.value || connecting.value || !event.dataTransfer) return
-  if (!stageLocalDrop(event.dataTransfer)) { error.value = '请拖入一个项目文件夹，或点击“连接目录”'; return }
+  if (busy.value || !event.dataTransfer) return
+  let scope: AttachmentScope
+  try { scope = currentAttachmentScope() } catch (e) { error.value = (e as Error).message; return }
+  // Capture handles/files during the original drop event, before awaiting.
+  attachmentBusy.value = true; error.value = ''
   try {
-    const handle = await takeLocalDrop()
-    if (!handle) { error.value = '当前拖拽无法获得目录权限，请点击“连接目录”选择目录'; return }
-    await connect(false, handle)
-  } catch { error.value = '目录连接失败，请点击按钮重新选择' }
+    const dropped = Array.from(event.dataTransfer.items || []).filter(item => item.kind === 'file').map(item => {
+      const modern = item as DataTransferItem & { getAsFileSystemHandle?: () => Promise<LocalDirectoryHandle | PickedFileHandle | null> }
+      return { handle: modern.getAsFileSystemHandle?.(), file: item.getAsFile(), directory: item.webkitGetAsEntry?.()?.isDirectory }
+    })
+    if (!dropped.length) throw new Error('请拖入图片、源码文件或文件夹')
+    for (const item of dropped) {
+      const handle = await item.handle
+      if (!scopeMatches(scope)) return
+      if (handle?.kind === 'directory') await addAttachmentFolder(scope, handle)
+      else if (handle?.kind === 'file') await addAttachmentFile(scope, await handle.getFile(), handle)
+      else if (!item.directory && item.file) await addAttachmentFile(scope, item.file)
+      else throw new Error('当前浏览器无法读取拖入的目录，请使用当前对话的“文件夹”按钮添加')
+    }
+  } catch (e) { if (scopeMatches(scope)) error.value = e instanceof Error ? e.message : '附件添加失败' }
+  finally { attachmentBusy.value = false }
 }
 function exportConversation() {
   const session = activeSession.value
@@ -442,6 +595,7 @@ async function removeLocalRecords(projectId: string | null, sessionId: string | 
   const next = removedActive ? remainingSessions.filter(s => s.projectId === nextProjectId).sort((a,b) => b.updatedAt-a.updatedAt)[0] : activeSession.value
   const result = saveLocalHistory(owner, { projects: remainingProjects, sessions: remainingSessions, activeProjectId: nextProjectId, activeId: next?.id || null })
   if (!result.ok) { storageError.value = result.error || '删除未保存，请重试'; return false }
+  for (const session of sessions.value) if (!remainingSessions.some(item => item.id === session.id)) clearLocalAttachments(String(owner), session.id)
   projects.value = remainingProjects; sessions.value = remainingSessions
   if (removedActive) {
     connecting.value = true
@@ -463,6 +617,7 @@ async function deleteProject() {
 }
 function leave() {
   stop()
+  if (attachmentScope.value) resetAttachmentPermissions(attachmentScope.value)
   void workspace.value?.permissions.select('confirm')
   mode.value = 'confirm'; permissionsOpen.value = false
   for (const turn of turns.value) for (const activity of turn.activities) {
@@ -474,7 +629,7 @@ function onPageHide() { leave() }
 watch(() => authState.user?.id, value => {
   if (value !== owner) {
     inactive = true; stop(); if (saveTimer) clearTimeout(saveTimer)
-    if (owner != null) clearLocalHandles(owner)
+    if (owner != null) { clearLocalHandles(owner); clearLocalAttachments(String(owner)) }
     resetConnection(); projects.value = []; activeProjectId.value = null; sessions.value = []; turns.value = []; input.value = ''; transcript = []; activeId.value = null
   }
 }, { flush: 'sync' })
@@ -501,15 +656,15 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
 </script>
 
 <template>
-  <section class="local-project page" :class="{ dragging }" aria-label="本地项目工作区" @dragover.prevent="dragging = true" @dragleave.self="dragging = false" @drop.prevent="drop">
+  <section class="local-project page" :class="{ dragging }" aria-label="本地项目工作区" @dragover.stop.prevent="dragging = true" @dragleave.self="dragging = false" @drop.stop.prevent="drop">
     <button v-if="railOpen" class="rail-scrim" aria-label="关闭项目文件" @click="railOpen = false" />
     <aside class="project-rail" :class="{ 'is-open': railOpen }" aria-label="当前项目文件" @keydown.esc="railOpen = false">
       <div class="rail-heading"><span>项目文件</span><button class="icon-button" aria-label="关闭项目文件" @click="railOpen = false"><X :size="18" /></button></div>
       <div class="project-tree">
         <template v-if="workspace">
           <div class="tree-location"><button class="icon-button" :disabled="!treePath" aria-label="返回上一级目录" @click="browse(treePath.split('/').slice(0, -1).join('/'))"><ArrowLeft :size="15" /></button><span :title="treePath">{{ treePath || workspace.root.name }}</span></div>
-          <button v-for="item in tree" :key="item.path" class="tree-file" :disabled="loading" :title="item.kind === 'directory' ? '打开目录' : '在对话中询问此文件'" @click="item.kind === 'directory' ? browse(item.path) : useSuggestion('请分析文件 ' + item.path + ' 的用途和实现。')"><FolderOpen v-if="item.kind === 'directory'" :size="15" /><FileCode v-else :size="15" /><span :title="item.name">{{ item.name }}</span><ChevronRight v-if="item.kind === 'directory'" :size="14" /></button>
-          <p v-if="!tree.length" class="rail-empty">这个目录没有可展示的源码文件</p>
+          <button v-for="item in tree" :key="item.path" class="tree-file" :disabled="loading" :title="item.kind === 'directory' ? '打开目录' : '在对话中询问此文件'" @click="item.kind === 'directory' ? browse(item.path) : useSuggestion(imageName(item.name) ? '请读取图片 ' + item.path + ' 并说明实际可见内容。' : '请分析文件 ' + item.path + ' 的用途和实现。')"><FolderOpen v-if="item.kind === 'directory'" :size="15" /><FileCode v-else :size="15" /><span :title="item.name">{{ item.name }}</span><ChevronRight v-if="item.kind === 'directory'" :size="14" /></button>
+          <p v-if="!tree.length" class="rail-empty">这个目录没有可展示的源码或图片</p>
           <div class="tree-pagination"><button v-if="treeOffset" @click="browse(treePath, Math.max(0, treeOffset - 100))">上一页</button><button v-if="nextOffset !== null" @click="browse(treePath, nextOffset)">下一页</button></div>
           <p class="file-help">文件按需读取；依赖、构建产物和隐藏凭据会跳过。</p>
         </template>
@@ -555,18 +710,18 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
             <button v-if="!activeProject" class="connect-button" :disabled="busy" @click="connect()"><FolderPlus :size="17" />添加本地项目</button>
             <div v-if="activeProject" class="starter-grid"><button v-for="item in suggestions" :key="item.title" :disabled="busy" @click="useSuggestion(item.prompt)"><component :is="item.icon" :size="19" /><strong>{{ item.title }}</strong><small>{{ item.detail }}</small><ArrowUp :size="15" class="starter-arrow" /></button></div>
             <div v-else class="workspace-intro"><div><Bot :size="22" /><strong>智能体</strong><span>提问、讨论与执行都在这里</span></div><div><FolderOpen :size="22" /><strong>本地目录</strong><span>连接后按权限读取和修改</span></div><div><History :size="22" /><strong>项目历史</strong><span>不同对话分别保存</span></div></div>
-            <p class="empty-hint">{{ !activeProject ? '也可以拖入文件夹 · 文件访问需桌面版 Chrome / Edge' : '当前支持源码读取、新建和修改；命令执行暂未接入。' }}</p>
+            <p class="empty-hint">{{ !activeProject ? '选择本地项目后，可在对话中添加图片、文件和文件夹附件' : '可拖入图片、文件或文件夹到当前对话；图片支持读取分析，源码支持按权限修改。' }}</p>
           </section>
           <article v-for="(turn, index) in turns" :key="index" class="project-turn">
             <p class="user-message">{{ turn.question }}</p>
+            <div v-if="turn.images?.length" class="user-images" aria-label="本轮提交的图片"><img v-for="(picture, pictureIndex) in turn.images" :key="pictureIndex" :src="picture" :alt="`本轮图片${pictureIndex + 1}`" loading="lazy" /></div>
             <div class="assistant-label"><span class="assistant-mark"><Bot :size="15" /></span><strong>Lyle 智能体</strong><span v-if="loading && index === turns.length - 1" role="status">{{ preview ? '等待你确认修改' : '正在处理' }}</span></div>
-            <details v-if="turn.activities.length" :open="turn.open" class="process"><summary @click.prevent="turn.open = !turn.open"><ChevronRight :size="14" :class="{ expanded: turn.open }" /><LoaderCircle v-if="loading && index === turns.length - 1" :size="14" class="spin" /><span>执行过程 · {{ turn.completed ? '已完成' : loading && index === turns.length - 1 ? preview ? '待确认' : '进行中' : '已停止' }}</span><small>{{ turn.activities.length }} 项</small></summary>
-              <div v-for="(activity, activityIndex) in turn.activities" :key="activityIndex" class="activity" :class="{ 'activity-error': activity.status === 'error' }"><LoaderCircle v-if="activity.status === 'running'" :size="15" class="spin" /><X v-else-if="activity.status === 'error'" :size="15" /><Check v-else-if="activity.status === 'done'" :size="15" /><Square v-else :size="15" /><div><span>{{ activity.label }}</span><code v-if="activity.path">{{ activity.path }}</code><small v-if="activity.status === 'waiting'">等待你确认修改</small><p v-if="activity.detail">{{ activity.detail }}</p></div></div>
-            </details>
+            <LocalAgentProcess v-model:open="turn.open" class="project-process" :activities="turn.activities" :completed="turn.completed"
+              :active="loading && index === turns.length - 1" :waiting="Boolean(preview) && loading && index === turns.length - 1" />
             <LocalProjectText v-if="turn.answer" class="final-answer" :text="turn.answer" />
-            <p v-else-if="!loading || index !== turns.length - 1" class="stopped-note">本轮未完成，可以继续提问。已写入的文件修改保留。</p>
+            <p v-if="!turn.completed && (!loading || index !== turns.length - 1)" class="stopped-note">本轮未完成，可以继续提问。已读取的结果和已写入的文件修改保留。</p>
           </article>
-          <section v-if="preview" class="change-card" aria-label="本地修改预览"><h2>{{ preview.hash === null ? '新建文件' : '确认修改' }} <code>{{ preview.path }}</code></h2><p>确认后写入当前目录；若文件已变化，将停止写入。</p><div class="diff-grid"><div v-if="preview.hash !== null"><small>原内容</small><pre>{{ preview.oldText }}</pre></div><div><small>{{ preview.hash === null ? '文件内容' : '替换为' }}</small><pre>{{ preview.newText }}</pre></div></div><footer><button class="secondary" :disabled="applying" @click="rejectPreview">不修改</button><button class="secondary" :disabled="applying" @click="applyPreview">仅应用这次</button><button class="connect-button" :disabled="applying" @click="applyPreviewAndEnableAuto">{{ applying ? '正在授权…' : '应用并允许后续自动修改' }}</button></footer></section>
+          <section v-if="preview" class="change-card" aria-label="本地修改预览"><h2>{{ preview.hash === null ? '新建文件' : '确认修改' }} <code>{{ preview.path }}</code></h2><p>确认后写入{{ preview.path.startsWith('@attachments/') ? '此会话附件' : '当前项目目录' }}；若文件已变化，将停止写入。</p><div class="diff-grid"><div v-if="preview.hash !== null"><small>原内容</small><pre>{{ preview.oldText }}</pre></div><div><small>{{ preview.hash === null ? '文件内容' : '替换为' }}</small><pre>{{ preview.newText }}</pre></div></div><footer><button class="secondary" :disabled="applying" @click="rejectPreview">不修改</button><button class="secondary" :disabled="applying" @click="applyPreview">仅应用这次</button><button class="connect-button" :disabled="applying" @click="applyPreviewAndEnableAuto">{{ applying ? '正在授权…' : preview.path.startsWith('@attachments/') ? '应用并允许此附件后续修改' : '应用并允许后续自动修改' }}</button></footer></section>
           <div ref="bottom" />
         </div>
       </div>
@@ -575,6 +730,10 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
         <p v-if="storageError" class="error-note" role="alert"><strong>记录尚未保存：</strong>{{ storageError }} <button class="text-button" :disabled="!turns.length" @click="exportConversation">导出备份</button><button class="text-button" @click="persist">重试保存</button></p>
         <p v-if="error" class="error-note" role="alert">{{ error }}<button class="icon-button" aria-label="关闭提示" @click="error = ''"><X :size="15" /></button></p>
         <form v-if="activeSession" class="local-composer" @submit.prevent="send">
+          <LocalWorkspaceAttachments :items="attachments" :disabled="busy" @pick-images="pickAttachmentInput(attachmentImagesInput)" @pick-files="pickAttachmentFiles" @pick-folder="pickAttachmentFolder" @remove="removeAttachment" @mode="changeAttachmentMode" />
+          <input ref="attachmentFilesInput" type="file" multiple hidden aria-label="选择会话文件" @change="attachmentInputChanged" @cancel="cancelAttachmentInput" />
+          <input ref="attachmentImagesInput" type="file" multiple accept="image/png,image/jpeg,image/webp" hidden aria-label="选择会话图片" @change="attachmentInputChanged" @cancel="cancelAttachmentInput" />
+          <input ref="attachmentFolderInput" type="file" multiple webkitdirectory hidden aria-label="选择会话文件夹" @change="attachmentInputChanged($event, true)" @cancel="cancelAttachmentInput" />
           <div class="composer-settings">
             <span class="workspace-agent-label"><Bot :size="15" />智能体</span>
             <label class="workspace-model-picker">
@@ -597,10 +756,10 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
             <span v-else class="composer-mode-hint">未连接目录 · 可先讨论</span>
           </div>
           <label class="sr-only" for="local-question">项目任务</label>
-          <textarea id="local-question" ref="questionInput" v-model="input" :disabled="loading || connecting" :placeholder="workspace ? '描述任务或提问，智能体会按需读取和修改…' : '描述任务或先提问；需要文件时再连接目录…'" rows="2" @keydown="composerKeydown" />
+          <textarea id="local-question" ref="questionInput" v-model="input" :disabled="busy" :placeholder="workspace || attachments.length ? '描述任务或提问，也可粘贴图片，智能体会按需读取和修改…' : '描述任务或先提问；可添加图片、文件和文件夹附件…'" rows="2" @keydown="composerKeydown" @paste="pasteAttachments" />
           <footer><span class="composer-mode"><FolderOpen :size="14" />{{ activeProject?.name || '历史对话' }}<span class="mode-label">{{ workspace ? modeLabels[mode] : '未连接目录' }}</span></span><span class="keyboard-hint">Enter 发送 · Shift + Enter 换行</span><button v-if="!workspace && !loading" class="composer-connect-button" type="button" :disabled="busy" @click="connect(!!activeProject)"><FolderOpen :size="15" />连接目录</button><button v-if="loading" class="send-button" type="button" aria-label="停止任务" @click="stop"><Square :size="16" /></button><button v-else class="send-button" type="submit" :disabled="!canSend" aria-label="发送任务"><ArrowUp :size="19" /></button></footer>
         </form>
-        <p class="privacy-note"><ShieldCheck :size="12" />{{ storageError ? '本机保存不可用，请及时导出。' : '项目与对话保存在此浏览器。' }}所需代码片段会发送给模型。</p>
+        <p class="privacy-note"><ShieldCheck :size="12" />{{ storageError ? '本机保存不可用，请及时导出。' : '项目与对话保存在此浏览器。' }}所需代码片段和读取的图片会发送给模型。</p>
       </div>
     </div>
     <ConfirmActionDialog :open="!!deleteId" title="删除这段本地对话？" :description="`将删除“${sessions.find(s => s.id === deleteId)?.title || '新对话'}”及其消息，此操作不可撤销。项目目录和本地文件不会改变。`" confirm-label="删除对话" danger :busy="busy" @update:open="value => { if (!value) deleteId = null }" @confirm="deleteConversation"><template v-if="storageError" #default><p role="alert">{{ storageError }}</p></template></ConfirmActionDialog>
@@ -617,12 +776,12 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
 .local-project.dragging{outline:2px dashed var(--primary);outline-offset:-5px}
 button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.48}button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--primary);outline-offset:3px}button{transition:background .15s,color .15s}button svg,a svg{flex-shrink:0}.icon-button{display:inline-grid;place-items:center;width:32px;height:32px;border:0;border-radius:7px;background:transparent;color:var(--muted-foreground);padding:0}.icon-button:hover{background:var(--surface-muted);color:var(--foreground)}.text-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;background:none;color:var(--primary);padding:5px;font-size:12px}.secondary,.connect-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--border);border-radius:8px;padding:8px 12px;background:var(--surface);color:var(--foreground);font-size:13px;white-space:nowrap}.secondary:hover{background:var(--surface-muted)}.connect-button{background:var(--primary);border-color:var(--primary);color:var(--primary-foreground)}.connect-button:hover{background:var(--primary-hover)}
 .project-rail{display:flex;flex-direction:column;min-height:0;padding:24px 14px 16px;background:var(--background);border-right:1px solid var(--border)}.rail-heading{display:flex;align-items:center;justify-content:space-between;padding:0 8px 16px;font-size:13px;font-weight:650;color:var(--muted-foreground)}.new-conversation{display:flex;align-items:center;justify-content:center;gap:9px;border:1px solid var(--primary-border);border-radius:9px;padding:10px;background:var(--primary-soft);color:var(--accent-foreground);font-size:13px;font-weight:650}.new-conversation:hover{background:var(--primary-border)}.rail-tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-top:22px}.rail-tabs button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;border:0;border-bottom:2px solid transparent;background:none;padding:10px 0;font-size:12px;color:var(--muted-foreground)}.rail-tabs button.active{border-bottom-color:var(--primary);color:var(--primary);font-weight:650}.history-search{display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:7px;background:var(--surface);padding:7px 9px;margin:14px 0 12px;color:var(--muted-foreground)}.history-search input{min-width:0;width:100%;border:0;background:none;font-size:12px;color:var(--foreground);outline-offset:5px}.history-list{flex:1;min-height:0;overflow-y:auto}.history-item{position:relative;border:1px solid transparent;border-radius:9px;margin-bottom:5px}.history-item.selected{background:var(--surface);border-color:var(--primary-border);box-shadow:0 1px 3px rgb(15 23 42 / .03)}.history-select{display:block;width:100%;text-align:left;border:0;background:none;padding:12px 30px 12px 11px;color:var(--foreground);border-radius:9px}.history-select:hover{background:var(--surface-muted)}.history-title{display:flex;gap:7px;align-items:center}.history-title svg{color:var(--muted-foreground)}.history-title strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:550}.history-item.selected .history-title strong,.history-item.selected .history-title svg{color:var(--accent-foreground)}.history-project,.history-select time{display:block;padding-left:22px;font-size:11px;color:var(--muted-foreground);margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.history-select time{margin-top:5px;font-size:10px}.delete-conversation{position:absolute;right:3px;top:6px;width:28px;height:28px}.rail-empty{text-align:center;font-size:12px;line-height:1.8;color:var(--muted-foreground);padding:24px 8px}.rail-empty>svg{margin:auto}.rail-footer{display:flex;gap:8px;border-top:1px solid var(--border);padding:16px 6px 12px;color:var(--muted-foreground)}.rail-footer>svg{flex-shrink:0;margin-top:2px}.rail-footer p{margin:0;font-size:11px;line-height:1.7}.rail-footer strong{display:block;font-weight:550;color:var(--foreground)}.rail-footer span{display:block;margin-top:3px}.back-link{display:flex;align-items:center;gap:8px;padding:9px 6px;color:var(--muted-foreground);font-size:12px;text-decoration:none}.back-link:hover{color:var(--primary)}.project-tree{flex:1;min-height:0;overflow:auto;padding-top:12px}.tree-location{display:flex;gap:6px;align-items:center;margin-bottom:10px;font-size:12px;color:var(--muted-foreground)}.tree-location span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.tree-file{display:flex;align-items:center;width:100%;gap:8px;padding:9px 7px;border:0;border-radius:6px;background:none;color:var(--foreground);font-size:12px;text-align:left}.tree-file span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tree-file svg{color:var(--muted-foreground)}.tree-file:disabled{opacity:1}.tree-file:not(:disabled):hover{background:var(--surface-muted)}.tree-pagination{display:flex;gap:10px;margin-top:10px}.tree-pagination button{border:0;background:none;color:var(--primary);font-size:12px;padding:6px}.file-help{margin:16px 6px;font-size:11px;line-height:1.8;color:var(--muted-foreground)}
-.project-main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--surface)}.workspace-toolbar{display:flex;align-items:center;gap:12px;min-height:86px;padding:18px 28px;border-bottom:1px solid var(--border);flex-shrink:0}.folder-icon{display:grid;place-items:center;flex-shrink:0;width:42px;height:42px;border:1px solid var(--primary-border);border-radius:11px;background:var(--primary-soft);color:var(--primary)}.project-identity{flex:1;min-width:0}.project-identity h1{font-size:16px;font-weight:650;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.project-identity p{display:flex;align-items:center;gap:5px;margin:5px 0 0;font-size:11px;color:var(--muted-foreground)}.connection-dot{width:5px;height:5px;border-radius:50%;background:var(--muted-foreground)}.connection-dot.connected{background:var(--success)}.permission-control{position:relative;flex-shrink:0}.permission-trigger{display:flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--foreground);font-size:12px;min-height:36px;padding:8px 10px}.permission-trigger:hover{background:var(--surface-muted)}.permission-trigger.automatic{background:var(--primary-soft);border-color:var(--primary-border);color:var(--accent-foreground)}.permission-popover{position:absolute;right:0;top:calc(100% + 8px);z-index:45;width:310px;max-width:calc(100vw - 32px);background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow-dialog);border-radius:12px;padding:14px}.popover-heading{display:flex;justify-content:space-between;align-items:center;font-size:14px}.permission-scope{font-size:12px;color:var(--muted-foreground);margin:2px 0 12px;overflow-wrap:anywhere}.permission-option{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:11px 10px;border:1px solid transparent;border-radius:8px;background:none;color:var(--foreground);text-align:left}.permission-option.selected{background:var(--primary-soft);border-color:var(--primary-border);color:var(--accent-foreground)}.permission-option:hover{background:var(--background)}.permission-option strong{font-size:13px;display:block}.permission-option small{font-size:11px;line-height:1.7;color:var(--muted-foreground);display:block;margin-top:3px}.permission-help{font-size:11px;line-height:1.7;color:var(--muted-foreground);border-top:1px solid var(--border);padding-top:10px;margin:12px 0 0}.reconnect-note,.auto-note{display:flex;align-items:center;gap:9px;padding:10px 28px;background:var(--primary-soft);border-bottom:1px solid var(--primary-border);color:var(--accent-foreground);font-size:12px;line-height:1.65;flex-shrink:0}.reconnect-note>svg,.auto-note>svg{flex-shrink:0}.reconnect-note p{margin:0}.auto-note{background:var(--background);color:var(--muted-foreground);border-color:var(--border)}.conversation-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 28px;color:var(--muted-foreground);font-size:12px;flex-shrink:0}.conversation-bar>span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.conversation-bar button{color:var(--muted-foreground);white-space:nowrap}.conversation-scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}.conversation-content{width:100%;max-width:1000px;margin:0 auto;padding:12px 40px 26px}.project-empty{display:flex;flex-direction:column;align-items:center;text-align:center;padding:clamp(24px,6vh,68px) 0 24px}.welcome-icon{display:grid;place-items:center;width:64px;height:64px;border:1px solid var(--primary-border);border-radius:18px;color:var(--primary);background:var(--primary-soft);margin-bottom:22px}.eyebrow-label{margin:0 0 9px!important;font-size:12px!important;color:var(--primary)!important;font-weight:550}.project-empty h2{font-size:clamp(22px,2vw,29px);font-weight:650;letter-spacing:-.5px;margin:0 0 12px}.project-empty>p{font-size:13px;line-height:1.8;color:var(--muted-foreground);margin:0}.project-empty>.connect-button{margin-top:22px;padding:10px 17px}.starter-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;width:100%;margin:32px 0 18px}.starter-grid button{position:relative;text-align:left;border:1px solid var(--border);border-radius:11px;background:var(--surface);padding:19px 16px;color:var(--foreground)}.starter-grid button:hover:not(:disabled){border-color:var(--primary-border);background:var(--primary-soft)}.starter-grid button:disabled{opacity:.65}.starter-grid svg{color:var(--primary);margin-bottom:14px}.starter-grid strong{display:block;font-size:13px;font-weight:600;margin-bottom:7px}.starter-grid small{display:block;font-size:11px;line-height:1.7;color:var(--muted-foreground)}.starter-grid .starter-arrow{position:absolute;top:18px;right:13px;color:var(--muted-foreground);transform:rotate(45deg);margin:0}.empty-hint{font-size:11px!important}.project-turn{padding:12px 0 24px}.user-message{margin:0 0 30px auto;width:fit-content;max-width:88%;padding:11px 16px;border:1px solid var(--primary-border);border-radius:13px 13px 3px 13px;background:var(--primary-soft);font-size:14px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}.assistant-label{display:flex;align-items:center;gap:9px;margin-bottom:12px;font-size:13px}.assistant-mark{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:var(--primary);color:var(--primary-foreground);font-size:12px;font-weight:700}.assistant-label strong{font-weight:600}.assistant-label>span:last-child:not(.assistant-mark){color:var(--muted-foreground);font-size:11px}.process{border:1px solid var(--border);border-radius:9px;background:var(--background);font-size:12px;color:var(--muted-foreground);margin-left:33px;overflow:hidden}.process summary{display:flex;gap:7px;align-items:center;list-style:none;cursor:pointer;padding:11px 13px}.process summary::-webkit-details-marker{display:none}.process summary small{margin-left:auto;font-size:10px}.expanded{transform:rotate(90deg)}.activity{display:flex;gap:9px;padding:9px 14px;border-top:1px solid var(--border)}.activity>svg{flex-shrink:0;margin-top:2px}.activity div{min-width:0}.activity code{display:inline-block;margin-left:8px;font-size:11px;overflow-wrap:anywhere}.activity small{display:block;margin-top:6px}.activity p{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8;margin:6px 0 0;font-size:12px}.activity-error{color:var(--danger)}.final-answer{font-size:14px;line-height:1.85;overflow-wrap:anywhere;padding:14px 0 0 33px}.stopped-note{margin:14px 0 0 33px;font-size:12px;line-height:1.8;color:var(--muted-foreground)}.change-card{border:1px solid var(--primary-border);border-radius:12px;padding:18px;margin:16px 0;background:var(--surface)}.change-card h2{font-size:14px;margin:0}.change-card h2 code{font-size:12px;overflow-wrap:anywhere}.change-card p{font-size:12px;color:var(--muted-foreground);line-height:1.7}.diff-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.diff-grid>div{min-width:0}.diff-grid small{font-size:11px;color:var(--muted-foreground)}.diff-grid pre{overflow:auto;max-height:230px;background:var(--background);padding:12px;border:1px solid var(--border);border-radius:8px;font-size:12px;white-space:pre}.change-card footer{display:flex;justify-content:flex-end;gap:9px;margin-top:14px}
+.project-main{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--surface)}.workspace-toolbar{display:flex;align-items:center;gap:12px;min-height:86px;padding:18px 28px;border-bottom:1px solid var(--border);flex-shrink:0}.folder-icon{display:grid;place-items:center;flex-shrink:0;width:42px;height:42px;border:1px solid var(--primary-border);border-radius:11px;background:var(--primary-soft);color:var(--primary)}.project-identity{flex:1;min-width:0}.project-identity h1{font-size:16px;font-weight:650;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.project-identity p{display:flex;align-items:center;gap:5px;margin:5px 0 0;font-size:11px;color:var(--muted-foreground)}.connection-dot{width:5px;height:5px;border-radius:50%;background:var(--muted-foreground)}.connection-dot.connected{background:var(--success)}.permission-control{position:relative;flex-shrink:0}.permission-trigger{display:flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--foreground);font-size:12px;min-height:36px;padding:8px 10px}.permission-trigger:hover{background:var(--surface-muted)}.permission-trigger.automatic{background:var(--primary-soft);border-color:var(--primary-border);color:var(--accent-foreground)}.permission-popover{position:absolute;right:0;top:calc(100% + 8px);z-index:45;width:310px;max-width:calc(100vw - 32px);background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow-dialog);border-radius:12px;padding:14px}.popover-heading{display:flex;justify-content:space-between;align-items:center;font-size:14px}.permission-scope{font-size:12px;color:var(--muted-foreground);margin:2px 0 12px;overflow-wrap:anywhere}.permission-option{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:11px 10px;border:1px solid transparent;border-radius:8px;background:none;color:var(--foreground);text-align:left}.permission-option.selected{background:var(--primary-soft);border-color:var(--primary-border);color:var(--accent-foreground)}.permission-option:hover{background:var(--background)}.permission-option strong{font-size:13px;display:block}.permission-option small{font-size:11px;line-height:1.7;color:var(--muted-foreground);display:block;margin-top:3px}.permission-help{font-size:11px;line-height:1.7;color:var(--muted-foreground);border-top:1px solid var(--border);padding-top:10px;margin:12px 0 0}.reconnect-note,.auto-note{display:flex;align-items:center;gap:9px;padding:10px 28px;background:var(--primary-soft);border-bottom:1px solid var(--primary-border);color:var(--accent-foreground);font-size:12px;line-height:1.65;flex-shrink:0}.reconnect-note>svg,.auto-note>svg{flex-shrink:0}.reconnect-note p{margin:0}.auto-note{background:var(--background);color:var(--muted-foreground);border-color:var(--border)}.conversation-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 28px;color:var(--muted-foreground);font-size:12px;flex-shrink:0}.conversation-bar>span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.conversation-bar button{color:var(--muted-foreground);white-space:nowrap}.conversation-scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}.conversation-content{width:100%;max-width:1000px;margin:0 auto;padding:12px 40px 26px}.project-empty{display:flex;flex-direction:column;align-items:center;text-align:center;padding:clamp(24px,6vh,68px) 0 24px}.welcome-icon{display:grid;place-items:center;width:64px;height:64px;border:1px solid var(--primary-border);border-radius:18px;color:var(--primary);background:var(--primary-soft);margin-bottom:22px}.eyebrow-label{margin:0 0 9px!important;font-size:12px!important;color:var(--primary)!important;font-weight:550}.project-empty h2{font-size:clamp(22px,2vw,29px);font-weight:650;letter-spacing:-.5px;margin:0 0 12px}.project-empty>p{font-size:13px;line-height:1.8;color:var(--muted-foreground);margin:0}.project-empty>.connect-button{margin-top:22px;padding:10px 17px}.starter-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;width:100%;margin:32px 0 18px}.starter-grid button{position:relative;text-align:left;border:1px solid var(--border);border-radius:11px;background:var(--surface);padding:19px 16px;color:var(--foreground)}.starter-grid button:hover:not(:disabled){border-color:var(--primary-border);background:var(--primary-soft)}.starter-grid button:disabled{opacity:.65}.starter-grid svg{color:var(--primary);margin-bottom:14px}.starter-grid strong{display:block;font-size:13px;font-weight:600;margin-bottom:7px}.starter-grid small{display:block;font-size:11px;line-height:1.7;color:var(--muted-foreground)}.starter-grid .starter-arrow{position:absolute;top:18px;right:13px;color:var(--muted-foreground);transform:rotate(45deg);margin:0}.empty-hint{font-size:11px!important}.project-turn{padding:12px 0 24px}.user-message{margin:0 0 30px auto;width:fit-content;max-width:88%;padding:11px 16px;border:1px solid var(--primary-border);border-radius:13px 13px 3px 13px;background:var(--primary-soft);font-size:14px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}.assistant-label{display:flex;align-items:center;gap:9px;margin-bottom:12px;font-size:13px}.assistant-mark{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:var(--primary);color:var(--primary-foreground);font-size:12px;font-weight:700}.assistant-label strong{font-weight:600}.assistant-label>span:last-child:not(.assistant-mark){color:var(--muted-foreground);font-size:11px}.project-process{margin-left:33px;max-width:calc(100% - 33px)}.final-answer{font-size:14px;line-height:1.85;overflow-wrap:anywhere;padding:14px 0 0 33px}.stopped-note{margin:14px 0 0 33px;font-size:12px;line-height:1.8;color:var(--muted-foreground)}.change-card{border:1px solid var(--primary-border);border-radius:12px;padding:18px;margin:16px 0;background:var(--surface)}.change-card h2{font-size:14px;margin:0}.change-card h2 code{font-size:12px;overflow-wrap:anywhere}.change-card p{font-size:12px;color:var(--muted-foreground);line-height:1.7}.diff-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.diff-grid>div{min-width:0}.diff-grid small{font-size:11px;color:var(--muted-foreground)}.diff-grid pre{overflow:auto;max-height:230px;background:var(--background);padding:12px;border:1px solid var(--border);border-radius:8px;font-size:12px;white-space:pre}.change-card footer{display:flex;justify-content:flex-end;gap:9px;margin-top:14px}
 .composer-dock{flex-shrink:0;width:100%;max-width:1000px;margin:0 auto;padding:8px 40px 16px;background:var(--surface)}.local-composer{border:1px solid var(--input);border-radius:13px;background:var(--surface);padding:14px 15px 10px;box-shadow:0 3px 15px rgb(15 23 42 / .035)}.local-composer:focus-within{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-soft)}.local-composer textarea{display:block;width:100%;resize:none;border:0;outline:none!important;background:none;color:var(--foreground);font-size:14px;line-height:1.75;height:60px;min-height:60px;max-height:160px;padding:0}.local-composer textarea::placeholder{color:var(--muted-foreground)}.local-composer footer{display:flex;align-items:center;gap:10px;margin-top:6px}.composer-mode{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted-foreground);min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mode-label{border-left:1px solid var(--border);padding-left:7px;margin-left:2px}.keyboard-hint{font-size:10px;color:var(--muted-foreground);margin-left:auto;white-space:nowrap}.send-button{flex-shrink:0;display:grid;place-items:center;border:0;background:var(--primary);color:var(--primary-foreground);width:34px;height:34px;border-radius:9px;margin-left:auto}.keyboard-hint+.send-button{margin-left:0}.privacy-note{display:flex;align-items:center;justify-content:center;gap:5px;font-size:10px;line-height:1.6;color:var(--muted-foreground);margin:9px 0 0}.privacy-note svg{flex-shrink:0}.error-note{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:9px 12px;border:1px solid var(--danger-border);border-radius:8px;background:var(--danger-soft);color:var(--danger);font-size:12px;line-height:1.7;margin:0 0 8px;max-height:100px;overflow:auto}.error-note>.icon-button{margin-left:auto;flex-shrink:0}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.spin{animation:spin 1s linear infinite}.rail-toggle,.mobile-close,.rail-scrim{display:none}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spin{animation:none}}
 @container(max-width:1000px){.workspace-toolbar{padding:16px 20px;gap:9px}.conversation-content{padding-left:26px;padding-right:26px}.composer-dock{padding-left:26px;padding-right:26px}.keyboard-hint{display:none}.send-button{margin-left:auto!important}.starter-grid{gap:8px}.starter-grid button{padding:15px 11px}.starter-grid small{font-size:10px}}
 @media(max-width:1199px){.local-project{grid-template-columns:216px minmax(0,1fr)}.project-rail{padding-left:10px;padding-right:10px}}
 @media(max-width:959px){.local-project{grid-template-columns:minmax(0,1fr)}.project-rail{display:none}.project-rail.is-open{display:flex;position:absolute;left:0;top:0;bottom:0;width:min(290px,85%);z-index:55;box-shadow:var(--shadow-dialog)}.rail-toggle,.mobile-close{display:inline-grid}.rail-scrim{display:block;position:absolute;inset:0;background:var(--backdrop);border:0;z-index:50}.workspace-toolbar{min-height:76px}.project-empty{padding-top:32px}.conversation-content,.composer-dock{max-width:850px}}
-@media(max-width:639px){.workspace-toolbar{padding:12px;gap:8px;flex-wrap:wrap}.folder-icon{width:34px;height:34px;border-radius:9px}.project-identity h1{font-size:14px}.project-identity{min-width:100px}.directory-button{font-size:11px;padding:7px 9px}.permission-control{margin-left:auto}.permission-trigger{font-size:11px;min-height:32px;padding:6px 9px}.permission-popover{width:290px}.workspace-toolbar .rail-toggle{width:28px}.conversation-bar{padding:7px 14px}.conversation-content{padding:12px 16px 20px}.composer-dock{padding:8px 12px max(10px,env(safe-area-inset-bottom))}.local-composer{padding:12px}.composer-mode{font-size:10px}.mode-label{display:none}.privacy-note{font-size:9px;text-align:center;align-items:flex-start;margin-top:7px}.project-empty{padding:20px 0}.welcome-icon{width:50px;height:50px;border-radius:14px;margin-bottom:18px}.project-empty h2{font-size:22px}.project-empty>p{font-size:12px}.starter-grid{grid-template-columns:1fr;margin-top:22px;gap:8px}.starter-grid button{display:grid;grid-template-columns:25px 1fr;gap:3px 8px;padding:12px 14px}.starter-grid svg{grid-row:1/3;align-self:center;margin:0}.starter-grid strong{margin:0;font-size:12px}.starter-grid small{font-size:11px}.starter-grid .starter-arrow{display:none}.reconnect-note,.auto-note{padding:9px 14px;font-size:11px}.user-message{font-size:13px;margin-bottom:22px}.final-answer{font-size:13px;padding-left:0}.process{margin-left:0}.diff-grid{grid-template-columns:1fr}.change-card{padding:12px}.change-card footer button{font-size:12px}.assistant-label{font-size:12px}}
+@media(max-width:639px){.workspace-toolbar{padding:12px;gap:8px;flex-wrap:wrap}.folder-icon{width:34px;height:34px;border-radius:9px}.project-identity h1{font-size:14px}.project-identity{min-width:100px}.directory-button{font-size:11px;padding:7px 9px}.permission-control{margin-left:auto}.permission-trigger{font-size:11px;min-height:32px;padding:6px 9px}.permission-popover{width:290px}.workspace-toolbar .rail-toggle{width:28px}.conversation-bar{padding:7px 14px}.conversation-content{padding:12px 16px 20px}.composer-dock{padding:8px 12px max(10px,env(safe-area-inset-bottom))}.local-composer{padding:12px}.composer-mode{font-size:10px}.mode-label{display:none}.privacy-note{font-size:9px;text-align:center;align-items:flex-start;margin-top:7px}.project-empty{padding:20px 0}.welcome-icon{width:50px;height:50px;border-radius:14px;margin-bottom:18px}.project-empty h2{font-size:22px}.project-empty>p{font-size:12px}.starter-grid{grid-template-columns:1fr;margin-top:22px;gap:8px}.starter-grid button{display:grid;grid-template-columns:25px 1fr;gap:3px 8px;padding:12px 14px}.starter-grid svg{grid-row:1/3;align-self:center;margin:0}.starter-grid strong{margin:0;font-size:12px}.starter-grid small{font-size:11px}.starter-grid .starter-arrow{display:none}.reconnect-note,.auto-note{padding:9px 14px;font-size:11px}.user-message{font-size:13px;margin-bottom:22px}.final-answer{font-size:13px;padding-left:0}.project-process{margin-left:0;max-width:100%}.diff-grid{grid-template-columns:1fr}.change-card{padding:12px}.change-card footer button{font-size:12px}.assistant-label{font-size:12px}}
 @media(min-width:960px) and (max-height:950px){
   .project-empty{padding:16px 0 12px}
   .project-empty .welcome-icon{width:44px;height:44px;border-radius:12px;margin-bottom:12px}
@@ -718,4 +877,5 @@ button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:
 @container(max-width:1000px){.composer-connect-button{margin-left:auto}}
 @media(max-width:639px){.composer-dock{padding-left:12px;padding-right:12px}.local-composer{padding:11px 12px}.composer-settings{gap:7px}.session-kind-switch button{padding:6px 9px}.workspace-model-picker{min-height:36px;padding:0 8px}.workspace-model-picker select{max-width:130px;font-size:11px}.composer-mode-hint{width:100%;margin-left:2px}.composer-permission-control{margin-left:auto}.composer-permission-popover{right:0}.local-composer textarea{height:48px;min-height:48px}.mode-label{display:none}}
 .recovery-export{margin-bottom:8px}
+.user-images{display:flex;justify-content:flex-end;gap:9px;margin:-18px 0 25px;flex-wrap:wrap}.user-images img{display:block;max-width:min(240px,42%);max-height:180px;object-fit:contain;border:1px solid var(--primary-border);border-radius:10px;background:var(--primary-soft)}
 </style>

@@ -1,6 +1,7 @@
 import { ALLOWED_PROJECT_DOTFILES, CHAT_EXACT_FILENAMES, CHAT_FILE_EXTENSIONS } from './chat-attachment'
 import { IGNORED_PROJECT_DIRECTORIES } from './directory-entry'
 import { LocalWorkspacePermissions } from './local-workspace-permissions'
+import { compressWorkspaceImage } from './local-workspace-images'
 
 export interface LocalFileHandle {
   kind: 'file'; name: string
@@ -17,7 +18,7 @@ export interface LocalDirectoryHandle {
   requestPermission(options: { mode: 'read' | 'readwrite' }): Promise<PermissionState>
 }
 export type WorkspaceCall = { id: string; name: string; args: Record<string, unknown> }
-export type WorkspaceMessage = { role: 'user' | 'assistant' | 'tool'; content: string; tool_calls?: WorkspaceCall[]; tool_call_id?: string }
+export type WorkspaceMessage = { role: 'user' | 'assistant' | 'tool'; content: string; images?: string[]; tool_calls?: WorkspaceCall[]; tool_call_id?: string }
 export type ChangePreview = { path: string; before: string; after: string; hash: string | null; oldText: string; newText: string }
 const MAX_BYTES = 1024 * 1024
 const CODE_EXTENSIONS = new Set<string>(CHAT_FILE_EXTENSIONS.filter(e => !['pdf', 'docx', 'xlsx'].includes(e)))
@@ -37,6 +38,11 @@ export function sourceName(name: string) {
   try { safeParts(name) } catch { return false }
   return (CHAT_EXACT_FILENAMES as readonly string[]).includes(name) || CODE_EXTENSIONS.has(name.split('.').pop()?.toLowerCase() || '')
 }
+export function imageName(name: string) {
+  try { safeParts(name) } catch { return false }
+  return /\.(png|jpe?g|webp)$/i.test(name)
+}
+export type WorkspaceImageRead = { kind: 'image'; path: string; image: string; mimeType: 'image/jpeg'; originalBytes: number; nextOffset: null }
 export async function hashText(text: string) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('')
@@ -64,6 +70,7 @@ export class LocalWorkspace {
   }
   private async target(path: string) {
     const parts = safeParts(path); const name = parts.pop()!
+    if (imageName(name)) throw new Error('图片仅支持查看内容，不能使用文本替换修改图片')
     if (!sourceName(name)) throw new Error('该文件不是支持的源码类型')
     return { dir: await this.directory(parts.join('/')), name }
   }
@@ -78,13 +85,14 @@ export class LocalWorkspace {
   }
   async list(path = '', offset = 0) {
     const dir = await this.directory(path)
-    const entries: { name: string; kind: string; path: string }[] = []
+    const entries: { name: string; kind: string; path: string; contentType?: 'image' }[] = []
     let scanned = 0; let scanCapped = false
     for await (const [name, handle] of dir.entries()) {
       if (++scanned > 3000) { scanCapped = true; break }
       try { safeParts(name) } catch { continue }
-      if (handle.kind === 'file' && !sourceName(name)) continue
-      entries.push({ name, kind: handle.kind, path: path ? `${path}/${name}` : name })
+      if (handle.kind === 'file' && !sourceName(name) && !imageName(name)) continue
+      entries.push({ name, kind: handle.kind, path: path ? `${path}/${name}` : name,
+        ...(handle.kind === 'file' && imageName(name) ? { contentType: 'image' as const } : {}) })
     }
     entries.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name))
     return { entries: entries.slice(offset, offset + 100), nextOffset: offset + 100 < entries.length ? offset + 100 : null, scanCapped }
@@ -99,6 +107,19 @@ export class LocalWorkspace {
     return { path, hash: file.hash, offset, content: file.text.slice(offset, end),
       nextOffset: end < file.text.length ? end : null, totalChars: file.text.length,
       offsetUnit: 'characters' }
+  }
+  async readImage(path: string, offset = 0): Promise<WorkspaceImageRead> {
+    const parts = safeParts(path); const name = parts.pop()!
+    if (!imageName(name)) throw new Error('只支持 PNG、JPEG 或 WebP 图片')
+    if (offset !== 0) throw new Error('图片不使用文本分页，请将 offset 设为 0')
+    const dir = await this.directory(parts.join('/'))
+    const file = await (await dir.getFileHandle(name)).getFile()
+    const mime = /\.png$/i.test(name) ? 'image/png' : /\.webp$/i.test(name) ? 'image/webp' : 'image/jpeg'
+    // Directory/file handles can report an empty MIME type. The browser decoder
+    // still verifies the bytes; the model only receives the newly encoded JPEG.
+    const input = new File([file], name, { type: mime })
+    const image = await compressWorkspaceImage(input)
+    return { kind: 'image', path, image, mimeType: 'image/jpeg', originalBytes: file.size, nextOffset: null }
   }
   async search(path: string, query: string, signal: AbortSignal) {
     if (!query || query.length > 200) throw new Error('搜索词需为 1–200 字符')
@@ -208,7 +229,10 @@ export class LocalWorkspace {
     signal.throwIfAborted()
     const path = string(call.args.path)
     if (call.name === 'workspace_list') return this.list(path, number(call.args.offset))
-    if (call.name === 'workspace_read') return this.read(path, number(call.args.offset))
+    if (call.name === 'workspace_read') {
+      const offset = number(call.args.offset)
+      return imageName(path.split('/').pop() || '') ? this.readImage(path, offset) : this.read(path, offset)
+    }
     if (call.name === 'workspace_search') return this.search(path, string(call.args.query), signal)
     throw new Error('不支持的本地工具')
   }
