@@ -41,10 +41,11 @@ describe('local workspace file boundary', () => {
   it.each(['../secret.ts', '/tmp/a.py', 'C:/a.py', 'a\\b.ts', 'a//b.ts', '.env', '.git/config', 'node_modules/a.ts', 'NUL.txt', 'a./b.ts'])('rejects unsafe path %s', path => {
     expect(() => safeParts(path)).toThrow()
   })
-  it('lists without reading file bodies and excludes generated/secret/binary entries', async () => {
+  it('lists source and image names without reading bodies and excludes generated/secret entries', async () => {
     const f = fixture({ 'src/a.ts': 'private code', '.env': 'KEY=secret', 'node_modules/a.js': 'dep', 'photo.png': 'binary', Dockerfile: 'FROM x' })
     const result = await new LocalWorkspace(f.root).list()
-    expect(result.entries.map(x => x.name).sort()).toEqual(['Dockerfile', 'src'])
+    expect(result.entries.map(x => x.name).sort()).toEqual(['Dockerfile', 'photo.png', 'src'])
+    expect(result.entries.find(x => x.name === 'photo.png')?.contentType).toBe('image')
     expect(f.counts()).toEqual({ reads: 0, writes: 0 })
     expect(sourceName('.gitignore')).toBe(true)
   })
