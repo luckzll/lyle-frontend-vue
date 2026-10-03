@@ -38,13 +38,21 @@ describe('local attachment controls', () => {
     expect(html).not.toContain('<script>')
     expect(html).not.toContain('<img onerror=')
     expect(html).toContain('图片将在下一次发送时提供给模型')
+    expect(html).toContain('下次发送时分析')
   })
 
-  it('disables upload, remove and write-policy controls while a task owns the attachment handles', async () => {
+  it('disables remove and write-policy controls while a task owns the attachment handles', async () => {
     const html = await renderToString(createSSRApp(LocalWorkspaceAttachments, { disabled: true, items: [
       { id: 'folder', name: 'shared-code', kind: 'folder', path: '@attachments/folder', workspace: previewWorkspace(), writable: true }
     ] }))
-    expect(html.match(/<button[^>]*disabled/g)).toHaveLength(4)
+    expect(html.match(/<button[^>]*disabled/g)).toHaveLength(1)
     expect(html).toMatch(/<select[^>]*disabled/)
+  })
+
+  it('adds no tray height or duplicate attachment actions when nothing is selected', async () => {
+    const html = await renderToString(createSSRApp(LocalWorkspaceAttachments, { items: [] }))
+    expect(html).not.toContain('<button')
+    expect(html).not.toContain('<ul')
+    expect(html).not.toContain('local-attachments')
   })
 })

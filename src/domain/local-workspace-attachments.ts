@@ -1,5 +1,6 @@
 import { LocalWorkspace, safeParts, sourceName, type LocalDirectoryHandle, type LocalFileHandle, type WorkspaceCall, type ChangePreview } from './local-workspace'
 import type { LocalPermissionMode } from './local-workspace-permissions'
+import { documentName, MAX_WORKSPACE_DOCUMENT_BYTES } from './local-workspace-documents'
 
 export type AttachmentScope = { owner: string; projectId: string | null; sessionId: string }
 export type PickedFileHandle = LocalFileHandle & {
@@ -43,8 +44,9 @@ export function resetAttachmentPermissions(scope: AttachmentScope) {
 export function fileAttachmentWorkspace(file: File, handle?: PickedFileHandle): LocalWorkspace {
   safeParts(file.name)
   const image = /\.(?:png|jpe?g|webp)$/i.test(file.name)
-  if (!sourceName(file.name) && !image) throw new Error('只支持项目源码、文本和 PNG/JPEG/WebP 图片，隐藏凭据不可添加')
-  if (file.size > (image ? 10 : 1) * 1024 * 1024) throw new Error(image ? '图片附件需在 10 MB 以内' : '源码附件需在 1 MB 以内')
+  const document = documentName(file.name)
+  if (!sourceName(file.name) && !image && !document) throw new Error('支持源码、图片、PDF、DOCX、XLSX/XLSM/XLS、PPTX；旧版 DOC/PPT 请先转换')
+  if (file.size > (image ? 10 * 1024 * 1024 : document ? MAX_WORKSPACE_DOCUMENT_BYTES : 1024 * 1024)) throw new Error(image ? '图片附件需在 10 MB 以内' : document ? '文档附件需在 5 MB 以内' : '源码附件需在 1 MB 以内')
   const readHandle: LocalFileHandle = handle || { kind: 'file', name: file.name, getFile: async () => file,
     createWritable: async () => { throw new Error('此文件附件为只读，请通过选择文件重新添加可写文件') } }
   const root: LocalDirectoryHandle = {
@@ -74,7 +76,8 @@ export function folderFilesWorkspace(files: File[]): LocalWorkspace {
     let parts: string[]
     try { parts = safeParts(path) } catch { continue }
     const image = /\.(?:png|jpe?g|webp)$/i.test(parts[parts.length - 1]!)
-    if ((!sourceName(parts[parts.length - 1]!) && !image) || file.size > (image ? 10 : 1) * 1024 * 1024) continue
+    const document = documentName(parts[parts.length - 1]!)
+    if ((!sourceName(parts[parts.length - 1]!) && !image && !document) || file.size > (image ? 10 * 1024 * 1024 : document ? MAX_WORKSPACE_DOCUMENT_BYTES : 1024 * 1024)) continue
     let branch = tree
     for (const name of parts.slice(0, -1)) {
       if (!branch.has(name)) branch.set(name, new Map())
@@ -84,7 +87,7 @@ export function folderFilesWorkspace(files: File[]): LocalWorkspace {
     }
     branch.set(parts[parts.length - 1]!, file); retained++
   }
-  if (!retained) throw new Error('文件夹中没有允许读取的源码或图片')
+  if (!retained) throw new Error('文件夹中没有允许读取的源码、图片或 Office/PDF 文档')
   const directory = (name: string, node: Node): LocalDirectoryHandle => ({
     kind: 'directory', name,
     entries: async function* () { for (const [childName, value] of node) yield [childName, value instanceof Map ? directory(childName, value) : fileHandle(value)] },

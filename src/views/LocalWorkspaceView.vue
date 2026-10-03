@@ -8,16 +8,20 @@ import { CHAT_MODEL_OPTIONS, CHAT_MODEL_STORAGE_KEY, resolveChatModelId, type Ch
 import LocalProjectText from '@/components/chat/LocalProjectText.vue'
 import LocalAgentProcess from '@/components/chat/LocalAgentProcess.vue'
 import LocalWorkspaceAttachments from '@/components/chat/LocalWorkspaceAttachments.vue'
+import LocalWorkspaceAttachmentMenu from '@/components/chat/LocalWorkspaceAttachmentMenu.vue'
 import { localReadFeedback } from '@/domain/local-agent-process'
 import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
 import { LocalWorkspace, chooseLocalDirectory, takeLocalDrop, safeParts, imageName, type ChangePreview, type WorkspaceMessage, type LocalDirectoryHandle } from '@/domain/local-workspace'
-import { createLocalProject, createLocalSessionForProject, loadLocalHistory, saveLocalHistory, getLocalHistoryRecovery, rememberProjectHandle, getProjectHandle, getLocalHandle, forgetLocalHandle, clearLocalHandles, type LocalProject, type LocalSession, type LocalTurn, type LocalActivity } from '@/domain/local-workspace-history'
+import { createLocalProject, createLocalSessionForProject, loadLocalHistory, saveLocalHistory, getLocalHistoryRecovery, rememberProjectHandle, restoreProjectHandle, getProjectHandle, getLocalHandle, forgetLocalHandle, forgetProjectHandle, pruneProjectHandles, clearLocalHandles, type LocalProject, type LocalSession, type LocalTurn, type LocalActivity } from '@/domain/local-workspace-history'
+import { checkLocalProjectConnection } from '@/domain/local-project-connection'
 import { takeDirectorySelection } from '@/domain/local-directory-selection'
 import { canonicalLocalProjectQuery, parseLocalProjectRoute } from '@/domain/local-project-route'
 import { LocalConversationWorkspace, addLocalAttachment, attachmentManifest, clearLocalAttachments, fileAttachmentWorkspace, folderFilesWorkspace,
   localAttachments, removeLocalAttachment, resetAttachmentPermissions, type AttachmentScope, type LocalWorkspaceAttachment, type PickedFileHandle } from '@/domain/local-workspace-attachments'
 import { compactWorkspaceImageHistory, compressWorkspaceImage, workspaceImageToolResult, workspaceReadImageMessage, type WorkspaceReadImage } from '@/domain/local-workspace-images'
 import type { LocalPermissionMode } from '@/domain/local-workspace-permissions'
+import { documentName, WORKSPACE_DOCUMENT_ACCEPT } from '@/domain/local-workspace-documents'
+import { CHAT_FILE_ACCEPT } from '@/domain/chat-attachment'
 
 type SessionKind = 'chat' | 'agent'
 const route = useRoute(); const router = useRouter()
@@ -32,6 +36,13 @@ const activeSession = computed(() => sessions.value.find(s => s.id === activeId.
 const sessionKind = computed<SessionKind>(() => activeSession.value?.kind || 'agent')
 const renaming = ref(false); const projectNameDraft = ref('')
 const workspace = shallowRef<LocalWorkspace>()
+const boundProjectHandle = shallowRef<LocalDirectoryHandle>()
+const projectConnectionStatus = ref<'idle' | 'restoring' | 'connected' | 'authorization' | 'missing' | 'unavailable'>('idle')
+const projectConnectionError = ref(''); const projectPersistenceWarning = ref('')
+const connectionActionLabel = computed(() => projectConnectionStatus.value === 'authorization' && boundProjectHandle.value ? '授权连接' : boundProjectHandle.value ? '重试连接' : '连接目录')
+const connectionHint = computed(() => projectConnectionError.value || (projectConnectionStatus.value === 'restoring' ? '正在恢复已保存的项目目录连接…'
+  : projectConnectionStatus.value === 'authorization' ? '目录绑定已保留，请点击“授权连接”恢复读取权限，无需重新选择文件夹。'
+  : '可以先讨论任务；读取或修改项目文件前，请连接项目目录。'))
 const attachments = shallowRef<LocalWorkspaceAttachment[]>([])
 const attachmentBusy = ref(false)
 const attachmentFilesInput = ref<HTMLInputElement>(); const attachmentImagesInput = ref<HTMLInputElement>(); const attachmentFolderInput = ref<HTMLInputElement>()
@@ -66,12 +77,13 @@ let controller: AbortController | null = null
 let answerChange: ((accepted: boolean) => void) | null = null
 let checkpoint = 0; let mounted = true; let restoring = false; let inactive = false
 let browseRevision = 0
+let connectionRevision = 0
 let routeReady = false; let applyingRoute = false; let internalRouteTarget: string | null = null
 const handledRouteRequests = new Set<string>()
 const isActive = () => mounted && !inactive && authState.user?.id === owner
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 const busy = computed(() => loading.value || connecting.value || permissionBusy.value || applying.value || attachmentBusy.value)
-const canSend = computed(() => !!activeSession.value && (!!input.value.trim() || attachments.value.some(item => item.image)) && !busy.value && isActive())
+const canSend = computed(() => !!activeSession.value && (!!input.value.trim() || attachments.value.length > 0) && !busy.value && isActive())
 const labels: Record<string, string> = { workspace_list: '查看目录', workspace_read: '读取文件', workspace_search: '搜索项目', workspace_edit: '修改文件', workspace_create: '新建文件' }
 const suggestions = computed(() => [
   { icon: FolderOpen, title: '了解这个项目', detail: '梳理用途、结构与启动入口', prompt: '查看项目结构，按需读取关键文件，说明项目用途和启动入口。' },
@@ -111,9 +123,69 @@ async function scrollToBottom(force = false) {
   }
 }
 function resetConnection() {
+  connectionRevision++
   browseRevision++
+  void workspace.value?.permissions.select('confirm')
   workspace.value = undefined; mode.value = 'confirm'; permissionsOpen.value = false
+  boundProjectHandle.value = undefined; projectConnectionStatus.value = 'idle'; projectConnectionError.value = ''; projectPersistenceWarning.value = ''
   tree.value = []; treePath.value = ''; treeOffset.value = 0; nextOffset.value = null
+}
+async function restoreConnection(projectId: string | null, sessionId: string | null) {
+  const revision = ++connectionRevision
+  const current = () => isActive() && connectionRevision === revision && activeProjectId.value === projectId && activeId.value === sessionId
+  projectConnectionStatus.value = 'restoring'
+  const restored = owner != null && projectId ? await restoreProjectHandle(owner, projectId) : undefined
+  if (!current()) return
+  const handle = restored?.handle || (owner != null && sessionId ? getLocalHandle(owner, sessionId) : undefined)
+  projectPersistenceWarning.value = restored && (restored.status === 'unavailable' || restored.status === 'error') ? restored.error || '浏览器未能恢复目录绑定；当前连接仍可使用，刷新后可能需要重新选择目录。' : ''
+  if (!handle) { projectConnectionStatus.value = restored?.status === 'error' || restored?.status === 'unavailable' ? 'unavailable' : 'idle'; projectConnectionError.value = projectPersistenceWarning.value; return }
+  boundProjectHandle.value = handle
+  const result = await checkLocalProjectConnection(handle, current)
+  if (!current()) return
+  if (result.status === 'missing') {
+    boundProjectHandle.value = undefined; projectConnectionStatus.value = 'missing'; projectConnectionError.value = result.error || ''
+    if (owner != null && projectId) await forgetProjectHandle(owner, projectId)
+    else if (owner != null && sessionId) forgetLocalHandle(owner, sessionId)
+    if (!current()) return
+  } else if (result.status === 'connected') {
+    workspace.value = new LocalWorkspace(handle); mode.value = 'confirm'; projectConnectionStatus.value = 'connected'; projectConnectionError.value = ''
+    await browse('')
+    if (!current()) return
+  } else if (result.status !== 'stale') { projectConnectionStatus.value = result.status; projectConnectionError.value = result.error || '' }
+}
+async function reconnectProject() {
+  if (busy.value || !isActive()) return
+  const handle = boundProjectHandle.value
+  if (!handle) { await connect(!!activeProject.value); return }
+  const projectId = activeProjectId.value; const sessionId = activeId.value; const revision = ++connectionRevision
+  const current = () => isActive() && connectionRevision === revision && activeProjectId.value === projectId && activeId.value === sessionId && boundProjectHandle.value === handle
+  // Read authorization starts synchronously in this button's click, before any load/query await.
+  connecting.value = true; projectConnectionError.value = ''; error.value = ''
+  try {
+    const permission = projectConnectionStatus.value === 'authorization' ? handle.requestPermission({ mode: 'read' }) : undefined
+    if (permission && await permission !== 'granted') { if (current()) projectConnectionStatus.value = 'authorization'; return }
+    if (!current()) return
+    const result = await checkLocalProjectConnection(handle, current)
+    if (!current()) return
+    if (result.status === 'connected') {
+      workspace.value = new LocalWorkspace(handle); mode.value = 'confirm'; projectConnectionStatus.value = 'connected'
+      await browse('')
+      if (!current()) return
+    } else if (result.status === 'missing') {
+      boundProjectHandle.value = undefined; projectConnectionStatus.value = 'missing'; projectConnectionError.value = result.error || ''
+      if (owner != null && projectId) await forgetProjectHandle(owner, projectId)
+      else if (owner != null && sessionId) forgetLocalHandle(owner, sessionId)
+      if (!current()) return
+    } else if (result.status !== 'stale') { projectConnectionStatus.value = result.status; projectConnectionError.value = result.error || '' }
+  } catch (e) {
+    if (current()) {
+      if (e && typeof e === 'object' && 'name' in e && e.name === 'NotFoundError') {
+        boundProjectHandle.value = undefined; projectConnectionStatus.value = 'missing'; projectConnectionError.value = '原项目目录已移动或删除，请重新选择目录'
+        if (owner != null && projectId) await forgetProjectHandle(owner, projectId)
+        else if (owner != null && sessionId) forgetLocalHandle(owner, sessionId)
+      } else { projectConnectionStatus.value = 'authorization'; projectConnectionError.value = e instanceof Error ? e.message : '未获得目录读取权限，请重试授权连接' }
+    }
+  } finally { connecting.value = false }
 }
 async function restoreSession(session: LocalSession) {
   restoring = true
@@ -124,18 +196,8 @@ async function restoreSession(session: LocalSession) {
   transcript = JSON.parse(JSON.stringify(session.transcript)) as WorkspaceMessage[]
   input.value = session.draft; error.value = ''; resetConnection()
   restoring = false
-  const handle = owner == null ? undefined : (session.projectId && getProjectHandle(owner, session.projectId)) || getLocalHandle(owner, session.id)
-  if (handle) {
-    try {
-      if (await handle.queryPermission({ mode: 'read' }) === 'granted') {
-        if (!isActive() || activeId.value !== session.id) return
-        if (owner != null && session.projectId) rememberProjectHandle(owner, session.projectId, handle)
-        workspace.value = new LocalWorkspace(handle)
-        mode.value = workspace.value.permissions.mode
-        await browse('')
-      }
-    } catch { /* The history remains readable even when the directory is unavailable. */ }
-  }
+  await restoreConnection(session.projectId, session.id)
+  if (!isActive() || activeProjectId.value !== session.projectId || activeId.value !== session.id) return
   if (turns.value.length) await scrollToBottom(true)
   else { await nextTick(); if (scroller.value) scroller.value.scrollTop = 0 }
 }
@@ -152,7 +214,9 @@ async function selectProject(project: LocalProject) {
   persist()
   restoring = true; activeProjectId.value = project.id; activeId.value = null
   turns.value = []; transcript = []; input.value = ''; resetConnection(); restoring = false
-  persist(); railOpen.value = false
+  connecting.value = true
+  try { await restoreConnection(project.id, null); if (isActive() && activeProjectId.value === project.id && activeId.value === null) persist() } finally { connecting.value = false }
+  railOpen.value = false
   await syncActiveRoute()
 }
 async function newSession(project = activeProject.value, force = false) {
@@ -176,38 +240,58 @@ async function newSession(project = activeProject.value, force = false) {
 async function connect(reconnect = false, supplied?: LocalDirectoryHandle | null) {
   if (busy.value) return
   const reconnectProject = reconnect ? activeProject.value : undefined
+  const originalProjectId = activeProjectId.value; const originalSessionId = activeId.value
+  const selectionCurrent = () => isActive() && activeProjectId.value === originalProjectId && activeId.value === originalSessionId
   connecting.value = true
   try {
     error.value = ''
     const root = supplied || await chooseLocalDirectory()
-    if (!isActive()) return
+    if (!selectionCurrent()) return
     if (reconnectProject && root.name !== reconnectProject.directoryName) {
       throw new Error('请选择原目录“' + reconnectProject.directoryName + '”。其他目录请通过“添加项目”单独打开。')
     }
     const knownHandle = reconnectProject && owner != null ? getProjectHandle(owner, reconnectProject.id) : undefined
-    if (knownHandle?.isSameEntry && !await knownHandle.isSameEntry(root)) throw new Error('这不是当前项目连接的目录，请选择原目录，或添加为独立项目。')
-    if (await root.queryPermission({ mode: 'read' }) !== 'granted' && await root.requestPermission({ mode: 'read' }) !== 'granted') throw new Error('没有获得目录读取权限')
-    if (!isActive()) return
+    if (knownHandle?.isSameEntry) {
+      const same = await knownHandle.isSameEntry(root)
+      if (!selectionCurrent()) return
+      if (!same) throw new Error('这不是当前项目连接的目录，请选择原目录，或添加为独立项目。')
+    }
+    const permission = await root.queryPermission({ mode: 'read' })
+    if (!selectionCurrent()) return
+    if (permission !== 'granted') {
+      const allowed = await root.requestPermission({ mode: 'read' })
+      if (!selectionCurrent()) return
+      if (allowed !== 'granted') throw new Error('没有获得目录读取权限')
+    }
+    const checked = await checkLocalProjectConnection(root, selectionCurrent)
+    if (!selectionCurrent()) return
+    if (checked.status !== 'connected') throw new Error(checked.error || '没有获得目录读取权限')
     persist()
     let project = reconnectProject
     if (!project && owner != null) {
       for (const candidate of projects.value) {
         const handle = getProjectHandle(owner, candidate.id)
-        if (handle && (handle === root || await handle.isSameEntry?.(root))) { project = candidate; break }
+        if (handle) {
+          const same = handle === root || await handle.isSameEntry?.(root)
+          if (!selectionCurrent()) return
+          if (same) { project = candidate; break }
+        }
       }
     }
-    if (!isActive()) return
+    if (!selectionCurrent()) return
     if (!project) { project = createLocalProject(root.name); projects.value.unshift(project) }
-    if (owner != null) rememberProjectHandle(owner, project.id, root)
+    const savedBinding = owner != null ? await rememberProjectHandle(owner, project.id, root) : undefined
+    if (!selectionCurrent()) return
     const session = activeSession.value?.projectId === project.id ? activeSession.value : projectSessions(project.id)[0] || createLocalSessionForProject(project)
     if (!sessions.value.some(s => s.id === session.id)) sessions.value.unshift(session)
     await restoreSession(session)
-    if (!isActive()) return
+    if (!isActive() || activeProjectId.value !== project.id || activeId.value !== session.id) return
+    if (savedBinding && !savedBinding.persistent) projectPersistenceWarning.value = savedBinding.error || '浏览器未能保存项目目录绑定；本次可以使用，刷新后需重新选择目录。'
     project.updatedAt = Date.now(); railOpen.value = false
     persist()
     await nextTick(); questionInput.value?.focus()
   } catch (e) {
-    if (!(e instanceof DOMException && e.name === 'AbortError')) error.value = e instanceof Error ? e.message : '目录连接失败，请重新选择'
+    if (selectionCurrent() && !(e instanceof DOMException && e.name === 'AbortError')) error.value = e instanceof Error ? e.message : '目录连接失败，请重新选择'
   } finally { connecting.value = false }
   await syncActiveRoute()
 }
@@ -282,12 +366,26 @@ async function browse(path: string, offset = 0) {
   const revision = ++browseRevision
   const activeWorkspace = workspace.value
   const sessionId = activeId.value
+  const projectId = activeProjectId.value
   try {
     const result = await activeWorkspace?.list(path, offset)
     if (!result || !isActive() || workspace.value !== activeWorkspace || activeId.value !== sessionId || revision !== browseRevision) return
     treePath.value = path; treeOffset.value = offset; tree.value = result.entries; nextOffset.value = result.nextOffset
     if (result.scanCapped) error.value = '该目录条目较多，仅列出前 3000 项；可进入具体子目录读取。'
-  } catch { if (isActive() && workspace.value === activeWorkspace && revision === browseRevision) error.value = '目录不可用，请重新连接项目' }
+  } catch (e) {
+    if (!isActive() || !activeWorkspace || workspace.value !== activeWorkspace || activeId.value !== sessionId || activeProjectId.value !== projectId || revision !== browseRevision) return
+    error.value = '目录不可用，请重新连接项目'
+    if (!path) {
+      const missing = e && typeof e === 'object' && 'name' in e && e.name === 'NotFoundError'
+      void activeWorkspace.permissions.select('confirm')
+      workspace.value = undefined; mode.value = 'confirm'; tree.value = []; nextOffset.value = null
+      boundProjectHandle.value = missing ? undefined : activeWorkspace.root
+      projectConnectionStatus.value = missing ? 'missing' : 'unavailable'
+      projectConnectionError.value = missing ? '原项目目录已移动或删除，请重新选择目录' : '项目目录暂时无法读取，请检查目录状态后重试连接'
+      if (missing && owner != null && projectId) await forgetProjectHandle(owner, projectId)
+      else if (missing && owner != null && sessionId) forgetLocalHandle(owner, sessionId)
+    }
+  }
 }
 async function selectMode(next: 'read-only' | 'confirm' | 'auto') {
   if (sessionKind.value !== 'agent' || !workspace.value || loading.value || permissionBusy.value) return
@@ -354,7 +452,7 @@ async function addAttachmentFile(scope: AttachmentScope, file: File, handle?: Pi
     const picture = await compressWorkspaceImage(new File([file], file.name, { type: mime }))
     if (!scopeMatches(scope)) return
     addLocalAttachment(scope, { name: file.name, kind: 'image', image: picture, writable: false })
-  } else addLocalAttachment(scope, { name: file.name, kind: 'file', workspace: fileWorkspace, writable: !!handle?.requestPermission })
+  } else addLocalAttachment(scope, { name: file.name, kind: 'file', workspace: fileWorkspace, writable: !documentName(file.name) && !!handle?.requestPermission })
   refreshAttachments()
 }
 async function addAttachmentFolder(scope: AttachmentScope, handle: LocalDirectoryHandle) {
@@ -446,7 +544,7 @@ async function send() {
   const currentAttachments = localAttachments(scope)
   const activeWorkspace = new LocalConversationWorkspace(workspace.value, currentAttachments)
   const executionKind = sessionKind.value
-  const question = input.value.trim() || '请根据附加图片分析内容，并说明你的发现。'
+  const question = input.value.trim() || '请查看本轮附加的图片、文件或目录，按需读取并说明内容；不要修改文件。'
   const images = currentAttachments.flatMap(item => item.image ? [item.image] : [])
   const userMessage: WorkspaceMessage = { role: 'user', content: question + attachmentManifest(currentAttachments, !!workspace.value), ...(images.length ? { images } : {}) }
   const queuedTranscript = compactWorkspaceImageHistory([...transcript, userMessage])
@@ -597,6 +695,15 @@ async function removeLocalRecords(projectId: string | null, sessionId: string | 
   if (!result.ok) { storageError.value = result.error || '删除未保存，请重试'; return false }
   for (const session of sessions.value) if (!remainingSessions.some(item => item.id === session.id)) clearLocalAttachments(String(owner), session.id)
   projects.value = remainingProjects; sessions.value = remainingSessions
+  const deletionProjectId = activeProjectId.value; const deletionSessionId = activeId.value
+  if (projectId) {
+    connecting.value = true
+    try {
+      const pruned = await pruneProjectHandles(owner, remainingProjects.map(project => project.id))
+      if (!isActive() || activeProjectId.value !== deletionProjectId || activeId.value !== deletionSessionId) return true
+      if (pruned.status === 'error' || pruned.status === 'unavailable') error.value = pruned.error || '项目记录已删除，浏览器未能清理保存的目录绑定'
+    } finally { connecting.value = false }
+  }
   if (removedActive) {
     connecting.value = true
     try {
@@ -604,6 +711,7 @@ async function removeLocalRecords(projectId: string | null, sessionId: string | 
       else {
         restoring = true; activeId.value = null; activeProjectId.value = nextProjectId
         turns.value = []; transcript = []; input.value = ''; resetConnection(); restoring = false
+        if (nextProjectId) await restoreConnection(nextProjectId, null)
       }
     } finally { connecting.value = false }
   }
@@ -643,10 +751,12 @@ onMounted(async () => {
       ? previous
       : (project ? projectSessions(project.id)[0] : sessions.value.find(s => s.turns.length || s.draft))
     if (session) await restoreSession(session)
-    else { activeId.value = null; activeProjectId.value = project?.id || null }
+    else { activeId.value = null; activeProjectId.value = project?.id || null; resetConnection(); if (project) await restoreConnection(project.id, null) }
     if (!loaded.error) persist()
   } finally { connecting.value = false }
+  if (!isActive()) return
   const handle = await takeLocalDrop().catch(() => null)
+  if (!isActive()) return
   if (handle) await connect(false, handle)
   routeReady = true
   await applyRouteQuery(route.query)
@@ -668,7 +778,7 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
           <div class="tree-pagination"><button v-if="treeOffset" @click="browse(treePath, Math.max(0, treeOffset - 100))">上一页</button><button v-if="nextOffset !== null" @click="browse(treePath, nextOffset)">下一页</button></div>
           <p class="file-help">文件按需读取；依赖、构建产物和隐藏凭据会跳过。</p>
         </template>
-        <div v-else class="rail-empty"><FolderOpen :size="24" /><p>{{ activeProject?.directoryName || '选择项目后查看文件' }}</p><button v-if="activeProject" class="text-button" :disabled="busy" @click="connect(true)">重新连接目录</button></div>
+        <div v-else class="rail-empty"><FolderOpen :size="24" /><p>{{ activeProject?.directoryName || '选择项目后查看文件' }}</p><button v-if="activeProject" class="text-button" :disabled="busy" @click="reconnectProject">{{ connectionActionLabel }}</button></div>
       </div>
     </aside>
 
@@ -680,7 +790,7 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
           <div v-else class="project-title-row"><h1>{{ activeProject?.name || (activeSession ? '历史对话' : '项目工作区') }}</h1><button v-if="activeProject" class="icon-button rename-project" :disabled="busy" aria-label="重命名项目" @click="beginRename"><Pencil :size="13" /></button></div>
           <p><span class="connection-dot" :class="{ connected: workspace }" />{{ activeProject ? activeProject.directoryName + (workspace ? ' · 已连接' : ' · 未连接') : '每个文件夹一个项目，每段对话单独保留' }}</p>
         </div>
-        <button v-if="activeProject" class="secondary directory-button" :disabled="busy" @click="workspace ? showFiles() : connect(true)"><FolderOpen :size="14" />{{ connecting ? '连接中…' : workspace ? '项目文件' : '连接目录' }}</button>
+        <button v-if="activeProject" class="secondary directory-button" :disabled="busy" @click="workspace ? showFiles() : reconnectProject()"><FolderOpen :size="14" />{{ connecting ? '连接中…' : workspace ? '项目文件' : connectionActionLabel }}</button>
         <div v-if="activeProject && sessionKind === 'agent'" class="permission-control" @keydown.esc="permissionsOpen = false; permissionTrigger?.focus()">
           <button ref="permissionTrigger" class="permission-trigger" :class="{ automatic: mode === 'auto' }" :aria-expanded="permissionsOpen" aria-controls="local-permissions" @click="permissionsOpen = !permissionsOpen"><ShieldCheck :size="16" /><span>{{ modeLabels[mode] }}</span><ChevronDown :size="14" /></button>
           <div v-if="permissionsOpen" id="local-permissions" class="permission-popover">
@@ -696,7 +806,8 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
         <button v-if="activeProject" class="secondary toolbar-new-chat" :disabled="busy" @click="newSession()"><Plus :size="15" />新对话</button>
       </header>
 
-      <div v-if="!workspace && activeProject" class="reconnect-note"><FolderOpen :size="17" /><p><strong>项目目录未连接。</strong> 可以先讨论任务；读取或修改文件前，请重新连接“{{ activeProject.directoryName }}”。</p></div>
+      <div v-if="!workspace && activeProject" class="reconnect-note" role="status"><FolderOpen :size="17" /><p><strong>{{ projectConnectionStatus === 'authorization' ? '项目目录需要授权。' : projectConnectionStatus === 'restoring' ? '正在恢复目录。' : '项目目录未连接。' }}</strong> {{ connectionHint }}</p><button class="text-button" :disabled="busy" @click="reconnectProject">{{ connectionActionLabel }}</button><button v-if="boundProjectHandle" class="text-button" :disabled="busy" @click="connect(true)">重新选择目录</button></div>
+      <div v-if="workspace && projectPersistenceWarning" class="reconnect-note" role="status"><ShieldCheck :size="17" /><p>{{ projectPersistenceWarning }}</p></div>
       <div v-if="mode === 'auto'" class="auto-note"><ShieldCheck :size="16" /><span>已允许 AI 直接修改当前目录；每次写入仍会检查文件冲突。</span></div>
       <div v-if="activeSession" class="conversation-bar"><span><span class="session-kind-badge"><Bot :size="13" />智能体</span>{{ activeSession.title || '新对话' }}</span><div class="conversation-actions"><button class="text-button" :disabled="!turns.length" @click="exportConversation"><Download :size="14" />导出对话</button><button class="icon-button" :disabled="busy" aria-label="删除当前项目对话" title="删除当前对话" @click="deleteId = activeSession.id"><Trash2 :size="14" /></button></div></div>
 
@@ -730,11 +841,14 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
         <p v-if="storageError" class="error-note" role="alert"><strong>记录尚未保存：</strong>{{ storageError }} <button class="text-button" :disabled="!turns.length" @click="exportConversation">导出备份</button><button class="text-button" @click="persist">重试保存</button></p>
         <p v-if="error" class="error-note" role="alert">{{ error }}<button class="icon-button" aria-label="关闭提示" @click="error = ''"><X :size="15" /></button></p>
         <form v-if="activeSession" class="local-composer" @submit.prevent="send">
-          <LocalWorkspaceAttachments :items="attachments" :disabled="busy" @pick-images="pickAttachmentInput(attachmentImagesInput)" @pick-files="pickAttachmentFiles" @pick-folder="pickAttachmentFolder" @remove="removeAttachment" @mode="changeAttachmentMode" />
-          <input ref="attachmentFilesInput" type="file" multiple hidden aria-label="选择会话文件" @change="attachmentInputChanged" @cancel="cancelAttachmentInput" />
+          <input ref="attachmentFilesInput" type="file" multiple :accept="CHAT_FILE_ACCEPT + ',' + WORKSPACE_DOCUMENT_ACCEPT" hidden aria-label="选择会话文件" @change="attachmentInputChanged" @cancel="cancelAttachmentInput" />
           <input ref="attachmentImagesInput" type="file" multiple accept="image/png,image/jpeg,image/webp" hidden aria-label="选择会话图片" @change="attachmentInputChanged" @cancel="cancelAttachmentInput" />
           <input ref="attachmentFolderInput" type="file" multiple webkitdirectory hidden aria-label="选择会话文件夹" @change="attachmentInputChanged($event, true)" @cancel="cancelAttachmentInput" />
-          <div class="composer-settings">
+          <label class="sr-only" for="local-question">项目任务</label>
+          <textarea id="local-question" ref="questionInput" v-model="input" :disabled="busy" :placeholder="workspace || attachments.length ? '描述任务或提问，也可拖入图片、文档和文件夹…' : '描述任务或先提问，通过＋添加图片、文件和文件夹…'" rows="2" @keydown="composerKeydown" @paste="pasteAttachments" />
+          <LocalWorkspaceAttachments :items="attachments" :disabled="busy" @remove="removeAttachment" @mode="changeAttachmentMode" />
+          <footer class="composer-settings">
+            <LocalWorkspaceAttachmentMenu :disabled="busy" @pick-images="pickAttachmentInput(attachmentImagesInput)" @pick-files="pickAttachmentFiles" @pick-folder="pickAttachmentFolder" />
             <span class="workspace-agent-label"><Bot :size="15" />智能体</span>
             <label class="workspace-model-picker">
               <Sparkles :size="15" aria-hidden="true" />
@@ -753,11 +867,11 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
                 <p class="permission-help">权限仅用于当前连接。切换对话、返回或刷新后恢复为“修改前确认”。</p>
               </div>
             </div>
-            <span v-else class="composer-mode-hint">未连接目录 · 可先讨论</span>
-          </div>
-          <label class="sr-only" for="local-question">项目任务</label>
-          <textarea id="local-question" ref="questionInput" v-model="input" :disabled="busy" :placeholder="workspace || attachments.length ? '描述任务或提问，也可粘贴图片，智能体会按需读取和修改…' : '描述任务或先提问；可添加图片、文件和文件夹附件…'" rows="2" @keydown="composerKeydown" @paste="pasteAttachments" />
-          <footer><span class="composer-mode"><FolderOpen :size="14" />{{ activeProject?.name || '历史对话' }}<span class="mode-label">{{ workspace ? modeLabels[mode] : '未连接目录' }}</span></span><span class="keyboard-hint">Enter 发送 · Shift + Enter 换行</span><button v-if="!workspace && !loading" class="composer-connect-button" type="button" :disabled="busy" @click="connect(!!activeProject)"><FolderOpen :size="15" />连接目录</button><button v-if="loading" class="send-button" type="button" aria-label="停止任务" @click="stop"><Square :size="16" /></button><button v-else class="send-button" type="submit" :disabled="!canSend" aria-label="发送任务"><ArrowUp :size="19" /></button></footer>
+            <button v-else-if="!loading" class="composer-connect-button" type="button" :disabled="busy" @click="reconnectProject"><FolderOpen :size="14" />{{ connectionActionLabel }}</button>
+            <span class="keyboard-hint">Enter 发送 · Shift + Enter 换行</span>
+            <button v-if="loading" class="send-button" type="button" aria-label="停止任务" @click="stop"><Square :size="16" /></button>
+            <button v-else class="send-button" type="submit" :disabled="!canSend" aria-label="发送任务"><ArrowUp :size="19" /></button>
+          </footer>
         </form>
         <p class="privacy-note"><ShieldCheck :size="12" />{{ storageError ? '本机保存不可用，请及时导出。' : '项目与对话保存在此浏览器。' }}所需代码片段和读取的图片会发送给模型。</p>
       </div>
@@ -841,41 +955,40 @@ button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:
 .local-project .project-tree{flex:1;min-height:0;overflow:auto}
 .conversation-actions{display:flex;align-items:center;gap:12px;flex-shrink:0}
 .composer-dock{max-width:940px;padding-top:10px;padding-bottom:14px}
-.local-composer{border-radius:17px;padding:13px 15px 11px;box-shadow:0 6px 24px rgb(15 23 42 / .045)}
-.composer-settings{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:12px}
+.local-composer{border-radius:17px;padding:14px 14px 10px;box-shadow:0 6px 24px rgb(15 23 42 / .045)}
+.composer-settings{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;margin-bottom:0;min-width:0}
 .session-kind-switch{border-radius:10px;padding:3px;gap:2px}
 .session-kind-switch button{min-height:34px;padding:7px 12px;border-radius:7px;font-weight:550;transition:background-color .15s,color .15s,box-shadow .15s}
 .session-kind-switch button:hover:not(:disabled):not(.selected){background:var(--surface-muted);color:var(--foreground)}
 .session-kind-switch button.selected{background:var(--surface);box-shadow:0 1px 5px rgb(15 23 42 / .1)}
-.workspace-model-picker{display:inline-flex;align-items:center;gap:7px;min-height:40px;padding:0 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--primary);cursor:pointer}
+.workspace-model-picker{display:inline-flex;align-items:center;gap:7px;min-height:36px;min-width:0;padding:0 10px;border:1px solid var(--primary-border);border-radius:10px;background:var(--primary-soft);color:var(--primary);cursor:pointer}
 .workspace-model-picker:hover{border-color:var(--primary-border);background:var(--primary-soft)}
 .workspace-model-picker:focus-within{outline:2px solid var(--primary);outline-offset:2px}
-.workspace-model-picker select{max-width:170px;min-width:0;border:0;outline:0;background:transparent;color:var(--foreground);font:inherit;font-size:12px;font-weight:550;cursor:pointer;appearance:none}
+.workspace-model-picker select{max-width:150px;min-width:0;border:0;outline:0;background:transparent;color:var(--foreground);font:inherit;font-size:12px;font-weight:550;cursor:pointer;appearance:none;text-overflow:ellipsis}
 .workspace-model-picker select:disabled{cursor:not-allowed;opacity:.6}
 .workspace-model-picker>svg:last-child{color:var(--muted-foreground);pointer-events:none}
 .composer-mode-hint{margin-left:auto;line-height:1.5}
-.composer-permission-control{position:relative;margin-left:auto}
-.composer-permission-trigger{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--muted-foreground);font-size:11px;white-space:nowrap}
+.composer-permission-control{position:relative;flex:0 0 auto;margin-left:0}
+.composer-permission-trigger{display:inline-flex;align-items:center;gap:5px;min-height:36px;padding:0 8px;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--muted-foreground);font-size:11px;white-space:nowrap}
 .composer-permission-trigger:hover{border-color:var(--primary-border);color:var(--foreground);background:var(--primary-soft)}
 .composer-permission-trigger.automatic{border-color:var(--primary-border);background:var(--primary-soft);color:var(--accent-foreground)}
 .composer-permission-trigger:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .composer-permission-popover{top:auto;bottom:calc(100% + 8px)}
 .change-card footer{flex-wrap:wrap}.change-card footer .connect-button{white-space:normal;text-align:center}
-.local-composer textarea{height:52px;min-height:52px}
-.local-composer footer{min-height:40px;padding-top:7px;border-top:1px solid var(--border);margin-top:7px}
+.local-composer textarea{height:54px;min-height:54px}
+.local-composer footer{min-height:36px;padding-top:0;border-top:0;margin-top:8px}
 .composer-mode{gap:7px;font-size:11px}
 .mode-label{color:var(--muted-foreground)}
-.send-button{width:38px;height:38px;border-radius:11px;transition:transform .15s,box-shadow .15s,background-color .15s}
+.send-button{width:36px;height:36px;border-radius:50%;transition:transform .15s,box-shadow .15s,background-color .15s}
 .send-button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 12px rgb(79 70 229 / .22)}
 .send-button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .send-button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
-.workspace-agent-label{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:0 11px;border:1px solid var(--primary-border);border-radius:10px;background:var(--primary-soft);color:var(--accent-foreground);font-size:12px;font-weight:600;white-space:nowrap}
-.composer-connect-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:38px;padding:0 12px;border:1px solid var(--primary-border);border-radius:10px;background:var(--primary-soft);color:var(--accent-foreground);font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer}
+.workspace-agent-label{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;min-height:36px;padding:0 5px;border:0;background:transparent;color:var(--muted-foreground);font-size:12px;font-weight:550;white-space:nowrap}
+.composer-connect-button{display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:0 0 auto;min-height:36px;padding:0 8px;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--muted-foreground);font-size:11px;font-weight:500;white-space:nowrap;cursor:pointer}
 .composer-connect-button:hover:not(:disabled){background:var(--surface-muted);border-color:var(--primary)}
 .composer-connect-button:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .composer-connect-button:disabled{opacity:.55;cursor:not-allowed}
-@container(max-width:1000px){.composer-connect-button{margin-left:auto}}
-@media(max-width:639px){.composer-dock{padding-left:12px;padding-right:12px}.local-composer{padding:11px 12px}.composer-settings{gap:7px}.session-kind-switch button{padding:6px 9px}.workspace-model-picker{min-height:36px;padding:0 8px}.workspace-model-picker select{max-width:130px;font-size:11px}.composer-mode-hint{width:100%;margin-left:2px}.composer-permission-control{margin-left:auto}.composer-permission-popover{right:0}.local-composer textarea{height:48px;min-height:48px}.mode-label{display:none}}
+@container(max-width:639px){.composer-dock{padding-left:12px;padding-right:12px}.local-composer{padding:12px 10px 10px}.local-composer footer{gap:4px}.workspace-agent-label{padding:0 2px;font-size:11px}.workspace-agent-label>svg{display:none}.workspace-model-picker{gap:4px;min-height:34px;padding:0 6px}.workspace-model-picker select{max-width:76px;font-size:11px}.workspace-model-picker>svg:first-child{display:none}.workspace-model-picker>svg:last-child{width:11px}.composer-permission-trigger,.composer-connect-button{min-height:34px;padding:0 6px;font-size:10px}.composer-permission-trigger>svg,.composer-connect-button>svg{display:none}.composer-permission-control{margin-left:0}.composer-permission-popover{right:0}.local-composer textarea{height:52px;min-height:52px;font-size:13px}.send-button{width:34px;height:34px}.mode-label{display:none}}
 .recovery-export{margin-bottom:8px}
 .user-images{display:flex;justify-content:flex-end;gap:9px;margin:-18px 0 25px;flex-wrap:wrap}.user-images img{display:block;max-width:min(240px,42%);max-height:180px;object-fit:contain;border:1px solid var(--primary-border);border-radius:10px;background:var(--primary-soft)}
 </style>
