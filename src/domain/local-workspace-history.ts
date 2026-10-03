@@ -1,5 +1,6 @@
 import type { LocalDirectoryHandle, WorkspaceCall, WorkspaceMessage } from './local-workspace'
 import { validateWorkspaceImages } from './local-workspace-images'
+import { localProjectHandleStore } from './local-project-handle-store'
 
 export type LocalActivity = {
   label: string
@@ -41,6 +42,13 @@ const VERSION = 2
 const STORAGE_PREFIX = 'lyle:local-workspace-history:v1:'
 const handles = new Map<string, Map<string, LocalDirectoryHandle>>()
 const projectHandles = new Map<string, Map<string, LocalDirectoryHandle>>()
+const handleOwnerEpochs = new Map<string, number>()
+const handleProjectRevisions = new Map<string, number>()
+const projectHandleKey = (owner: string, projectId: string) => JSON.stringify([owner, projectId])
+function invalidateProjectHandle(owner: string, projectId: string) {
+  const key = projectHandleKey(owner, projectId)
+  handleProjectRevisions.set(key, (handleProjectRevisions.get(key) || 0) + 1)
+}
 type Snapshot = { raw: string | null; recovery: boolean }
 const snapshots = new WeakMap<Storage, Map<string, Snapshot>>()
 const emptyHistory = (): LocalHistory => ({ projects: [], sessions: [], activeProjectId: null, activeId: null })
@@ -298,7 +306,7 @@ export function saveLocalHistory(owner: Owner, history: LocalHistory): { ok: boo
     else storage.removeItem(key)
     observed.set(ownerKey, { raw: hasData ? serialized : null, recovery: false })
     for (const id of handles.get(ownerKey)?.keys() || []) if (!ids.has(id)) handles.get(ownerKey)?.delete(id)
-    for (const id of projectHandles.get(ownerKey)?.keys() || []) if (!projectIds.has(id)) projectHandles.get(ownerKey)?.delete(id)
+    for (const id of projectHandles.get(ownerKey)?.keys() || []) if (!projectIds.has(id)) { projectHandles.get(ownerKey)?.delete(id); invalidateProjectHandle(ownerKey, id) }
     // Browser storage events only reach other tabs; notify the current navigation separately.
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(LOCAL_HISTORY_CHANGED_EVENT, { detail: { owner: ownerKey } }))
     return { ok: true, error: null }
@@ -314,7 +322,7 @@ export function getLocalHistoryRecovery(owner: Owner): string | null {
   catch { return null }
 }
 
-// Handles live only until this app is refreshed. A saved session never restores write approval.
+// Session handles remain temporary. Project roots can restore read bindings, never write approval.
 export function rememberLocalHandle(owner: Owner, sessionId: string, handle: LocalDirectoryHandle) {
   const key = ownerId(owner)
   if (!handles.has(key)) handles.set(key, new Map())
@@ -324,9 +332,47 @@ export function getLocalHandle(owner: Owner, sessionId: string) { return handles
 export function forgetLocalHandle(owner: Owner, sessionId: string) { handles.get(ownerId(owner))?.delete(sessionId) }
 export function rememberProjectHandle(owner: Owner, projectId: string, handle: LocalDirectoryHandle) {
   const key = ownerId(owner)
+  invalidateProjectHandle(key, projectId)
   if (!projectHandles.has(key)) projectHandles.set(key, new Map())
   projectHandles.get(key)!.set(projectId, handle)
+  return localProjectHandleStore.store(key, projectId, handle)
 }
 export function getProjectHandle(owner: Owner, projectId: string) { return projectHandles.get(ownerId(owner))?.get(projectId) }
-export function forgetProjectHandle(owner: Owner, projectId: string) { projectHandles.get(ownerId(owner))?.delete(projectId) }
-export function clearLocalHandles(owner: Owner) { const key = ownerId(owner); handles.delete(key); projectHandles.delete(key) }
+export async function restoreProjectHandle(owner: Owner, projectId: string) {
+  const key = ownerId(owner)
+  const epoch = handleOwnerEpochs.get(key) || 0
+  const revisionKey = projectHandleKey(key, projectId)
+  const revision = handleProjectRevisions.get(revisionKey) || 0
+  handleProjectRevisions.set(revisionKey, revision)
+  const restored = await localProjectHandleStore.load(key, projectId)
+  if (epoch !== (handleOwnerEpochs.get(key) || 0) || revision !== (handleProjectRevisions.get(revisionKey) || 0)) {
+    const current = projectHandles.get(key)?.get(projectId)
+    return current ? { ...restored, handle: current } : { status: 'missing' as const, persistent: restored.persistent, error: null }
+  }
+  const handle = projectHandles.get(key)?.get(projectId) || restored.handle
+  if (handle) {
+    if (!projectHandles.has(key)) projectHandles.set(key, new Map())
+    projectHandles.get(key)!.set(projectId, handle)
+  }
+  return { ...restored, ...(handle ? { handle } : {}) }
+}
+export function forgetProjectHandle(owner: Owner, projectId: string) {
+  const key = ownerId(owner)
+  invalidateProjectHandle(key, projectId)
+  projectHandles.get(key)?.delete(projectId)
+  return localProjectHandleStore.remove(key, projectId)
+}
+export function pruneProjectHandles(owner: Owner, retainedProjectIds: Iterable<string>) {
+  const key = ownerId(owner); const retained = new Set(retainedProjectIds)
+  for (const revisionKey of handleProjectRevisions.keys()) {
+    const [entryOwner, projectId] = JSON.parse(revisionKey) as [string, string]
+    if (entryOwner === key && !retained.has(projectId)) invalidateProjectHandle(key, projectId)
+  }
+  for (const id of projectHandles.get(key)?.keys() || []) if (!retained.has(id)) { invalidateProjectHandle(key, id); projectHandles.get(key)?.delete(id) }
+  return localProjectHandleStore.pruneOwner(key, retained)
+}
+export function clearLocalHandles(owner: Owner) {
+  const key = ownerId(owner)
+  handleOwnerEpochs.set(key, (handleOwnerEpochs.get(key) || 0) + 1)
+  handles.delete(key); projectHandles.delete(key); localProjectHandleStore.clearMemory(key)
+}

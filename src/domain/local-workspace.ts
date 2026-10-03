@@ -2,6 +2,8 @@ import { ALLOWED_PROJECT_DOTFILES, CHAT_EXACT_FILENAMES, CHAT_FILE_EXTENSIONS } 
 import { IGNORED_PROJECT_DIRECTORIES } from './directory-entry'
 import { LocalWorkspacePermissions } from './local-workspace-permissions'
 import { compressWorkspaceImage } from './local-workspace-images'
+import { documentName, MAX_WORKSPACE_DOCUMENT_BYTES, type WorkspaceDocumentExtractor, type WorkspaceDocumentText } from './local-workspace-documents'
+import { extractWorkspaceDocument } from '@/api/local-workspace-documents'
 
 export interface LocalFileHandle {
   kind: 'file'; name: string
@@ -61,8 +63,9 @@ function string(value: unknown) { if (typeof value !== 'string') throw new Error
 
 export class LocalWorkspace {
   private observed = new Map<string, string>()
+  private documents = new Map<string, { hash: string; result: Promise<WorkspaceDocumentText> }>()
   readonly permissions: LocalWorkspacePermissions
-  constructor(readonly root: LocalDirectoryHandle) { this.permissions = new LocalWorkspacePermissions(root) }
+  constructor(readonly root: LocalDirectoryHandle, private extractDocument: WorkspaceDocumentExtractor = extractWorkspaceDocument) { this.permissions = new LocalWorkspacePermissions(root) }
   async directory(path: string) {
     let dir = this.root
     for (const part of safeParts(path, true)) dir = await dir.getDirectoryHandle(part)
@@ -71,6 +74,7 @@ export class LocalWorkspace {
   private async target(path: string) {
     const parts = safeParts(path); const name = parts.pop()!
     if (imageName(name)) throw new Error('图片仅支持查看内容，不能使用文本替换修改图片')
+    if (documentName(name)) throw new Error('Office 和 PDF 文档支持读取内容；当前不能使用源码文本替换修改文档')
     if (!sourceName(name)) throw new Error('该文件不是支持的源码类型')
     return { dir: await this.directory(parts.join('/')), name }
   }
@@ -85,14 +89,15 @@ export class LocalWorkspace {
   }
   async list(path = '', offset = 0) {
     const dir = await this.directory(path)
-    const entries: { name: string; kind: string; path: string; contentType?: 'image' }[] = []
+    const entries: { name: string; kind: string; path: string; contentType?: 'image' | 'document' }[] = []
     let scanned = 0; let scanCapped = false
     for await (const [name, handle] of dir.entries()) {
       if (++scanned > 3000) { scanCapped = true; break }
       try { safeParts(name) } catch { continue }
-      if (handle.kind === 'file' && !sourceName(name) && !imageName(name)) continue
+      if (handle.kind === 'file' && !sourceName(name) && !imageName(name) && !documentName(name)) continue
       entries.push({ name, kind: handle.kind, path: path ? `${path}/${name}` : name,
-        ...(handle.kind === 'file' && imageName(name) ? { contentType: 'image' as const } : {}) })
+        ...(handle.kind === 'file' && imageName(name) ? { contentType: 'image' as const } : {}),
+        ...(handle.kind === 'file' && documentName(name) ? { contentType: 'document' as const } : {}) })
     }
     entries.sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name))
     return { entries: entries.slice(offset, offset + 100), nextOffset: offset + 100 < entries.length ? offset + 100 : null, scanCapped }
@@ -120,6 +125,31 @@ export class LocalWorkspace {
     const input = new File([file], name, { type: mime })
     const image = await compressWorkspaceImage(input)
     return { kind: 'image', path, image, mimeType: 'image/jpeg', originalBytes: file.size, nextOffset: null }
+  }
+  async readDocument(path: string, offset: number, signal: AbortSignal) {
+    const parts = safeParts(path); const name = parts.pop()!
+    if (!documentName(name)) throw new Error('该文件不是支持的 Office 或 PDF 文档')
+    const file = await (await (await this.directory(parts.join('/'))).getFileHandle(name)).getFile()
+    if (!file.size || file.size > MAX_WORKSPACE_DOCUMENT_BYTES) throw new Error('文档需在 5 MB 以内，且不能为空')
+    signal.throwIfAborted()
+    const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+    const hash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')
+    signal.throwIfAborted()
+    let cached = this.documents.get(path)
+    if (!cached || cached.hash !== hash) {
+      const result = this.extractDocument(new File([file], name, { type: file.type }), signal)
+      cached = { hash, result }; this.documents.set(path, cached)
+      if (this.documents.size > 8) this.documents.delete(this.documents.keys().next().value!)
+      result.catch(() => { if (this.documents.get(path)?.result === result) this.documents.delete(path) })
+    }
+    const result = await cached.result
+    signal.throwIfAborted()
+    if (offset > result.text.length || (offset > 0 && /[\uDC00-\uDFFF]/.test(result.text[offset] || ''))) throw new Error('文档读取位置无效，请使用上次 nextOffset')
+    let end = Math.min(offset + 12000, result.text.length)
+    if (end < result.text.length && /[\uD800-\uDBFF]/.test(result.text[end - 1] || '')) end--
+    return { kind: 'document' as const, path, format: result.format, hash, offset, content: result.text.slice(offset, end),
+      nextOffset: end < result.text.length ? end : null, totalChars: result.text.length, offsetUnit: 'characters',
+      truncated: result.truncated, warnings: result.warnings, access: 'read-only' }
   }
   async search(path: string, query: string, signal: AbortSignal) {
     if (!query || query.length > 200) throw new Error('搜索词需为 1–200 字符')
@@ -231,7 +261,8 @@ export class LocalWorkspace {
     if (call.name === 'workspace_list') return this.list(path, number(call.args.offset))
     if (call.name === 'workspace_read') {
       const offset = number(call.args.offset)
-      return imageName(path.split('/').pop() || '') ? this.readImage(path, offset) : this.read(path, offset)
+      const name = path.split('/').pop() || ''
+      return imageName(name) ? this.readImage(path, offset) : documentName(name) ? this.readDocument(path, offset, signal) : this.read(path, offset)
     }
     if (call.name === 'workspace_search') return this.search(path, string(call.args.query), signal)
     throw new Error('不支持的本地工具')

@@ -86,6 +86,10 @@ export function localReadFeedback(name: string, result: unknown): string {
     const total = count(row.totalChars) && row.totalChars >= row.content.length ? `（文件共 ${row.totalChars} 个字符）` : ''
     const notes = [`本次返回 ${row.content.length} 个字符${total}。`]
     if (count(row.nextOffset)) notes.push('仍有后续内容可继续读取。')
+    if (row.kind === 'document') {
+      if (row.truncated === true) notes.push('文档达到解析上限，返回内容不完整。')
+      if (Array.isArray(row.warnings)) for (const warning of row.warnings) if (typeof warning === 'string') notes.push(warning)
+    }
     return notes.join(' ')
   }
   if (name === 'workspace_read' && row?.kind === 'image' && typeof row.image === 'string') {
