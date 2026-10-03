@@ -19,6 +19,7 @@ import { canonicalLocalProjectQuery, parseLocalProjectRoute } from '@/domain/loc
 import { LocalConversationWorkspace, addLocalAttachment, attachmentManifest, clearLocalAttachments, fileAttachmentWorkspace, folderFilesWorkspace,
   localAttachments, removeLocalAttachment, resetAttachmentPermissions, type AttachmentScope, type LocalWorkspaceAttachment, type PickedFileHandle } from '@/domain/local-workspace-attachments'
 import { compactWorkspaceImageHistory, compressWorkspaceImage, workspaceImageToolResult, workspaceReadImageMessage, type WorkspaceReadImage } from '@/domain/local-workspace-images'
+import { LocalWorkspaceImageBatches } from '@/domain/local-workspace-image-batches'
 import type { LocalPermissionMode } from '@/domain/local-workspace-permissions'
 import { documentName, WORKSPACE_DOCUMENT_ACCEPT } from '@/domain/local-workspace-documents'
 import { CHAT_FILE_ACCEPT } from '@/domain/chat-attachment'
@@ -551,9 +552,14 @@ async function send() {
   try { workspaceStepBody(queuedTranscript, { mode: executionKind, workspaceConnected: activeWorkspace.connected, modelId: chatModelId.value }) }
   catch (e) { error.value = e instanceof Error ? e.message : '附件或对话过大'; return }
   input.value = ''; error.value = ''; checkpoint = transcript.length; loading.value = true
-  controller = new AbortController(); const signal = controller.signal
+  const turnController = new AbortController(); controller = turnController; const signal = turnController.signal
+  const imageBatches = new LocalWorkspaceImageBatches()
   const turn: LocalTurn = { question, answer: '', ...(images.length ? { images } : {}), activities: [], open: true, completed: false }
   turns.value.push(turn); const current = turns.value[turns.value.length - 1]!
+  const assertCurrentTurn = () => {
+    signal.throwIfAborted()
+    if (!scopeMatches(scope) || turns.value[turns.value.length - 1] !== current) { turnController.abort(); signal.throwIfAborted() }
+  }
   activeSession.value!.updatedAt = Date.now()
   if (activeProject.value) activeProject.value.updatedAt = Date.now()
   const rejectedPaths = new Set<string>()
@@ -563,15 +569,17 @@ async function send() {
   refreshAttachments(); persist(); await scrollToBottom(true)
   try {
     for (let step = 0; step < 16; step++) {
-      signal.throwIfAborted()
+      assertCurrentTurn()
       transcript = compactWorkspaceImageHistory(transcript)
       workspaceStepBody(transcript, { mode: executionKind, workspaceConnected: activeWorkspace.connected, modelId: chatModelId.value })
       let commentary = ''
       const modelActivity: LocalActivity = { label: '分析下一步', status: 'running' }
       current.activities.push(modelActivity)
       const activity = current.activities[current.activities.length - 1]!
-      const result = await workspaceStep(transcript, signal, text => { commentary += text; activity.detail = commentary; void scrollToBottom() }, { mode: executionKind, workspaceConnected: activeWorkspace.connected, modelId: chatModelId.value })
-      signal.throwIfAborted()
+      const modelResult = await workspaceStep(transcript, signal, text => { commentary += text; activity.detail = commentary; void scrollToBottom() }, { mode: executionKind, workspaceConnected: activeWorkspace.connected, modelId: chatModelId.value })
+      assertCurrentTurn()
+      const result = imageBatches.prepare(modelResult, transcript)
+      if (result.content !== modelResult.content) activity.detail = result.content
       activity.status = 'done'; transcript.push(result)
       if (result.content.trim()) lastExplanation = result.content
       if (!result.tool_calls?.length) {
@@ -581,7 +589,7 @@ async function send() {
       const seen = new Set<string>()
       const readImages: WorkspaceReadImage[] = []
       for (const call of result.tool_calls) {
-        signal.throwIfAborted()
+        assertCurrentTurn()
         if (!call.id || seen.has(call.id) || !labels[call.name] || !call.args || typeof call.args !== 'object') throw new Error('模型返回了无效的工具请求，已停止')
         seen.add(call.id)
         current.activities.push({ label: labels[call.name]!, path: String(call.args.path || '/'), status: 'running' })
@@ -594,29 +602,29 @@ async function send() {
             if (permissionMode === 'read-only') throw new Error('当前为仅查看权限，文件未修改。请提供分析或建议，不要继续请求写入。')
             if (rejectedPaths.has(String(call.args.path))) throw new Error('用户已拒绝此文件的修改，本轮不再申请')
             const change = await activeWorkspace.preview(call)
-            signal.throwIfAborted()
+            assertCurrentTurn()
             if (permissionMode === 'auto') {
               outcome = await activeWorkspace.apply(change, signal); row.detail = '已按授权直接写入，并复核文件内容'
             } else {
               previewWorkspace.value = activeWorkspace; preview.value = change; row.status = 'waiting'; await scrollToBottom(true)
               const accepted = await new Promise<boolean>(resolve => { answerChange = resolve })
-              answerChange = null; preview.value = undefined; previewWorkspace.value = undefined; signal.throwIfAborted()
+              answerChange = null; preview.value = undefined; previewWorkspace.value = undefined; assertCurrentTurn()
               if (accepted) { row.status = 'running'; outcome = await activeWorkspace.apply(change, signal, { confirmed: true }); row.detail = '已确认写入，并复核文件内容' }
               else { rejectedPaths.add(change.path); outcome = { status: 'rejected', message: '用户拒绝此修改，文件未写入。不得重试这项修改。' }; row.detail = '已拒绝，文件未修改' }
             }
           } else {
-            if (call.name === 'workspace_read' && readImages.length >= 2 && imageName(String(call.args.path).split('/').pop() || '')) throw new Error('单批最多读取 2 张图片，请先分析本批，再分批读取其余图片')
             outcome = await activeWorkspace.executeRead(call, signal)
+            assertCurrentTurn()
             const vision = workspaceImageToolResult(outcome)
             if (vision.image) {
-              if (readImages.length >= 2) throw new Error('单批最多读取 2 张图片，请在下一步分批读取其余图片')
               readImages.push(vision.image); outcome = vision.result
               row.detail = '已读取真实图片，下一步将提供给模型分析；图片仅支持读取'
             } else row.detail = localReadFeedback(call.name, outcome)
           }
+          assertCurrentTurn()
           row.status = 'done'
         } catch (e) {
-          if (signal.aborted) throw e
+          assertCurrentTurn()
           const message = e instanceof Error ? e.message : '文件操作失败'
           outcome = { status: 'error', message }; row.status = 'error'; row.detail = message
         }
@@ -626,7 +634,7 @@ async function send() {
       // The model must receive every tool reply before a new user vision message.
       const visionMessage = workspaceReadImageMessage(readImages)
       if (visionMessage) transcript.push(visionMessage)
-      if (step === 15) throw new Error('已达到本轮 16 步上限；已完成的文件修改保留，请检查后继续')
+      if (step === 15) throw new Error('已达到本轮 16 步上限；' + (imageBatches.pendingCount ? `尚有 ${imageBatches.pendingCount} 张图片未读取；` : '') + '已完成的文件修改保留，请检查后继续')
     }
   } catch (e) {
     const message = signal.aborted ? '任务已停止，已完成的文件修改保留。' : e instanceof Error ? e.message : '任务失败'
@@ -636,6 +644,7 @@ async function send() {
     transcript.splice(checkpoint)
     for (const activity of current.activities) if (activity.status === 'running' || activity.status === 'waiting') activity.status = 'error'
   } finally {
+    imageBatches.cancel()
     loading.value = false; controller = null; answerChange = null; preview.value = undefined; previewWorkspace.value = undefined
     if (isActive()) { persist(); await scrollToBottom(); await browse(treePath.value, treeOffset.value) }
   }
