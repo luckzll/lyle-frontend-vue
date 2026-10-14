@@ -90,6 +90,8 @@ import { AGENT_STEPS, agentProgressDetail, agentProgressDisplayStatus, type Agen
 import { reconcileChatTurn, recoveryPollDelay, recoveryStatusText, shouldRecoverChatTurn, type ChatRecoveryState } from '@/domain/chat-recovery'
 import { summarizeChatDebug } from '@/domain/chat-debug-summary'
 import ChatSources from '@/components/chat/ChatSources.vue'
+import DocumentExport from '@/components/chat/DocumentExport.vue'
+import { wantsDocumentExport } from '@/domain/document-export'
 import { presentAgentTrace } from '@/domain/chat-trace-presentation'
 import MessageAttachments from '@/components/chat/MessageAttachments.vue'
 import WorkspaceDropOverlay from '@/components/chat/WorkspaceDropOverlay.vue'
@@ -2648,6 +2650,12 @@ function escapeHtml(text: string) {
             class="message-bubble message-content markdown"
             v-html="renderAssistantContent(assistantTextContent(message))"
           ></div>
+          <DocumentExport
+            v-if="assistantTextContent(message) && !isActiveTurnPhase(message.phase) && message.phase !== 'FAILED' && !message.recoveryState"
+            :content="assistantTextContent(message)"
+            :title="activeConversationTitle"
+            :expanded="wantsDocumentExport(messages[index - 1]?.content || '')"
+          />
           <a
             v-for="image in assistantImages(message)"
             :key="image.url"

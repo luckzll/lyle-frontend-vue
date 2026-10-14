@@ -9,6 +9,8 @@ import LocalProjectText from '@/components/chat/LocalProjectText.vue'
 import LocalAgentProcess from '@/components/chat/LocalAgentProcess.vue'
 import LocalWorkspaceAttachments from '@/components/chat/LocalWorkspaceAttachments.vue'
 import LocalWorkspaceAttachmentMenu from '@/components/chat/LocalWorkspaceAttachmentMenu.vue'
+import DocumentExport from '@/components/chat/DocumentExport.vue'
+import { wantsDocumentExport } from '@/domain/document-export'
 import { localReadFeedback } from '@/domain/local-agent-process'
 import ConfirmActionDialog from '@/components/feedback/ConfirmActionDialog.vue'
 import { LocalWorkspace, chooseLocalDirectory, takeLocalDrop, safeParts, imageName, type ChangePreview, type WorkspaceMessage, type LocalDirectoryHandle } from '@/domain/local-workspace'
@@ -839,6 +841,7 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
             <LocalAgentProcess v-model:open="turn.open" class="project-process" :activities="turn.activities" :completed="turn.completed"
               :active="loading && index === turns.length - 1" :waiting="Boolean(preview) && loading && index === turns.length - 1" />
             <LocalProjectText v-if="turn.answer" class="final-answer" :text="turn.answer" />
+            <DocumentExport v-if="turn.answer && turn.completed" :content="turn.answer" :title="activeSession?.title || '项目整理'" :expanded="wantsDocumentExport(turn.question)" />
             <p v-if="!turn.completed && (!loading || index !== turns.length - 1)" class="stopped-note">本轮未完成，可以继续提问。已读取的结果和已写入的文件修改保留。</p>
           </article>
           <section v-if="preview" class="change-card" aria-label="本地修改预览"><h2>{{ preview.hash === null ? '新建文件' : '确认修改' }} <code>{{ preview.path }}</code></h2><p>确认后写入{{ preview.path.startsWith('@attachments/') ? '此会话附件' : '当前项目目录' }}；若文件已变化，将停止写入。</p><div class="diff-grid"><div v-if="preview.hash !== null"><small>原内容</small><pre>{{ preview.oldText }}</pre></div><div><small>{{ preview.hash === null ? '文件内容' : '替换为' }}</small><pre>{{ preview.newText }}</pre></div></div><footer><button class="secondary" :disabled="applying" @click="rejectPreview">不修改</button><button class="secondary" :disabled="applying" @click="applyPreview">仅应用这次</button><button class="connect-button" :disabled="applying" @click="applyPreviewAndEnableAuto">{{ applying ? '正在授权…' : preview.path.startsWith('@attachments/') ? '应用并允许此附件后续修改' : '应用并允许后续自动修改' }}</button></footer></section>

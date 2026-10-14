@@ -32,6 +32,8 @@ import LoadingState from '@/components/feedback/LoadingState.vue'
 import DetailDrawer from '@/components/layout/DetailDrawer.vue'
 import FilterBar from '@/components/layout/FilterBar.vue'
 import AppButton from '@/components/ui/AppButton.vue'
+import DocumentExport from '@/components/chat/DocumentExport.vue'
+import { executionDocument } from '@/domain/execution-document'
 import { createQueuedRefresh } from '@/composables/createQueuedRefresh'
 import { notifyExecutionAttentionChanged } from '@/composables/useExecutionBadgePolling'
 import { formatBeijingTime, humanizeIsoDateTimes } from '@/domain/date-time'
@@ -1376,6 +1378,7 @@ onBeforeUnmount(clearDismissUndoTimer)
         <section v-if="resultDetail.completedItems.length"><strong>已完成</strong><ul><li v-for="item in resultDetail.completedItems" :key="item">{{ item }}</li></ul></section>
         <section v-if="resultDetail.risks.length"><strong>风险或阻塞</strong><ul><li v-for="item in resultDetail.risks" :key="item">{{ item }}</li></ul></section>
         <section><strong>数据范围</strong><p>{{ resultDetail.dataScope.length ? resultDetail.dataScope.join('、') : '未返回数据范围' }}</p></section>
+        <DocumentExport :key="resultDetail.id" :content="executionDocument(resultDetail)" :title="resultDetail.title" source-label="执行结果" />
         <section class="technical"><strong>技术信息</strong><code>{{ resultDetail.traceRef || '暂无 Trace 引用' }}</code><p>耗时：{{ resultDetail.durationMs ?? '—' }} ms · 来源：{{ resultDetail.sourceType }} / {{ resultDetail.sourceId }}</p></section>
       </div>
       <template #footer><AppButton v-if="resultDetail" variant="secondary" @click="copyResultLink(resultDetail)">复制结果链接</AppButton></template>

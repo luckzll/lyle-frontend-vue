@@ -3,6 +3,7 @@ import type { AttachmentFolderMetadata, ChatAttachment, ChatAttachmentDraft, Cha
 import { CHAT_ATTACHMENT_LIMITS, isChatImage, isSupportedChatFile } from '@/domain/chat-attachment'
 import type { DirectorySkip } from '@/domain/directory-entry'
 import { directorySkippedCount } from '@/domain/directory-entry'
+import { attachmentRequestError } from '@/domain/attachment-error'
 
 export function useChatAttachments(options: {
   upload: (file: File, kind: ChatAttachmentKind, metadata: AttachmentFolderMetadata) => Promise<ChatAttachment>
@@ -206,14 +207,7 @@ function validateFile(file: File) {
 }
 
 function requestError(exception: unknown) {
-  const data = (exception as { response?: { data?: unknown } })?.response?.data
-  if (typeof data === 'string' && data.trim()) return data
-  if (data && typeof data === 'object') {
-    const record = data as Record<string, unknown>
-    const message = record.detail || record.message || record.error
-    if (typeof message === 'string' && message.trim()) return message
-  }
-  return exception instanceof Error ? exception.message : '附件上传失败，请重试。'
+  return attachmentRequestError(exception)
 }
 
 function revokePreview(draft: ChatAttachmentDraft) {
