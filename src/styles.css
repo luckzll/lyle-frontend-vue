@@ -1595,6 +1595,12 @@ pre {
   line-height: 1.3;
 }
 
+.message-content.markdown h1,
+.message-content.markdown h2 {
+  border-left: 3px solid #4f6ef7;
+  padding-left: 10px;
+}
+
 .message-content.markdown h1 {
   font-size: 22px;
 }
@@ -1668,8 +1674,42 @@ pre {
 }
 
 .message-content.markdown th {
-  background: #e2e8f0;
-  color: #0f172a;
+  background: #edf2ff;
+  color: #243b75;
+  font-weight: 750;
+}
+
+.message-content.markdown tbody tr:nth-child(even) {
+  background: #f8faff;
+}
+
+.message-content.markdown a.markdown-link {
+  color: #3563d9;
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, #3563d9 38%, transparent);
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+.message-content.markdown a.markdown-link:hover {
+  color: #2449b5;
+  text-decoration-color: currentColor;
+}
+
+.message-content.markdown a.markdown-link:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid #6b8cff;
+  outline-offset: 3px;
+}
+
+.message-content.markdown a.markdown-link--repo {
+  display: inline-block;
+  border-radius: 5px;
+  background: #eff4ff;
+  padding-inline: 4px;
+  text-decoration: none;
 }
 
 .message-content.markdown .generated-image-link {

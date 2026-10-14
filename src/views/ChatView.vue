@@ -2447,13 +2447,50 @@ function splitTableRow(line: string) {
 }
 
 function renderInline(text: string) {
-  return escapeHtml(text)
-    .replace(
-      /!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g,
-      '<a class="generated-image-link" href="$2" target="_blank" rel="noreferrer"><img class="generated-image" src="$2" alt="$1" loading="lazy" onerror="this.closest(\'.generated-image-link\').remove()" /></a>'
-    )
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
+  const embeds: string[] = []
+  const reserve = (html: string) => {
+    const token = `LYLEINLINE${embeds.length}TOKEN`
+    embeds.push(html)
+    return token
+  }
+  const safeHref = (value: string) => {
+    try {
+      const url = new URL(value)
+      return url.protocol === 'http:' || url.protocol === 'https:' ? escapeHtml(url.href) : ''
+    } catch {
+      return ''
+    }
+  }
+
+  const prepared = text
+    .replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (_match, alt: string, rawHref: string) => {
+      const href = safeHref(rawHref)
+      if (!href) return ''
+      return reserve(`<a class="generated-image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="generated-image" src="${href}" alt="${escapeHtml(alt)}" loading="lazy" onerror="this.closest('.generated-image-link').remove()" /></a>`)
+    })
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_match, label: string, rawHref: string) => {
+      const href = safeHref(rawHref)
+      return href ? reserve(`<a class="markdown-link" href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`) : escapeHtml(label)
+    })
+    .replace(/`([^`]+)`/g, (_match, code: string) => reserve(`<code>${escapeHtml(code)}</code>`))
+
+  let html = escapeHtml(prepared)
+    .replace(/\bhttps?:\/\/[^\s<]+/g, (candidate) => {
+      const trailing = candidate.match(/[.,!?;:]+$/)?.[0] || ''
+      const rawHref = candidate.slice(0, candidate.length - trailing.length).replace(/&amp;/g, '&')
+      const href = safeHref(rawHref)
+      return href ? `<a class="markdown-link" href="${href}" target="_blank" rel="noopener noreferrer">${candidate.slice(0, candidate.length - trailing.length)}</a>${trailing}` : candidate
+    })
+    .replace(/(^|[\s(])([A-Za-z0-9_.-]{1,39}\/[A-Za-z0-9_.-]{1,100})(?=$|[\s),.!?:;])/g, (_match, prefix: string, repository: string) => {
+      const href = `https://github.com/${repository}`
+      return `${prefix}<a class="markdown-link markdown-link--repo" href="${href}" target="_blank" rel="noopener noreferrer">${repository}</a>`
+    })
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+
+  embeds.forEach((embed, index) => {
+    html = html.replace(`LYLEINLINE${index}TOKEN`, embed)
+  })
+  return html
 }
 
 function escapeHtml(text: string) {
