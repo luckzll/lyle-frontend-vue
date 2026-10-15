@@ -82,6 +82,7 @@ import DebugAgentTimeline from '@/components/chat/DebugAgentTimeline.vue'
 import DebugLedger from '@/components/chat/DebugLedger.vue'
 import AgentProgressTimeline from '@/components/chat/AgentProgressTimeline.vue'
 import ChatThinkingProcess from '@/components/chat/ChatThinkingProcess.vue'
+import AssistantMarkdown from '@/components/chat/AssistantMarkdown.vue'
 import { processTimestamp, type ChatReasoning } from '@/domain/chat-reasoning'
 import type { ChatToolCall } from '@/domain/chat-tool-calls'
 import type { ProcessTimelineEntry } from '@/domain/chat-process-timeline'
@@ -2330,179 +2331,6 @@ function formatBriefTime(value?: string | null) {
   return new Date(value).toLocaleString()
 }
 
-function renderAssistantContent(content: string) {
-  return renderMarkdown(content)
-}
-
-function renderMarkdown(content: string) {
-  const lines = content.replace(/\r\n/g, '\n').split('\n')
-  const blocks: string[] = []
-  let index = 0
-
-  while (index < lines.length) {
-    const line = lines[index]
-
-    if (!line.trim()) {
-      index += 1
-      continue
-    }
-
-    if (line.trim().startsWith('```')) {
-      const codeLines: string[] = []
-      index += 1
-      while (index < lines.length && !lines[index].trim().startsWith('```')) {
-        codeLines.push(lines[index])
-        index += 1
-      }
-      index += 1
-      blocks.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`)
-      continue
-    }
-
-    if (isMarkdownTable(lines, index)) {
-      const tableLines: string[] = []
-      tableLines.push(lines[index], lines[index + 1])
-      index += 2
-      while (index < lines.length && lines[index].trim().startsWith('|')) {
-        tableLines.push(lines[index])
-        index += 1
-      }
-      blocks.push(renderTable(tableLines))
-      continue
-    }
-
-    if (/^---+$/.test(line.trim())) {
-      blocks.push('<hr />')
-      index += 1
-      continue
-    }
-
-    const heading = line.match(/^(#{1,4})\s+(.+)$/)
-    if (heading) {
-      const level = heading[1].length
-      blocks.push(`<h${level}>${renderInline(heading[2])}</h${level}>`)
-      index += 1
-      continue
-    }
-
-    if (/^\s*[-*]\s+/.test(line)) {
-      const items: string[] = []
-      while (index < lines.length && /^\s*[-*]\s+/.test(lines[index])) {
-        items.push(`<li>${renderInline(lines[index].replace(/^\s*[-*]\s+/, ''))}</li>`)
-        index += 1
-      }
-      blocks.push(`<ul>${items.join('')}</ul>`)
-      continue
-    }
-
-    if (/^\s*\d+\.\s+/.test(line)) {
-      const items: string[] = []
-      while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index])) {
-        items.push(`<li>${renderInline(lines[index].replace(/^\s*\d+\.\s+/, ''))}</li>`)
-        index += 1
-      }
-      blocks.push(`<ol>${items.join('')}</ol>`)
-      continue
-    }
-
-    const paragraphLines = [line]
-    index += 1
-    while (
-      index < lines.length &&
-      lines[index].trim() &&
-      !lines[index].trim().startsWith('```') &&
-      !isMarkdownTable(lines, index) &&
-      !/^---+$/.test(lines[index].trim()) &&
-      !/^(#{1,4})\s+/.test(lines[index]) &&
-      !/^\s*[-*]\s+/.test(lines[index]) &&
-      !/^\s*\d+\.\s+/.test(lines[index])
-    ) {
-      paragraphLines.push(lines[index])
-      index += 1
-    }
-    blocks.push(`<p>${paragraphLines.map(renderInline).join('<br />')}</p>`)
-  }
-
-  return blocks.join('')
-}
-
-function isMarkdownTable(lines: string[], index: number) {
-  return Boolean(
-    lines[index]?.trim().startsWith('|') &&
-    lines[index + 1] &&
-    /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[index + 1])
-  )
-}
-
-function renderTable(lines: string[]) {
-  const rows = lines
-    .filter((_, index) => index !== 1)
-    .map((line) => splitTableRow(line).map((cell) => renderInline(cell.trim())))
-  const [head = [], ...body] = rows
-  const thead = `<thead><tr>${head.map((cell) => `<th>${cell}</th>`).join('')}</tr></thead>`
-  const tbody = `<tbody>${body.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody>`
-  return `<div class="markdown-table-wrap"><table>${thead}${tbody}</table></div>`
-}
-
-function splitTableRow(line: string) {
-  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|')
-}
-
-function renderInline(text: string) {
-  const embeds: string[] = []
-  const reserve = (html: string) => {
-    const token = `LYLEINLINE${embeds.length}TOKEN`
-    embeds.push(html)
-    return token
-  }
-  const safeHref = (value: string) => {
-    try {
-      const url = new URL(value)
-      return url.protocol === 'http:' || url.protocol === 'https:' ? escapeHtml(url.href) : ''
-    } catch {
-      return ''
-    }
-  }
-
-  const prepared = text
-    .replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (_match, alt: string, rawHref: string) => {
-      const href = safeHref(rawHref)
-      if (!href) return ''
-      return reserve(`<a class="generated-image-link" href="${href}" target="_blank" rel="noopener noreferrer"><img class="generated-image" src="${href}" alt="${escapeHtml(alt)}" loading="lazy" onerror="this.closest('.generated-image-link').remove()" /></a>`)
-    })
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_match, label: string, rawHref: string) => {
-      const href = safeHref(rawHref)
-      return href ? reserve(`<a class="markdown-link" href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`) : escapeHtml(label)
-    })
-    .replace(/`([^`]+)`/g, (_match, code: string) => reserve(`<code>${escapeHtml(code)}</code>`))
-
-  let html = escapeHtml(prepared)
-    .replace(/\bhttps?:\/\/[^\s<]+/g, (candidate) => {
-      const trailing = candidate.match(/[.,!?;:]+$/)?.[0] || ''
-      const rawHref = candidate.slice(0, candidate.length - trailing.length).replace(/&amp;/g, '&')
-      const href = safeHref(rawHref)
-      return href ? `<a class="markdown-link" href="${href}" target="_blank" rel="noopener noreferrer">${candidate.slice(0, candidate.length - trailing.length)}</a>${trailing}` : candidate
-    })
-    .replace(/(^|[\s(])([A-Za-z0-9_.-]{1,39}\/[A-Za-z0-9_.-]{1,100})(?=$|[\s),.!?:;])/g, (_match, prefix: string, repository: string) => {
-      const href = `https://github.com/${repository}`
-      return `${prefix}<a class="markdown-link markdown-link--repo" href="${href}" target="_blank" rel="noopener noreferrer">${repository}</a>`
-    })
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-
-  embeds.forEach((embed, index) => {
-    html = html.replace(`LYLEINLINE${index}TOKEN`, embed)
-  })
-  return html
-}
-
-function escapeHtml(text: string) {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
 </script>
 
 <template>
@@ -2645,11 +2473,13 @@ function escapeHtml(text: string) {
             <button v-if="message.recoveryState === 'unconfirmed'" class="secondary" type="button" @click="refreshTurnStatus">重新查询状态</button>
           </div>
           <GeneratedImageGrid v-if="message.imageBatch" :items="message.imageBatch.items" @retry="retryFailedMessage(index)" />
-          <div
+          <AssistantMarkdown
             v-if="assistantTextContent(message)"
-            class="message-bubble message-content markdown"
-            v-html="renderAssistantContent(assistantTextContent(message))"
-          ></div>
+            class="message-bubble message-content chat-answer"
+            :text="assistantTextContent(message)"
+            allow-images
+            linkify
+          />
           <DocumentExport
             v-if="assistantTextContent(message) && !isActiveTurnPhase(message.phase) && message.phase !== 'FAILED' && !message.recoveryState"
             :content="assistantTextContent(message)"
@@ -3463,6 +3293,26 @@ function escapeHtml(text: string) {
   max-width: 100%;
 }
 
+.message.assistant > .chat-answer {
+  padding: 0;
+  border-radius: 0;
+  color: var(--foreground);
+  font-size: 15px;
+  line-height: 1.8;
+  white-space: normal;
+}
+
+.message.user > .message-bubble {
+  max-width: min(760px, 88%);
+  padding: 11px 16px;
+  border-color: var(--border);
+  border-radius: 16px 16px 4px 16px;
+  background: var(--background);
+  font-size: 14px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
 .chat-list--debug .message.debug-message > .message-bubble {
   width: min(100%, var(--chat-content-width));
   max-width: var(--chat-content-width);
@@ -3738,6 +3588,8 @@ function escapeHtml(text: string) {
 }
 
 @media (max-width: 640px) {
+  .message.assistant > .chat-answer { font-size: 14px; }
+  .message.user > .message-bubble { font-size: 13px; }
   .toolbar {
     display: flex;
     width: 100%;
