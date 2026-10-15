@@ -102,7 +102,7 @@ onBeforeUnmount(() => pendingResets.forEach(clearTimeout))
 .assistant-markdown :deep(.markdown-copy-code:hover) { background: var(--surface); color: var(--foreground); }
 .assistant-markdown :deep(.markdown-copy-code[aria-disabled="true"]) { cursor: wait; opacity: .65; }
 .assistant-markdown :deep(.markdown-copy-code[data-copy-error]) { color: var(--danger-strong); }
-.assistant-markdown :deep(pre) { max-width: 100%; max-height: 460px; margin: 0; padding: 16px; overflow: auto; overscroll-behavior-x: contain; background: transparent; font-size: 12px; line-height: 1.75; white-space: pre; tab-size: 2; }
+.assistant-markdown :deep(pre) { max-width: 100%; max-height: 460px; margin: 0; padding: 16px; border: 0; border-radius: 0; box-shadow: none; overflow: auto; overscroll-behavior-x: contain; background: transparent; color: inherit; font-size: 12px; line-height: 1.75; white-space: pre; tab-size: 2; }
 .assistant-markdown :deep(pre code) { display: block; width: max-content; min-width: 100%; padding: 0; border: 0; background: none; color: inherit; font-size: inherit; overflow-wrap: normal; }
 .assistant-markdown :deep(.markdown-table-wrap) { max-width: 100%; margin: 18px 0; overflow-x: auto; overscroll-behavior-x: contain; border: 1px solid var(--border); border-radius: 9px; }
 .assistant-markdown :deep(table) { width: 100%; margin: 0; border-collapse: collapse; font-size: .92em; line-height: 1.65; }
