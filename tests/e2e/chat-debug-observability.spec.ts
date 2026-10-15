@@ -7,6 +7,80 @@ test.beforeEach(async ({ page }) => {
   await mockApis(page)
 })
 
+test('ordinary answers share rich Markdown and keep process, sources and image actions usable', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1707, height: 1000 })
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (value: string) => { Object.assign(window, { __copiedAnswerCode: value }) }
+    } })
+  })
+  const imageUrl = 'https://example.com/chat-ui-preview.png'
+  await page.route(imageUrl, route => route.fulfill({ contentType: 'image/svg+xml', body:
+    '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="160"><rect width="400" height="160" fill="#dce7f6"/><text x="28" y="90" fill="#233047" font-size="24">Generated preview</text></svg>' }))
+  const code = 'const answer = "清晰的普通对话";\n'
+  const content = '## 普通对话排版\n\n先给出结论，再按层级说明依据。\n\n'
+    + '1. 核对结果\n   - 查看入口\n   - 确认配置\n2. 验证输出\n\n'
+    + '| 检查项 | 结果 |\n| --- | --- |\n| 正文排版 | 已完成 |\n\n'
+    + '> 保留来源，让结果可以追溯。\n\n```typescript\n' + code + '```\n\n'
+    + '[官方文档](https://example.com/docs)\n\n<img src=x onerror=alert(1)>\n\n![旧版生成图](' + imageUrl + ')'
+  const history = completeMessages()
+  const assistant = history[1]!
+  await page.route('**/api/chat/messages/debug-complete', route => json(route, [
+    { ...history[0], content: '请整理一份清晰的结果，并保留生成图片。' },
+    { ...assistant, content, turnId: 'answer-ui-turn', metadata: { ...assistant.metadata,
+      agentProgress: [
+        { turnId: 'answer-ui-turn', sequence: 2, step: 'rag_agent', status: 'completed', durationMs: 320 },
+        { turnId: 'answer-ui-turn', sequence: 3, step: 'writer_agent', status: 'completed', durationMs: 600 }
+      ], processTimeline: [
+        { type: 'reasoning', id: 'r-1', kind: 'summary', sequence: 1, text: '核对已有资料，按步骤整理结果。'.repeat(28) },
+        { type: 'agent', id: 'rag_agent' }, { type: 'agent', id: 'writer_agent' }
+      ], processStartedAt: 10000, processCompletedAt: 12600 } },
+    { id: 'image-question', role: 'user', content: '生成一张预览图', createdAt: NOW, metadata: {} },
+    { id: 'image-answer', role: 'assistant', content: '已生成预览图。', createdAt: NOW, metadata: {
+      phase: 'COMPLETED', imageBatch: { batchId: 'ui-batch', count: 1, mode: 'generate', status: 'COMPLETED',
+        completedCount: 1, failedCount: 0, items: [{ index: 0, status: 'COMPLETED', imageUrl }] }
+    } }
+  ]))
+  await page.goto('/?conversationId=debug-complete')
+  const message = page.locator('.message.assistant').first()
+  const answer = message.locator('.chat-answer')
+  await expect(answer.locator('h2')).toHaveText('普通对话排版')
+  await expect(answer.locator('ol > li > ul > li')).toHaveText(['查看入口', '确认配置'])
+  await expect(answer.locator('table tbody td')).toHaveText(['正文排版', '已完成'])
+  await expect(answer.locator('blockquote')).toContainText('让结果可以追溯')
+  await expect(answer.locator('img')).toHaveCount(0)
+  await expect(answer).toHaveCSS('font-size', '15px')
+  await expect(message.locator('.generated-image-bubble img')).toHaveAttribute('alt', '旧版生成图')
+  await expect(message.getByRole('button', { name: '保存为文件' })).toBeVisible()
+  await expect(message.getByTestId('chat-sources')).toContainText('1 份文档 · 1 个片段')
+  const copy = answer.getByRole('button', { name: '复制代码', exact: true })
+  await copy.focus()
+  await copy.press('Enter')
+  await expect(answer.getByRole('button', { name: '代码已复制，可再次复制' })).toBeFocused()
+  await expect.poll(() => page.evaluate(() => (window as Window & { __copiedAnswerCode?: string }).__copiedAnswerCode)).toBe(code)
+  const batch = page.locator('.generated-grid')
+  await expect(batch.getByRole('link', { name: '下载原图' })).toHaveAttribute('href', imageUrl)
+  await batch.getByRole('button', { name: '预览结果 1', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '生成结果 1' })).toBeVisible()
+  await page.getByRole('button', { name: '关闭预览', exact: true }).click()
+  const process = message.getByTestId('chat-thinking-process')
+  const processToggle = process.locator(':scope > button')
+  await expect(processToggle).toHaveAttribute('aria-expanded', 'false')
+  await processToggle.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('ordinary-answer-completed.png'), fullPage: true })
+  await processToggle.press('Enter')
+  await expect(processToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(process.locator('.thinking-process__output')).not.toHaveAttribute('open', '')
+  await page.screenshot({ path: testInfo.outputPath('ordinary-answer-process-expanded.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.evaluate(() => document.documentElement.classList.add('dark'))
+  await processToggle.press('Enter')
+  await processToggle.scrollIntoViewIfNeeded()
+  await expect(answer).toHaveCSS('font-size', '14px')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1)
+  await page.screenshot({ path: testInfo.outputPath('ordinary-answer-mobile-dark.png'), fullPage: true })
+})
+
 test('complete historical debug evidence survives refresh and stays behind debug mode', async ({ page }) => {
   await page.setViewportSize({ width: 1707, height: 932 })
   await page.goto('/?debug=1&conversationId=debug-complete')
@@ -60,7 +134,7 @@ test('complete historical debug evidence survives refresh and stays behind debug
   await expect(page.getByTestId('debug-tools-summary')).toHaveText('调用 1 次')
   await expect(page.getByTestId('debug-agent-summary')).toHaveText('7 个节点')
 
-  const assistantContent = page.locator('.message.assistant > .message-bubble.markdown').first()
+  const assistantContent = page.locator('.message.assistant > .message-bubble.chat-answer').first()
   const composer = page.locator('.chat-input')
   const [assistantBox, composerBox, ledgerBox] = await Promise.all([
     assistantContent.boundingBox(),

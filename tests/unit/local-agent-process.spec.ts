@@ -80,4 +80,45 @@ describe('local agent execution process', () => {
     expect(html).not.toContain('is-completed')
     expect(html).not.toContain('local-agent-process__icon-badge is-done')
   })
+
+  it('summarizes the current operation before opening the execution record', async () => {
+    const html = await renderToString(createSSRApp(LocalAgentProcess, { open: false, active: true, activities: [
+      { label: '查看目录', status: 'done' },
+      { label: '读取文件', path: 'src/main.ts', status: 'running' }
+    ] }))
+    const summary = html.slice(0, html.indexOf('local-agent-process__body'))
+    expect(summary).toContain('进行中')
+    expect(summary).toContain('· 读取文件')
+    expect(summary).toContain('2 个步骤')
+    expect(summary).not.toContain('src/main.ts')
+    expect(html).not.toContain('本次目录查看已结束。')
+    expect(html).not.toContain('local-agent-process__icon-badge')
+  })
+
+  it('keeps write confirmation visible while disclosing long output on demand', async () => {
+    const detail = '修改建议：\n' + '这是需要确认后才能执行的文件变更说明。'.repeat(24)
+    const html = await renderToString(createSSRApp(LocalAgentProcess, { open: true, active: true, waiting: true, activities: [
+      { label: '修改文件', path: 'src/main.ts', status: 'waiting', detail }
+    ] }))
+    const disclosureStart = html.indexOf('<details')
+    expect(disclosureStart).toBeGreaterThan(-1)
+    expect(html.slice(0, disclosureStart)).toContain('等待你确认这项修改，文件尚未写入。')
+    expect(html).toMatch(/<details class="local-agent-process__output"[^>]*>/)
+    expect(html.match(/<details\b[^>]*>/)?.[0]).not.toContain(' open')
+    expect(html).toContain('查看输出详情')
+    expect(html).toContain('修改建议：')
+    expect(html).not.toContain('已写入')
+  })
+
+  it('keeps failure and interruption notices outside a collapsed long output', async () => {
+    for (const status of ['error', 'waiting'] as const) {
+      const html = await renderToString(createSSRApp(LocalAgentProcess, { open: true, active: false, completed: status === 'error', activities: [
+        { label: '修改文件', path: 'src/main.ts', status, detail: '诊断输出\n'.repeat(12) }
+      ] }))
+      const visibleRecord = html.slice(0, html.indexOf('<details'))
+      expect(visibleRecord).toContain(status === 'error' ? '此步骤未能完成。' : '本轮已停止，此步骤未完成。')
+      expect(html).toMatch(/<details class="local-agent-process__output"[^>]*>/)
+      expect(html).not.toContain('已写入')
+    }
+  })
 })

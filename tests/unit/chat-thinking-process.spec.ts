@@ -180,4 +180,31 @@ describe('chat thinking and execution disclosure', () => {
     expect(html).not.toContain('此操作已返回结果。')
     expect(html).toContain('2 个步骤')
   })
+
+  it('keeps long reasoning available on demand without changing its position in the timeline', async () => {
+    const html = await renderToString(createSSRApp(ChatThinkingProcess, {
+      items: [{ turnId: 't', sequence: 2, step: 'writer_agent', status: 'completed' }], phase: 'COMPLETED',
+      processTimeline: [
+        { type: 'reasoning', id: 'r-1', kind: 'summary', sequence: 1, text: '**核对资料**\n'.repeat(40) },
+        { type: 'agent', id: 'writer_agent' }
+      ]
+    }))
+    expect(html).toContain('查看思考内容')
+    expect(html.match(/<details\b[^>]*>/)?.[0]).not.toContain(' open')
+    expect(html.indexOf('data-process-id="r-1"')).toBeLessThan(html.indexOf('data-process-id="writer_agent"'))
+    expect(html).toMatch(/<strong[^>]*>核对资料<\/strong>/)
+  })
+
+  it('keeps confirmation and failure notices visible before disclosing long tool output', async () => {
+    for (const status of ['awaiting_confirmation', 'failed'] as const) {
+      const html = await renderToString(createSSRApp(ChatThinkingProcess, {
+        items: [], active: true, toolCalls: [{ turnId: 't', sequence: 1, callId: 'operation', tool: 'calendar.create',
+          title: '创建日程', status, summary: '返回说明\n'.repeat(8) }]
+      }))
+      const outputStart = html.indexOf('<details class="thinking-process__output"')
+      expect(outputStart).toBeGreaterThan(-1)
+      expect(html.slice(0, outputStart)).toContain(status === 'failed' ? '此步骤未能完成。' : '此操作需要你确认后才会执行。')
+      expect(html).not.toContain('此操作已返回结果。')
+    }
+  })
 })

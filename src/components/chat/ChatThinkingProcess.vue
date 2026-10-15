@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
-import { BookOpen, BrainCircuit, Check, ChevronDown, CircleAlert, CircleHelp, CircleMinus, CirclePause, CircleStop,
-  Clock3, Database, FolderSearch, Layers, LoaderCircle, MessageSquareText, PenLine, ShieldCheck, Workflow, Wrench } from '@lucide/vue'
+import { Check, ChevronDown, CircleAlert, CircleHelp, CircleMinus, CirclePause, CircleStop,
+  Clock3, LoaderCircle, MessageSquareText } from '@lucide/vue'
 import { AGENT_STEPS, type AgentStepEvent } from '@/domain/chat-progress'
 import { agentStepFeedback } from '@/domain/chat-step-presentation'
 import type { ChatReasoning } from '@/domain/chat-reasoning'
@@ -34,15 +34,17 @@ const timeline = computed(() => {
   return fallback
 })
 const legacyOrder = computed(() => props.processTimeline === undefined && timeline.value.length > 1)
-const stepIcons = { supervisor_agent: Workflow, memory_agent: Database, rag_agent: BookOpen, tool_agent: Wrench,
-  gather_agent: Layers, project_resolver: FolderSearch, writer_agent: PenLine, reviewer_agent: ShieldCheck }
-function stepIcon(type: 'agent' | 'tool', id: string) {
-  return type === 'tool' ? Wrench : stepIcons[id as keyof typeof stepIcons] || Workflow
+function shouldDisclose(text: string) { return text.length > 280 || text.split('\n').length > 5 }
+function detailNotice(status: string) {
+  const notices: Record<string, string> = { failed: '此步骤未能完成。', awaiting_confirmation: '此操作需要你确认后才会执行。',
+    needs_clarification: '需要补充信息后才能继续此操作。', interrupted: '本轮已中断，此步骤未完成。',
+    ended: '本轮已结束，未收到此步骤的完成状态。', skipped: '本轮已跳过此操作。' }
+  return notices[status] || ''
 }
-type Row = { type: 'reasoning'; id: string; kind: 'reasoning' | 'summary'; parts: ReturnType<typeof processTextParts> }
+type Row = { type: 'reasoning'; id: string; kind: 'reasoning' | 'summary'; text: string; parts: ReturnType<typeof processTextParts> }
   | { type: 'agent' | 'tool'; id: string; title: string; tool?: string; status: string; statusLabel: string; durationMs?: number; detail?: string }
 const rows = computed<Row[]>(() => timeline.value.flatMap<Row>(entry => {
-  if (entry.type === 'reasoning') return [{ type: 'reasoning', id: entry.id, kind: entry.kind, parts: processTextParts(entry.text) }]
+  if (entry.type === 'reasoning') return [{ type: 'reasoning', id: entry.id, kind: entry.kind, text: entry.text, parts: processTextParts(entry.text) }]
   if (entry.type === 'tool') {
     const call = calls.value.find(item => item.callId === entry.id)
     if (!call) return []
@@ -107,13 +109,14 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
   <section v-if="visible" class="thinking-process" :class="{ 'is-active': running }" aria-label="思考与执行过程" data-testid="chat-thinking-process">
     <button type="button" class="thinking-process__toggle" :aria-expanded="expanded" :aria-controls="panelId" @click="toggleExpanded">
       <span class="thinking-process__mark" :class="`is-${headerTone}`">
-        <CircleStop v-if="interrupted" :size="18" aria-hidden="true" />
-        <BrainCircuit v-else :size="18" aria-hidden="true" />
+        <LoaderCircle v-if="running && headerTone === 'running'" :size="14" class="thinking-process__spinner" aria-hidden="true" />
+        <Check v-else-if="headerTone === 'completed'" :size="14" aria-hidden="true" />
+        <CirclePause v-else-if="headerTone === 'waiting'" :size="14" aria-hidden="true" />
+        <CircleStop v-else-if="interrupted" :size="14" aria-hidden="true" />
+        <CircleMinus v-else :size="14" aria-hidden="true" />
       </span>
       <span class="thinking-process__title">思考与执行过程</span>
       <span class="thinking-process__status" :class="`is-${headerTone}`" role="status" aria-live="polite" aria-atomic="true">
-        <LoaderCircle v-if="running && headerTone === 'running'" :size="12" class="thinking-process__spinner" aria-hidden="true" />
-        <Check v-else-if="headerTone === 'completed'" :size="12" aria-hidden="true" />
         {{ headerStatus }}
       </span>
       <span v-if="stepCount" class="thinking-process__count">{{ stepCount }} 个步骤</span>
@@ -128,38 +131,48 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           :data-status="row.type !== 'reasoning' ? row.status : undefined"
           :class="[`thinking-process__row--${row.type}`, row.type !== 'reasoning' ? `is-${row.status}` : '']">
           <template v-if="row.type === 'reasoning'">
-            <span class="thinking-process__step-icon thinking-process__step-icon--reasoning"><MessageSquareText :size="16" aria-hidden="true" /></span>
+            <span class="thinking-process__step-icon thinking-process__step-icon--reasoning"><MessageSquareText :size="14" aria-hidden="true" /></span>
             <div class="thinking-process__step-copy">
               <span class="thinking-process__reasoning-label">{{ row.kind === 'summary' ? '思考摘要内容' : '模型思考内容' }}</span>
-              <p class="thinking-process__reasoning-text"><template v-for="(part, index) in row.parts" :key="index"><strong v-if="part.type === 'strong'">{{ part.text }}</strong><code v-else-if="part.type === 'code'">{{ part.text }}</code><template v-else>{{ part.text }}</template></template></p>
+              <details v-if="shouldDisclose(row.text)" class="thinking-process__output">
+                <summary>查看思考内容<ChevronDown :size="12" aria-hidden="true" /></summary>
+                <p class="thinking-process__reasoning-text"><template v-for="(part, index) in row.parts" :key="index"><strong v-if="part.type === 'strong'">{{ part.text }}</strong><code v-else-if="part.type === 'code'">{{ part.text }}</code><template v-else>{{ part.text }}</template></template></p>
+              </details>
+              <p v-else class="thinking-process__reasoning-text"><template v-for="(part, index) in row.parts" :key="index"><strong v-if="part.type === 'strong'">{{ part.text }}</strong><code v-else-if="part.type === 'code'">{{ part.text }}</code><template v-else>{{ part.text }}</template></template></p>
             </div>
           </template>
           <template v-else>
             <span class="thinking-process__step-icon" :class="`is-${row.status}`">
-              <CircleAlert v-if="row.status === 'failed'" :size="16" aria-hidden="true" />
-              <CirclePause v-else-if="row.status === 'awaiting_confirmation'" :size="16" aria-hidden="true" />
-              <CircleHelp v-else-if="row.status === 'needs_clarification'" :size="16" aria-hidden="true" />
-              <CircleStop v-else-if="row.status === 'interrupted'" :size="16" aria-hidden="true" />
-              <CircleMinus v-else-if="row.status === 'ended' || row.status === 'skipped'" :size="16" aria-hidden="true" />
-              <component :is="stepIcon(row.type, row.id)" v-else :size="16" aria-hidden="true" />
-              <span v-if="row.status === 'running' || row.status === 'completed'" class="thinking-process__icon-badge" :class="`is-${row.status}`">
-                <LoaderCircle v-if="row.status === 'running'" :size="11" class="thinking-process__spinner" aria-hidden="true" />
-                <Check v-else :size="10" :stroke-width="3" aria-hidden="true" />
-              </span>
+              <CircleAlert v-if="row.status === 'failed'" :size="14" aria-hidden="true" />
+              <CirclePause v-else-if="row.status === 'awaiting_confirmation'" :size="14" aria-hidden="true" />
+              <CircleHelp v-else-if="row.status === 'needs_clarification'" :size="14" aria-hidden="true" />
+              <CircleStop v-else-if="row.status === 'interrupted'" :size="14" aria-hidden="true" />
+              <CircleMinus v-else-if="row.status === 'ended' || row.status === 'skipped'" :size="14" aria-hidden="true" />
+              <LoaderCircle v-else-if="row.status === 'running'" :size="14" class="thinking-process__spinner" aria-hidden="true" />
+              <Check v-else-if="row.status === 'completed'" :size="14" aria-hidden="true" />
             </span>
             <div class="thinking-process__step-copy">
               <details v-if="row.type === 'tool'" class="thinking-process__tool-details">
                 <summary class="thinking-process__step-heading">
-                  <span class="thinking-process__step-name">{{ row.title }}</span><span class="thinking-process__step-status" :class="`is-${row.status}`">{{ row.statusLabel }}</span>
+                  <span class="thinking-process__step-name">{{ row.title }}</span><span class="thinking-process__step-status" :class="[`is-${row.status}`, { 'thinking-process__sr-only': row.status === 'completed' }]">{{ row.statusLabel }}</span>
                   <span v-if="row.durationMs !== undefined" class="thinking-process__step-duration">{{ formatTraceDuration(row.durationMs) }}</span><ChevronDown :size="12" aria-hidden="true" />
                 </summary>
                 <p class="thinking-process__tool-id">工具：<code>{{ row.tool }}</code></p>
               </details>
               <div v-else class="thinking-process__step-heading">
-                <span class="thinking-process__step-name">{{ row.title }}</span><span class="thinking-process__step-status" :class="`is-${row.status}`">{{ row.statusLabel }}</span>
+                <span class="thinking-process__step-name">{{ row.title }}</span><span class="thinking-process__step-status" :class="[`is-${row.status}`, { 'thinking-process__sr-only': row.status === 'completed' }]">{{ row.statusLabel }}</span>
                 <span v-if="row.durationMs !== undefined" class="thinking-process__step-duration">{{ formatTraceDuration(row.durationMs) }}</span>
               </div>
-              <p v-if="row.detail" class="thinking-process__step-detail">{{ row.detail }}</p>
+              <template v-if="row.detail">
+                <template v-if="shouldDisclose(row.detail)">
+                  <p v-if="detailNotice(row.status)" class="thinking-process__step-detail">{{ detailNotice(row.status) }}</p>
+                  <details class="thinking-process__output">
+                    <summary>查看输出详情<ChevronDown :size="12" aria-hidden="true" /></summary>
+                    <p class="thinking-process__step-detail">{{ row.detail }}</p>
+                  </details>
+                </template>
+                <p v-else class="thinking-process__step-detail">{{ row.detail }}</p>
+              </template>
             </div>
           </template>
         </li>
@@ -170,74 +183,72 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </template>
 
 <style scoped>
-.thinking-process { --process-primary: var(--primary); --process-success: var(--success-strong); --process-warning: var(--lyle-color-amber-700); --process-danger: var(--danger-strong); width: 100%; min-width: 0; margin: 0 0 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--muted-foreground); font-size: 13px; overflow: hidden; }
-:global(.dark .thinking-process) { --process-primary: var(--lyle-color-indigo-300); --process-success: var(--lyle-color-emerald-200); --process-warning: var(--lyle-color-amber-200); --process-danger: var(--lyle-color-rose-200); }
-.thinking-process.is-active { border-color: var(--primary-border); }
-.thinking-process__toggle { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%; min-height: 60px; padding: 12px 16px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit; line-height: 1.6; }
-.thinking-process__toggle:hover { background: color-mix(in srgb, var(--surface-muted) 45%, var(--surface)); }
-.thinking-process__toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -3px; border-radius: 12px; }
-.thinking-process__tool-details summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: 3px; }
-.thinking-process__mark { display: flex; align-items: center; justify-content: center; flex: 0 0 32px; height: 32px; margin-right: 2px; border-radius: 10px; color: var(--process-primary); background: var(--primary-soft); }
-.thinking-process__mark.is-interrupted { color: var(--process-warning); background: var(--warning-soft); }
-.thinking-process__title { color: var(--foreground); font-weight: 600; }
-.thinking-process__status { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 2px 7px; border-radius: 6px; background: var(--surface-muted); overflow-wrap: anywhere; font-size: 11px; line-height: 1.6; }
-.thinking-process__status.is-running { color: var(--process-primary); background: var(--primary-soft); }
-.thinking-process__status.is-completed { color: var(--process-success); background: var(--success-soft); }
-.thinking-process__status.is-waiting, .thinking-process__status.is-interrupted { color: var(--process-warning); background: var(--warning-soft); }
-.thinking-process__count { font-size: 11px; white-space: nowrap; }
-.thinking-process__elapsed { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; }
+.thinking-process { --process-primary: var(--primary); --process-warning: var(--lyle-color-amber-700); --process-danger: var(--danger-strong); width: 100%; min-width: 0; margin: 0 0 10px; color: var(--muted-foreground); font-size: 12px; }
+:global(.dark .thinking-process) { --process-primary: var(--lyle-color-indigo-300); --process-warning: var(--lyle-color-amber-200); --process-danger: var(--lyle-color-rose-200); }
+.thinking-process__toggle { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit; line-height: 1.6; }
+.thinking-process__toggle:hover { background: color-mix(in srgb, var(--surface-muted) 65%, transparent); }
+.thinking-process__toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.thinking-process__mark { display: flex; align-items: center; justify-content: center; flex: 0 0 16px; height: 18px; color: var(--muted-foreground); }
+.thinking-process__mark.is-running { color: var(--process-primary); }
+.thinking-process__mark.is-interrupted, .thinking-process__mark.is-waiting { color: var(--process-warning); }
+.thinking-process__title { font-weight: 500; white-space: nowrap; }
+.thinking-process__status { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-size: 11px; }
+.thinking-process__status.is-running { color: var(--process-primary); }
+.thinking-process__status.is-waiting, .thinking-process__status.is-interrupted { color: var(--process-warning); }
+.thinking-process__count { margin-left: auto; font-size: 11px; white-space: nowrap; }
+.thinking-process__elapsed { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; }
 .thinking-process__chevron { flex-shrink: 0; margin-left: auto; transition: transform 160ms ease; }
-.thinking-process__elapsed + .thinking-process__chevron { margin-left: 2px; }
+.thinking-process__count ~ .thinking-process__chevron, .thinking-process__elapsed + .thinking-process__chevron { margin-left: 0; }
 .thinking-process__chevron.is-expanded { transform: rotate(180deg); }
-.thinking-process__body { border-top: 1px solid var(--border); padding: 16px 20px 4px; }
+.thinking-process__body { padding: 10px 8px 2px 16px; }
 .thinking-process__body[hidden] { display: none; }
-.thinking-process__legacy { margin: 0 0 14px; color: var(--muted-foreground); font-size: 11px; line-height: 1.7; }
-.thinking-process__timeline { margin: 0; padding: 0 0 0 14px; list-style: none; }
-.thinking-process__timeline > li { display: flex; align-items: flex-start; gap: 12px; min-width: 0; padding: 0 0 20px; border-left: 1px solid var(--border); }
-.thinking-process__timeline > li:last-child { padding-bottom: 12px; border-color: transparent; }
-.thinking-process__step-icon { position: relative; display: flex; align-items: center; justify-content: center; flex: 0 0 30px; height: 30px; margin-left: -15.5px; border: 1px solid var(--border); border-radius: 9px; color: var(--muted-foreground); background: var(--surface-muted); }
-.thinking-process__step-icon.is-completed { color: var(--process-primary); border-color: var(--primary-border); background: var(--primary-soft); }
-.thinking-process__step-icon.is-running { color: var(--process-primary); border-color: var(--primary-border); background: var(--primary-soft); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-soft) 70%, transparent); }
-.thinking-process__icon-badge { position: absolute; right: -4px; bottom: -4px; display: flex; align-items: center; justify-content: center; width: 15px; height: 15px; border: 2px solid var(--surface); border-radius: 50%; }
-.thinking-process__icon-badge.is-completed { color: var(--process-success); background: var(--success-soft); }
-.thinking-process__icon-badge.is-running { color: var(--process-primary); background: var(--surface); }
-.thinking-process__step-icon.is-failed { color: var(--process-danger); border-color: var(--danger-border); background: var(--danger-soft); }
-.thinking-process__step-icon.is-interrupted, .thinking-process__step-icon.is-awaiting_confirmation, .thinking-process__step-icon.is-needs_clarification { color: var(--process-warning); border-color: var(--warning-border); background: var(--warning-soft); }
-.thinking-process__step-copy { flex: 1; min-width: 0; padding-top: 3px; }
-.thinking-process__step-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; line-height: 1.7; }
+.thinking-process__legacy { margin: 0 0 10px; font-size: 11px; line-height: 1.7; }
+.thinking-process__timeline { margin: 0; padding: 0 0 0 8px; list-style: none; }
+.thinking-process__timeline > li { position: relative; display: flex; align-items: flex-start; gap: 10px; min-width: 0; padding: 0 0 16px; }
+.thinking-process__timeline > li::before { position: absolute; content: ''; width: 1px; top: 22px; bottom: 3px; left: 8px; background: var(--border); }
+.thinking-process__timeline > li:last-child { padding-bottom: 4px; }
+.thinking-process__timeline > li:last-child::before { display: none; }
+.thinking-process__step-icon { position: relative; display: flex; align-items: center; justify-content: center; flex: 0 0 17px; height: 21px; color: var(--muted-foreground); }
+.thinking-process__step-icon.is-running { color: var(--process-primary); }
+.thinking-process__step-icon.is-failed { color: var(--process-danger); }
+.thinking-process__step-icon.is-interrupted, .thinking-process__step-icon.is-awaiting_confirmation, .thinking-process__step-icon.is-needs_clarification { color: var(--process-warning); }
+.thinking-process__step-copy { flex: 1; min-width: 0; }
+.thinking-process__step-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px 8px; line-height: 1.75; }
 .thinking-process__step-name { color: var(--foreground); font-weight: 500; overflow-wrap: anywhere; }
 .thinking-process__step-status { font-size: 11px; }
-.thinking-process__step-status.is-completed { color: var(--process-success); }
 .thinking-process__step-status.is-running { color: var(--process-primary); }
 .thinking-process__step-status.is-failed { color: var(--process-danger); }
 .thinking-process__step-status.is-interrupted, .thinking-process__step-status.is-awaiting_confirmation, .thinking-process__step-status.is-needs_clarification { color: var(--process-warning); }
 .thinking-process__step-duration { margin-left: auto; white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; }
 .thinking-process__step-detail { margin: 4px 0 0; font-size: 12px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
-.thinking-process__row--agent.is-running .thinking-process__step-detail, .thinking-process__row--tool.is-running .thinking-process__step-detail { color: var(--process-primary); }
 .thinking-process__reasoning-label { color: var(--foreground); font-weight: 500; font-size: 12px; }
-.thinking-process__reasoning-text { margin: 5px 0 0; font-size: 12px; line-height: 1.85; white-space: pre-wrap; overflow-wrap: anywhere; }
+.thinking-process__reasoning-text { margin: 4px 0 0; font-size: 12px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
 .thinking-process__reasoning-text strong { color: var(--foreground); font-weight: 600; }
 .thinking-process__reasoning-text code { border-radius: 3px; padding: 1px 4px; background: var(--surface-muted); font-size: .94em; }
-.thinking-process__tool-details summary { cursor: pointer; list-style: none; }
-.thinking-process__tool-details summary::-webkit-details-marker { display: none; }
-.thinking-process__tool-details summary > svg { flex-shrink: 0; align-self: center; transition: transform 160ms ease; }
-.thinking-process__tool-details[open] summary > svg { transform: rotate(180deg); }
-.thinking-process__tool-id { margin: 6px 0 0; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
-.thinking-process__empty { margin: 0 0 12px; font-size: 12px; line-height: 1.75; }
+.thinking-process__tool-details summary, .thinking-process__output > summary { cursor: pointer; list-style: none; border-radius: 3px; }
+.thinking-process__tool-details summary::-webkit-details-marker, .thinking-process__output > summary::-webkit-details-marker { display: none; }
+.thinking-process__tool-details summary:focus-visible, .thinking-process__output > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.thinking-process__tool-details summary > svg, .thinking-process__output > summary > svg { flex-shrink: 0; align-self: center; transition: transform 160ms ease; }
+.thinking-process__tool-details[open] summary > svg, .thinking-process__output[open] > summary > svg { transform: rotate(180deg); }
+.thinking-process__tool-id { margin: 4px 0 0; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.thinking-process__output { margin-top: 4px; min-width: 0; }
+.thinking-process__output > summary { display: flex; align-items: center; gap: 4px; width: fit-content; max-width: 100%; font-size: 11px; line-height: 1.8; }
+.thinking-process__output > summary:hover { color: var(--foreground); }
+.thinking-process__empty { margin: 0 0 8px; font-size: 12px; line-height: 1.75; }
+.thinking-process__sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .thinking-process__spinner { flex-shrink: 0; animation: thinking-process-spin 1.2s linear infinite; }
 @keyframes thinking-process-spin { to { transform: rotate(360deg); } }
 @media (max-width: 600px) {
-  .thinking-process__toggle { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto 15px; gap: 4px 6px; padding: 10px 12px; }
-  .thinking-process__mark { grid-column: 1; grid-row: 1 / 3; height: 28px; border-radius: 8px; }
+  .thinking-process__toggle { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto 15px; gap: 2px 6px; padding: 6px; }
+  .thinking-process__mark { grid-column: 1; grid-row: 1; }
   .thinking-process__title { grid-column: 2; grid-row: 1; font-size: 12px; }
-  .thinking-process__status { grid-column: 2 / -1; grid-row: 2; justify-self: start; max-width: 100%; }
+  .thinking-process__status { grid-column: 2 / -1; grid-row: 2; max-width: 100%; }
   .thinking-process__count { display: none; }
-  .thinking-process__elapsed { grid-column: 3; grid-row: 1; margin-left: 0; font-size: 10px; }
+  .thinking-process__elapsed { grid-column: 3; grid-row: 1; font-size: 10px; }
   .thinking-process__chevron, .thinking-process__elapsed + .thinking-process__chevron { grid-column: 4; grid-row: 1; margin-left: 0; }
-  .thinking-process__body { padding: 14px 16px 2px; }
-  .thinking-process__timeline > li { gap: 10px; padding-bottom: 18px; }
+  .thinking-process__body { padding: 8px 6px 2px; }
   .thinking-process__step-heading { gap: 3px 6px; }
   .thinking-process__step-duration { font-size: 10px; }
 }
-@media (prefers-reduced-motion: reduce) { .thinking-process__spinner { animation: none; } .thinking-process__chevron, .thinking-process__tool-details summary > svg { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .thinking-process__spinner { animation: none; } .thinking-process__chevron, .thinking-process__tool-details summary > svg, .thinking-process__output > summary > svg { transition: none; } }
 </style>
