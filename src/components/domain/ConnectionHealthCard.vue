@@ -4,6 +4,7 @@ import { ArrowUpRight, FolderGit2, GitBranch, Plug, Puzzle } from '@lucide/vue'
 import type { ConnectionDiagnostic } from '@/api/types'
 import AppButton from '@/components/ui/AppButton.vue'
 import StatusBadge from '@/components/domain/StatusBadge.vue'
+import { connectionCanDiagnose, connectionStatusPresentation, normalizeConnectionStatus } from '@/domain/connection-status'
 
 const props = defineProps<{
   item: ConnectionDiagnostic
@@ -21,15 +22,13 @@ const icon = computed(() => {
     default: return Plug
   }
 })
-// Only explicit setup placeholders get a neutral badge. Some failed connectors
-// do not provide a timestamp, so a missing date alone does not mean unchecked.
-const unchecked = computed(() => props.item.status === 'unavailable' && !props.item.lastCheckedAt && (
-  (props.item.type === 'local_project' && props.item.displayReason === '尚未授权本地工作区。') ||
-  (props.item.type === 'mcp' && props.item.displayReason === '需要运行连接诊断。') ||
-  (props.item.type === 'github' && props.item.displayReason === '当前没有可用的 GitHub 连接。')
-))
-const status = computed(() => props.loading ? 'diagnosing' : unchecked.value ? 'disabled' : props.item.status)
-const label = computed(() => props.loading ? '检查中' : unchecked.value ? (props.item.diagnosable ? '待检查' : '未连接') : undefined)
+const presentation = computed(() => connectionStatusPresentation(props.item, props.loading))
+const canDiagnose = computed(() => connectionCanDiagnose(props.item))
+const actionTarget = computed(() => props.item.actionTarget || (normalizeConnectionStatus(props.item) === 'disabled'
+  ? `/advanced-settings?tab=${props.item.type === 'local_project' ? 'cli' : 'mcp'}`
+  : undefined))
+const actionLabel = computed(() => props.item.actionTarget ? props.item.nextAction
+  : normalizeConnectionStatus(props.item) === 'disabled' ? '查看连接设置' : props.item.nextAction)
 
 function formatTime(value?: string | null) {
   if (!value) return '尚未诊断'
@@ -42,21 +41,21 @@ function formatTime(value?: string | null) {
   <article class="connection-card" :data-connection-id="item.id" :aria-busy="loading">
     <span class="connection-icon" aria-hidden="true"><component :is="icon" :size="23" :stroke-width="1.7" /></span>
     <div class="connection-info">
-      <header><h3>{{ item.name }}</h3><StatusBadge :status="status" :label="label" /></header>
+      <header><h3>{{ item.name }}</h3><StatusBadge :status="presentation.status" :label="presentation.label" /></header>
       <p class="connection-reason">{{ item.displayReason }}</p>
       <ul v-if="item.capabilities.length" class="capabilities" aria-label="允许能力"><li v-for="capability in item.capabilities" :key="capability">{{ capability }}</li></ul>
       <details class="connection-details"><summary>连接详情</summary><dl>
         <div><dt>类型</dt><dd>{{ item.type }}</dd></div>
         <div><dt>最后诊断</dt><dd>{{ formatTime(item.lastCheckedAt) }}</dd></div>
-        <div v-if="!item.diagnosable && !item.actionTarget"><dt>下一步</dt><dd>{{ item.nextAction }}</dd></div>
+        <div v-if="!canDiagnose && !actionTarget"><dt>下一步</dt><dd>{{ item.nextAction }}</dd></div>
       </dl></details>
       <p v-if="error" class="card-error" role="alert">{{ error }}</p>
     </div>
     <footer class="connection-actions">
-      <AppButton v-if="item.diagnosable" variant="secondary" :loading="loading" @click="$emit('diagnose', item)">
+      <AppButton v-if="canDiagnose" variant="secondary" :loading="loading" @click="$emit('diagnose', item)">
         {{ loading ? '诊断中…' : '运行连接诊断' }}
       </AppButton>
-      <RouterLink v-else-if="item.actionTarget" class="action-link" :to="item.actionTarget">{{ item.nextAction }}<ArrowUpRight :size="15" aria-hidden="true" /></RouterLink>
+      <RouterLink v-else-if="actionTarget" class="action-link" :to="actionTarget">{{ actionLabel }}<ArrowUpRight :size="15" aria-hidden="true" /></RouterLink>
     </footer>
   </article>
 </template>

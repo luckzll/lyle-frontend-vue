@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Bell, CalendarDays, CheckCheck, ChevronDown, ClipboardList, MessageSquare, Plus, RefreshCw } from '@lucide/vue'
 import {
   createAgentTodo,
@@ -32,6 +33,13 @@ const TASK_SOURCE_LABELS: Record<TaskDataSource, string> = {
   reminders: '提醒'
 }
 
+const route = useRoute()
+const router = useRouter()
+const focusedTodoId = computed(() => {
+  const raw = Array.isArray(route.query.taskId) ? route.query.taskId[0] : route.query.taskId
+  const id = Number(raw)
+  return Number.isInteger(id) && id > 0 ? id : null
+})
 const todos = ref<AgentTodoItem[]>([])
 const calendar = ref<AgentCalendarItem[]>([])
 const reminders = ref<AgentReminderItem[]>([])
@@ -100,7 +108,9 @@ const visibleTodos = computed(() => {
           : activeTab.value === 'cancelled'
             ? todos.value.filter((item) => item.status === 'cancelled')
             : todos.value
-  return sortTodos(dedupeTodos(source))
+  // Keep the requested item even when another task has identical display text.
+  const requested = source.find((item) => item.id === focusedTodoId.value)
+  return sortTodos(dedupeTodos(requested ? [requested, ...source.filter((item) => item !== requested)] : source))
 })
 
 const unreadReminders = computed(() => reminders.value.filter((item) => item.status !== 'read'))
@@ -125,6 +135,31 @@ const weekDueTodos = computed(() => openTodos.value.filter((item) => isInDateWin
 const calendarTotal = computed(() => calendarScope.value === 'week' ? weekDueTodos.value.length : selectedDayTotal.value)
 
 onMounted(refresh)
+
+watch([() => route.query.taskId, () => route.query.create], () => { void applyTaskRouteIntent() })
+
+async function applyTaskRouteIntent() {
+  if (!hasLoaded.value || loading.value) return
+  if (route.query.create === '1') {
+    const query = { ...route.query }
+    delete query.create
+    await router.replace({ path: route.path, query, hash: route.hash })
+    await openTodoCreator()
+    return
+  }
+  const id = focusedTodoId.value
+  if (!id || sourceErrors.value.todos) return
+  const item = todos.value.find((todo) => todo.id === id)
+  if (!item) {
+    showNotice('该待办已删除或不在当前任务列表中。')
+    return
+  }
+  if (!visibleTodos.value.some((todo) => todo.id === id)) activeTab.value = 'all'
+  await nextTick()
+  const target = document.querySelector<HTMLElement>(`[data-todo-id="${id}"]`)
+  target?.scrollIntoView({ block: 'center', behavior: 'auto' })
+  target?.focus({ preventScroll: true })
+}
 
 async function refresh(showLoading = true) {
   if (showLoading) loading.value = true
@@ -167,6 +202,7 @@ async function refresh(showLoading = true) {
     hasLoaded.value = true
   } finally {
     if (showLoading) loading.value = false
+    await applyTaskRouteIntent()
   }
 }
 
@@ -669,7 +705,7 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
               <button v-else class="text-action" type="button" @click="openTodoCreator">新建待办</button>
             </section>
             <div v-else class="todo-list">
-          <div v-for="item in visibleTodos" :key="item.id" class="task-row" :class="{ disabled: item.status !== 'open', danger: isOverdue(item), pending: isToday(item.dueAt) }">
+          <div v-for="item in visibleTodos" :key="item.id" class="task-row" :class="{ disabled: item.status !== 'open', danger: isOverdue(item), pending: isToday(item.dueAt), 'task-row--source': focusedTodoId === item.id }" :data-todo-id="item.id" :tabindex="focusedTodoId === item.id ? -1 : undefined">
           <div class="task-copy">
             <strong>
               {{ item.title }}
@@ -998,6 +1034,8 @@ function setTodoDueEdit(item: AgentTodoItem, event: Event) {
 .task-row .inline-input { grid-column: 1 / -1; width: 100%; min-width: 0; max-width: 100%; min-height: 34px; box-sizing: border-box; padding: 6px 9px; font-size: 12px; }
 .task-row .inline, .calendar-agenda-item .inline { min-height: 32px; padding: 6px 10px; font-size: 12px; }
 .task-row.disabled { opacity: .72; }
+.task-row.task-row--source { background: var(--primary-soft, #eef2ff); border-radius: var(--radius-md); box-shadow: 0 0 0 2px var(--primary-border, #c7d2fe); padding-inline: 12px; opacity: 1; }
+.task-row.task-row--source:focus { outline: 2px solid var(--primary); outline-offset: 3px; }
 .todo-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 42px 16px; text-align: center; }
 .todo-empty > svg { margin-bottom: 3px; color: var(--primary); opacity: .7; }
 .todo-empty h3 { margin: 0; font-size: 17px; }

@@ -22,7 +22,7 @@ describe('dashboard adapter', () => {
     vi.clearAllMocks()
   })
 
-  it('aggregates successful sources, puts urgent work first, and keeps only the five newest results', async () => {
+  it('aggregates successful sources, links urgent tasks directly, and keeps the three newest results', async () => {
     const briefing = createBriefing({
       todayFocus: ['推进今日到期任务：今日任务', '整理发布范围'],
       overdueTasks: [createTask(1, '逾期任务', '2026-07-10T08:00:00.000Z')],
@@ -54,10 +54,12 @@ describe('dashboard adapter', () => {
     ])
     expect(viewModel.actionItems.map((item) => item.kind)).toEqual([
       'confirmation',
-      'connection',
-      'execution'
+      'execution',
+      'connection'
     ])
-    expect(viewModel.recentResults.map((item) => item.id)).toEqual([7, 6, 5, 4, 3])
+    expect(viewModel.todayFocus[0]?.target).toBe('/tasks?taskId=1')
+    expect(viewModel.recentResults.map((item) => item.id)).toEqual([7, 6, 5])
+    expect(viewModel.activeProjects[0]?.nextStep).not.toContain('整理发布范围')
     expect(viewModel.partialFailure).toBe(false)
     expect(viewModel.allFailed).toBe(false)
     expect(viewModel.confirmedEmpty).toBe(false)
@@ -117,6 +119,47 @@ describe('dashboard adapter', () => {
     expect(viewModel.allFailed).toBe(false)
     expect(Object.values(viewModel.sources).every((source) => source.status === 'ready')).toBe(true)
   })
+
+  it('uses full source totals even when six confirmations displace execution rows', async () => {
+    api.getTodayBriefing.mockResolvedValue({ data: createBriefing({ counts: { overdue: 28, dueToday: 13, pending: 24 } }) })
+    api.listConfirmations.mockResolvedValue({ data: { items: Array.from({ length: 6 }, (_, i) => createConfirmation(i)), total: 24 } })
+    api.listExecutionResults.mockResolvedValue({ data: { items: [createResult(1, 'failed', '2026-07-11T08:00:00Z')], hasMore: true,
+      statusCounts: { completed: 80, failed: 17, partial: 2, awaiting_confirmation: 0 } } })
+    api.listRecommendedConnections.mockResolvedValue({ data: { items: [] } })
+    const model = await getDashboardViewModel()
+    expect(model.actionItems).toHaveLength(6)
+    expect(model.actionItems.every(item => item.kind === 'confirmation')).toBe(true)
+    expect(model.counts).toEqual({ overdue: 28, dueToday: 13, pending: 24, failed: 17 })
+  })
+
+  it('keeps setup and unchecked connectors out of attention while retaining true failures', async () => {
+    api.getTodayBriefing.mockResolvedValue({ data: createBriefing() })
+    api.listConfirmations.mockResolvedValue({ data: { items: [], total: 0 } })
+    api.listExecutionResults.mockResolvedValue({ data: { items: [], hasMore: false } })
+    api.listRecommendedConnections.mockResolvedValue({ data: { items: [
+      { ...createConnection('local', 'unavailable'), type: 'local_project', displayReason: '尚未授权本地工作区。', lastCheckedAt: null },
+      { ...createConnection('mcp', 'unavailable'), type: 'mcp', displayReason: '需要运行连接诊断。', lastCheckedAt: null },
+      { ...createConnection('github-setup', 'not_configured'), configured: false },
+      { ...createConnection('disabled', 'disabled'), configured: true },
+      { ...createConnection('failed', 'unavailable'), displayReason: '连接超时', lastCheckedAt: null },
+      createConnection('auth-expired', 'reauthorize_required')
+    ] } })
+    const model = await getDashboardViewModel()
+    expect(model.actionItems.map(item => item.id)).toEqual(['connection-failed', 'connection-auth-expired'])
+  })
+
+  it('shows unavailable and legacy paginated counts as unknown instead of zero', async () => {
+    const { counts: _counts, ...legacy } = createBriefing()
+    api.getTodayBriefing.mockResolvedValue({ data: legacy })
+    api.listConfirmations.mockRejectedValue(new Error('unavailable'))
+    api.listExecutionResults.mockResolvedValue({ data: { items: [], hasMore: true } })
+    api.listRecommendedConnections.mockResolvedValue({ data: { items: [] } })
+    const model = await getDashboardViewModel()
+    expect(model.counts).toEqual({ dueToday: null, overdue: null, pending: null, failed: null })
+    expect(model.partialFailure).toBe(true)
+    api.listExecutionResults.mockRejectedValue(new Error('unavailable'))
+    expect((await getDashboardViewModel()).counts.failed).toBeNull()
+  })
 })
 
 function createBriefing(overrides: Partial<DailyBriefing> = {}): DailyBriefing {
@@ -131,6 +174,7 @@ function createBriefing(overrides: Partial<DailyBriefing> = {}): DailyBriefing {
     dueTasks: [],
     overdueTasks: [],
     pendingOperations: [],
+    counts: { dueToday: 0, overdue: 0, pending: 0 },
     createdAt: '2026-07-11T08:00:00.000Z',
     ...overrides
   }

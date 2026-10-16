@@ -9,7 +9,7 @@ import ErrorState from '@/components/feedback/ErrorState.vue'
 import LoadingState from '@/components/feedback/LoadingState.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import AppButton from '@/components/ui/AppButton.vue'
-import { statusPresentation } from '@/domain/status'
+import { connectionCanDiagnose, connectionNeedsAttention, connectionStatusPresentation, normalizeConnectionStatus } from '@/domain/connection-status'
 
 const items = ref<ConnectionDiagnostic[]>([])
 const checking = ref<Record<string, boolean>>({})
@@ -20,17 +20,18 @@ const query = ref('')
 const filter = ref<'all' | 'healthy' | 'attention'>('all')
 const filterControls = ref<HTMLElement | null>(null)
 const diagnosticNotice = ref('')
-const healthyCount = computed(() => items.value.filter(item => item.status === 'healthy').length)
+const healthyCount = computed(() => items.value.filter(item => normalizeConnectionStatus(item) === 'healthy').length)
+const attentionCount = computed(() => items.value.filter(connectionNeedsAttention).length)
 const isChecking = computed(() => Object.values(checking.value).some(Boolean))
 const filters = computed(() => [
   { id: 'all' as const, label: '全部', count: items.value.length },
   { id: 'healthy' as const, label: '已连接', count: healthyCount.value },
-  { id: 'attention' as const, label: '待处理', count: items.value.length - healthyCount.value }
+  { id: 'attention' as const, label: '待处理', count: attentionCount.value }
 ])
 const visibleItems = computed(() => {
   const term = query.value.trim().toLocaleLowerCase()
   return items.value.filter(item => {
-    const statusMatches = filter.value === 'all' || (filter.value === 'healthy' ? item.status === 'healthy' : item.status !== 'healthy')
+    const statusMatches = filter.value === 'all' || (filter.value === 'healthy' ? normalizeConnectionStatus(item) === 'healthy' : connectionNeedsAttention(item))
     return statusMatches && (!term || [item.name, item.type, ...item.capabilities].join(' ').toLocaleLowerCase().includes(term))
   })
 })
@@ -56,7 +57,7 @@ async function load() {
 }
 
 async function diagnose(item: ConnectionDiagnostic) {
-  if (!item.diagnosable || checking.value[item.id] || pageLoading.value) return
+  if (!connectionCanDiagnose(item) || checking.value[item.id] || pageLoading.value) return
   const triggerElement = document.activeElement
   const startedWithCardFocus = triggerElement?.closest<HTMLElement>('[data-connection-id]')?.dataset.connectionId === item.id
   checking.value = { ...checking.value, [item.id]: true }
@@ -71,7 +72,7 @@ async function diagnose(item: ConnectionDiagnostic) {
     const index = items.value.findIndex((candidate) => candidate.id === item.id)
     if (index >= 0) items.value[index] = response.data
     const hiddenByFilter = !visibleItems.value.some(candidate => candidate.id === item.id)
-    diagnosticNotice.value = `${item.name}：${statusPresentation(response.data.status).label}。${hiddenByFilter ? '状态已更新，可在“全部”中查看。' : response.data.displayReason}`
+    diagnosticNotice.value = `${item.name}：${connectionStatusPresentation(response.data).label}。${hiddenByFilter ? '状态已更新，可在“全部”中查看。' : response.data.displayReason}`
     if (focusedThisCard && hiddenByFilter) {
       await nextTick()
       if (document.activeElement === document.body || document.activeElement === focusedElement) {

@@ -8,8 +8,6 @@ import {
   Clock3,
   FolderKanban,
   Inbox,
-  ListTodo,
-  MessageCircle,
   Play,
   Plus,
   RefreshCw,
@@ -97,9 +95,9 @@ const lastUpdated = computed(() => {
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 })
 
-const overdueCount = computed(() => dashboard.value?.todayFocus.filter((item) => item.tone === 'danger').length || 0)
-const confirmationCount = computed(() => dashboard.value?.actionItems.filter((item) => item.kind === 'confirmation').length || 0)
-const failedResultCount = computed(() => dashboard.value?.actionItems.filter((item) => item.kind === 'execution' && item.tone === 'danger').length || 0)
+const overdueCount = computed(() => dashboard.value?.counts.overdue ?? null)
+const confirmationCount = computed(() => dashboard.value?.counts.pending ?? null)
+const failedResultCount = computed(() => dashboard.value?.counts.failed ?? null)
 const upcomingMissions = computed(() => (missionDigest.value?.items || [])
   .filter((item) => item.status === 'ACTIVE')
   .sort((left, right) => new Date(left.nextRunAt || left.expiresAt).getTime() - new Date(right.nextRunAt || right.expiresAt).getTime())
@@ -145,22 +143,16 @@ async function refresh() {
 async function submitChatDraft() {
   const draft = chatDraft.value.trim()
   if (!draft) return
-  workspace.stageChatDraft(draft, selectedProject.value, 'dashboard')
+  workspace.stageChatDraft(draft, selectedProject.value, 'dashboard', { autoSubmit: true })
   recordProductEvent('quick_intent_submitted', 'freeform')
   chatDraft.value = ''
-  await router.push({ name: 'chat' })
+  await router.push({ name: 'chat', query: { newChat: '1' } })
 }
 
 async function startQuickIntent(intentId: WorkspaceQuickIntentId) {
   workspace.stageQuickIntent(intentId, selectedProject.value, 'dashboard')
   recordProductEvent('quick_intent_submitted', intentId)
-  await router.push({ name: 'chat' })
-}
-
-async function startBlankChat() {
-  workspace.stageChatDraft('', selectedProject.value, 'dashboard')
-  recordProductEvent('dashboard_action_clicked', 'start_chat')
-  await router.push({ name: 'chat' })
+  await router.push({ name: 'chat', query: { newChat: '1' } })
 }
 
 function recordProductEvent(eventType: string, actionType?: string) {
@@ -207,9 +199,8 @@ function actionKindLabel(kind: string) {
   <section class="page dashboard-page" :aria-busy="loading">
     <header class="dashboard-header">
       <div>
-        <p class="page-kicker">个人 AI 工作台</p>
-        <h1>工作台</h1>
-        <p class="page-description">先看今天最值得处理的事，再继续推进。</p>
+        <h1>{{ greeting }}</h1>
+        <p class="page-description">{{ todayLabel }} · 先处理重要事项，再开始新的工作。</p>
       </div>
       <button class="refresh-button" type="button" :disabled="loading" @click="refresh">
         <RefreshCw :size="16" :class="{ spinning: loading }" aria-hidden="true" />
@@ -221,25 +212,23 @@ function actionKindLabel(kind: string) {
       <span v-for="index in 3" :key="index" aria-hidden="true" />
     </nav>
     <nav v-else-if="dashboard && !dashboard.allFailed" class="priority-summary" aria-label="关键状态">
-      <RouterLink class="priority-chip danger" to="/tasks">
-        <strong>{{ overdueCount }}</strong><span>个逾期</span>
+      <RouterLink class="priority-chip" :class="{ danger: overdueCount !== null && overdueCount > 0 }" to="/tasks">
+        <strong>{{ overdueCount ?? '未知' }}</strong><span>{{ overdueCount === null ? '逾期数量' : '个逾期' }}</span>
       </RouterLink>
-      <RouterLink class="priority-chip warning" to="/execution-center?view=confirmations">
-        <strong>{{ confirmationCount }}</strong><span>个待确认</span>
+      <RouterLink class="priority-chip" :class="{ warning: confirmationCount !== null && confirmationCount > 0 }" to="/execution-center?view=confirmations">
+        <strong>{{ confirmationCount ?? '未知' }}</strong><span>{{ confirmationCount === null ? '待确认数量' : '个待确认' }}</span>
       </RouterLink>
-      <RouterLink class="priority-chip danger" to="/execution-center?view=attention">
-        <strong>{{ failedResultCount }}</strong><span>个失败结果</span>
+      <RouterLink class="priority-chip" :class="{ danger: failedResultCount !== null && failedResultCount > 0 }" to="/execution-center?view=attention">
+        <strong>{{ failedResultCount ?? '未知' }}</strong><span>{{ failedResultCount === null ? '失败结果数量' : '个失败结果' }}</span>
       </RouterLink>
-      <RouterLink v-if="missionEnabled" class="priority-chip warning" to="/exceptions">
+      <RouterLink v-if="missionEnabled" class="priority-chip" :class="{ warning: missionExceptions.length > 0 }" to="/exceptions">
         <strong>{{ missionExceptions.length }}</strong><span>个委托异常</span>
       </RouterLink>
     </nav>
 
     <section class="command-card" aria-labelledby="dashboard-greeting">
       <div class="greeting-copy">
-        <p>{{ todayLabel }}</p>
-        <h2 id="dashboard-greeting">{{ greeting }}</h2>
-        <span>今天想推进什么？告诉 Lyle 目标，或从一个常用意图开始。</span>
+        <h2 id="dashboard-greeting">今天想推进什么？</h2>
       </div>
 
       <form class="chat-composer" @submit.prevent="submitChatDraft">
@@ -247,7 +236,7 @@ function actionKindLabel(kind: string) {
         <textarea
           id="dashboard-chat-draft"
           v-model="chatDraft"
-          rows="2"
+          rows="1"
           placeholder="例如：整理本周发布计划，指出仍未解决的风险……"
           @keydown.meta.enter.prevent="submitChatDraft"
           @keydown.ctrl.enter.prevent="submitChatDraft"
@@ -255,9 +244,9 @@ function actionKindLabel(kind: string) {
         <div class="composer-footer">
           <label class="project-context">
             <FolderKanban :size="15" aria-hidden="true" />
-            <span class="sr-only">关联项目</span>
+            <span class="sr-only">关联项目计划</span>
             <select v-model="selectedProjectId" aria-label="关联项目">
-              <option :value="null">不关联项目</option>
+              <option :value="null">不关联项目计划</option>
               <option v-for="project in dashboard?.activeProjects || []" :key="project.id" :value="project.id">
                 {{ project.name }}
               </option>
@@ -282,6 +271,7 @@ function actionKindLabel(kind: string) {
           <Sparkles :size="14" aria-hidden="true" />
           {{ WORKSPACE_QUICK_INTENTS[intentId].label }}
         </button>
+        <small>选择后可在聊天中编辑</small>
       </div>
     </section>
 
@@ -377,7 +367,7 @@ function actionKindLabel(kind: string) {
               <p class="panel-kicker">优先处理</p>
               <h2 id="today-focus-title">今日重点</h2>
             </div>
-            <RouterLink to="/tasks">查看任务 <ArrowRight :size="14" aria-hidden="true" /></RouterLink>
+            <div class="panel-actions"><RouterLink to="/tasks?create=1"><Plus :size="14" aria-hidden="true" />新建任务</RouterLink><RouterLink to="/tasks">全部任务 <ArrowRight :size="14" aria-hidden="true" /></RouterLink></div>
           </header>
 
           <div v-if="dashboard.todayFocus.length" class="item-list">
@@ -438,7 +428,7 @@ function actionKindLabel(kind: string) {
           <div v-else class="section-state success-state">
             <Sparkles :size="20" aria-hidden="true" />
             <strong>暂时没有待处理事项</strong>
-            <span>确认、连接异常和失败结果会集中出现在这里。</span>
+            <span>需要你确认的操作、执行失败和连接故障会显示在这里。</span>
           </div>
         </section>
 
@@ -476,19 +466,19 @@ function actionKindLabel(kind: string) {
         <section class="panel-card" aria-labelledby="active-projects-title">
           <header class="panel-header">
             <div>
-              <p class="panel-kicker">共同上下文</p>
-              <h2 id="active-projects-title">活跃项目</h2>
+              <p class="panel-kicker">最近更新</p>
+              <h2 id="active-projects-title">项目计划</h2>
             </div>
-            <RouterLink to="/projects">全部项目 <ArrowRight :size="14" aria-hidden="true" /></RouterLink>
+            <RouterLink to="/projects">全部计划 <ArrowRight :size="14" aria-hidden="true" /></RouterLink>
           </header>
 
           <div v-if="dashboard.activeProjects.length" class="item-list">
-            <RouterLink v-for="project in dashboard.activeProjects" :key="project.id" class="project-item" :to="project.target">
+            <RouterLink v-for="project in dashboard.activeProjects.slice(0, 3)" :key="project.id" class="project-item" :to="project.target">
               <span class="project-icon"><FolderKanban :size="18" aria-hidden="true" /></span>
               <span class="item-copy">
                 <span class="project-title-row"><strong>{{ project.name }}</strong><small>{{ formatRelativeTime(project.updatedAt) }}</small></span>
                 <small>{{ project.stage }}</small>
-                <span>{{ project.nextStep }}</span>
+                <span v-if="project.nextStep">{{ project.nextStep }}</span>
               </span>
               <ArrowRight :size="16" aria-hidden="true" />
             </RouterLink>
@@ -500,43 +490,13 @@ function actionKindLabel(kind: string) {
           </div>
           <div v-else class="section-state">
             <FolderKanban :size="20" aria-hidden="true" />
-            <strong>还没有活跃项目</strong>
+            <strong>还没有项目计划</strong>
             <RouterLink class="text-link" to="/projects">创建第一个项目</RouterLink>
           </div>
         </section>
       </div>
 
-      <section v-if="!dashboard.allFailed" class="quick-actions" aria-labelledby="quick-actions-title">
-        <header>
-          <div>
-            <p class="panel-kicker">继续推进</p>
-            <h2 id="quick-actions-title">快捷动作</h2>
-          </div>
-          <span v-if="lastUpdated">更新于 {{ lastUpdated }}</span>
-        </header>
-        <div class="quick-action-grid">
-          <button type="button" @click="startBlankChat">
-            <span><MessageCircle :size="19" aria-hidden="true" /></span>
-            <strong>开始对话</strong>
-            <small>从当前上下文继续</small>
-          </button>
-          <RouterLink to="/tasks">
-            <span><ListTodo :size="19" aria-hidden="true" /></span>
-            <strong>创建任务</strong>
-            <small>记录下一步行动</small>
-          </RouterLink>
-          <button type="button" @click="startQuickIntent('inspect')">
-            <span><Play :size="19" aria-hidden="true" /></span>
-            <strong>运行巡检</strong>
-            <small>查找风险和阻塞</small>
-          </button>
-          <RouterLink to="/automations">
-            <span><Workflow :size="19" aria-hidden="true" /></span>
-            <strong>创建自动化</strong>
-            <small>让结果持续交付</small>
-          </RouterLink>
-        </div>
-      </section>
+      <footer v-if="!dashboard.allFailed" class="dashboard-footer"><span v-if="lastUpdated">更新于 {{ lastUpdated }}</span><RouterLink to="/automations?create=1">创建自动化 <ArrowRight :size="14" aria-hidden="true" /></RouterLink><RouterLink to="/connections">管理连接 <ArrowRight :size="14" aria-hidden="true" /></RouterLink></footer>
     </template>
   </section>
 </template>
@@ -546,7 +506,7 @@ function actionKindLabel(kind: string) {
   width: 100%;
   max-width: 1240px;
   margin: 0 auto;
-  gap: 20px;
+  gap: 16px;
   padding-bottom: 32px;
   color: var(--foreground);
 }
@@ -574,7 +534,7 @@ function actionKindLabel(kind: string) {
 }
 
 .dashboard-header h1 {
-  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  font-size: clamp(1.35rem, 2.5vw, 1.75rem);
   letter-spacing: -0.035em;
 }
 
@@ -613,25 +573,25 @@ function actionKindLabel(kind: string) {
 }
 
 .priority-summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .priority-chip {
   display: flex;
   min-width: 0;
-  min-height: 48px;
+  min-height: 34px;
   align-items: baseline;
   gap: 6px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--surface);
   color: var(--foreground);
-  padding: 10px 14px;
+  padding: 6px 12px;
 }
 
-.priority-chip strong { font-size: 21px; line-height: 1; }
+.priority-chip strong { font-size: 16px; line-height: 1; color: var(--muted-foreground); }
 .priority-chip span { overflow: hidden; color: var(--muted-foreground); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .priority-chip.danger strong { color: var(--danger-strong); }
 .priority-chip.warning strong { color: var(--warning-strong); }
@@ -645,7 +605,7 @@ function actionKindLabel(kind: string) {
   background:
     radial-gradient(circle at 92% 0%, color-mix(in srgb, var(--lyle-color-indigo-200) 72%, transparent), transparent 34%),
     linear-gradient(145deg, var(--lyle-color-white) 18%, color-mix(in srgb, var(--accent) 55%, var(--surface)) 100%);
-  padding: clamp(14px, 2.5vw, 22px);
+  padding: clamp(14px, 2vw, 18px);
   box-shadow: 0 14px 38px color-mix(in srgb, var(--lyle-color-indigo-800) 8%, transparent);
 }
 
@@ -661,7 +621,7 @@ function actionKindLabel(kind: string) {
 }
 
 .greeting-copy h2 {
-  font-size: clamp(1.4rem, 3vw, 1.75rem);
+  font-size: 16px;
   letter-spacing: -0.035em;
 }
 
@@ -674,7 +634,7 @@ function actionKindLabel(kind: string) {
 
 .chat-composer {
   overflow: hidden;
-  margin-top: 14px;
+  margin-top: 10px;
   border: 1px solid var(--lyle-color-slate-300);
   border-radius: 14px;
   background: color-mix(in srgb, var(--surface) 94%, transparent);
@@ -689,7 +649,7 @@ function actionKindLabel(kind: string) {
   background: transparent;
   color: var(--lyle-color-slate-900);
   line-height: 1.55;
-  padding: 12px 14px;
+  padding: 10px 14px;
   outline: 0;
 }
 
@@ -780,7 +740,14 @@ function actionKindLabel(kind: string) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+  align-items: start;
 }
+
+.panel-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px 12px; }
+.panel-actions a, .dashboard-footer a { display: inline-flex; align-items: center; gap: 4px; color: var(--primary); font-size: 12px; font-weight: 600; }
+.dashboard-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px 20px; color: var(--muted-foreground); font-size: 12px; }
+.dashboard-footer > span { margin-right: auto; }
+.intent-list small { font-size: 11px; color: var(--muted-foreground); }
 
 .panel-card,
 .quick-actions,
@@ -1358,6 +1325,9 @@ function actionKindLabel(kind: string) {
     flex: 1 1 calc(50% - 4px);
     justify-content: center;
   }
+
+  .intent-list > span { display: none; }
+  .intent-list small { flex-basis: 100%; white-space: normal; }
 
   .list-item {
     grid-template-columns: minmax(0, 1fr) auto;

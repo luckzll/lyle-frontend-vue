@@ -32,6 +32,8 @@ export interface WorkspaceChatHandoff {
   project: WorkspaceProjectContext | null
   source: 'dashboard' | 'project' | 'unknown'
   createdAt: number
+  /** Only an explicit dashboard submission may send an in-memory draft. */
+  autoSubmit?: boolean
 }
 
 export interface WorkspaceAutomationHandoff {
@@ -66,14 +68,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   function stageChatDraft(
     draft: string,
     project: WorkspaceProjectContext | null = null,
-    source: WorkspaceChatHandoff['source'] = 'unknown'
+    source: WorkspaceChatHandoff['source'] = 'unknown',
+    options: { autoSubmit?: boolean } = {}
   ) {
     clearPersistedQuickIntent()
     pendingChat.value = {
       draft: draft.trim(),
       project: normalizeProject(project),
       source,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      ...(source === 'dashboard' && options.autoSubmit === true ? { autoSubmit: true } : {})
     }
   }
 

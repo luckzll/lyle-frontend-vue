@@ -111,6 +111,17 @@ async function collapseTemplates() {
   browseButton.value?.scrollIntoView({ block: 'nearest', behavior: 'auto' })
 }
 
+async function consumeCreateRequest() {
+  if (route.query.create !== '1' || pageLoading.value || loadError.value) return
+  const query = { ...route.query }
+  delete query.create
+  await router.replace({ path: route.path, query, hash: route.hash })
+  // Opening the existing catalog creates no draft and never runs an automation.
+  await browseTemplates()
+}
+
+watch(() => route.query.create, () => { void consumeCreateRequest() })
+
 function startProject(templateId?: string) {
   void router.push({ path: '/projects', query: { create: '1', from: 'automations', ...(templateId ? { templateId } : {}) } })
 }
@@ -175,6 +186,7 @@ async function load() {
     loadError.value = requestMessage(error, '自动化数据加载失败，请确认 AI 服务可用后重试。')
   } finally {
     pageLoading.value = false
+    await consumeCreateRequest()
   }
 }
 

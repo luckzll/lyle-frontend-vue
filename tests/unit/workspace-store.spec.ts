@@ -60,6 +60,25 @@ describe('workspace store chat handoff', () => {
     })
   })
 
+  it('only auto-submits an explicit dashboard draft once and never restores that authorization', () => {
+    const store = useWorkspaceStore()
+    store.stageChatDraft('开始整理本周风险', null, 'dashboard', { autoSubmit: true })
+    expect(store.consumeChatDraft()).toEqual(expect.objectContaining({ autoSubmit: true, source: 'dashboard' }))
+    expect(store.consumeChatDraft()).toBeNull()
+    expect(storage.length).toBe(0)
+
+    store.stageChatDraft('来自项目页的可编辑草稿', null, 'project', { autoSubmit: true })
+    expect(store.consumeChatDraft()?.autoSubmit).not.toBe(true)
+
+    store.stageQuickIntent('make-plan')
+    expect(store.consumeChatDraft()?.autoSubmit).not.toBe(true)
+    store.stageQuickIntent('inspect')
+    const safePreset = JSON.parse(storage.getItem(SESSION_KEY)!)
+    storage.setItem(SESSION_KEY, JSON.stringify({ ...safePreset, autoSubmit: true }))
+    setActivePinia(createPinia())
+    expect(useWorkspaceStore().consumeChatDraft()?.autoSubmit).not.toBe(true)
+  })
+
   it('returns a handoff once and clears both Pinia and sessionStorage after consumption', () => {
     const store = useWorkspaceStore()
     store.stageQuickIntent('make-plan', { id: 7, name: 'V4.2' }, 'project')

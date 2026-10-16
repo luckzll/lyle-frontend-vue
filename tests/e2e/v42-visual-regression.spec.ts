@@ -16,11 +16,11 @@ for (const viewport of viewports) {
     await mockDashboard(page)
     await page.goto('/dashboard')
 
-    await expect(page.getByRole('heading', { level: 1, name: '工作台' })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: /视觉验收用户/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: '今日重点' })).toBeVisible()
     await expect(page.getByRole('heading', { name: '待我处理' })).toBeVisible()
     await expect(page.getByRole('heading', { name: '最近结果' })).toBeVisible()
-    await expect(page.getByRole('heading', { name: '活跃项目' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '项目计划' })).toBeVisible()
     await expect.poll(() => page.evaluate(() => document.fonts.status)).toBe('loaded')
 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)
@@ -141,9 +141,11 @@ async function mockDashboard(page: Page) {
       updatedAt: FIXED_NOW
     }],
     pendingOperations: [],
+    counts: { dueToday: 1, overdue: 1, pending: 1 },
     createdAt: FIXED_NOW
   }))
   await page.route('**/api/experience/confirmations**', (route) => json(route, {
+    total: 1,
     items: [{
       pendingOperationId: 91,
       actionTitle: '发布 V4.2 到生产环境',
@@ -157,6 +159,8 @@ async function mockDashboard(page: Page) {
     }]
   }))
   await page.route('**/api/experience/execution/results**', (route) => json(route, {
+    hasMore: false,
+    statusCounts: { completed: 1, failed: 0, partial: 0, awaiting_confirmation: 0 },
     items: [{
       id: 301,
       sourceType: 'automation',
@@ -219,6 +223,7 @@ function emptyBriefing() {
     dueTasks: [],
     overdueTasks: [],
     pendingOperations: [],
+    counts: { dueToday: 0, overdue: 0, pending: 0 },
     createdAt: FIXED_NOW
   }
 }
