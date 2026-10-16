@@ -1,3 +1,5 @@
+import type { UsageTrendPoint } from '@/api/usage'
+
 export function formatTokens(value: number) {
   return new Intl.NumberFormat('zh-CN').format(Math.max(0, Math.round(value || 0)))
 }
@@ -26,4 +28,12 @@ export function measurementLabel(value: string) {
   if (value === 'PARTIAL_ESTIMATE') return '部分估算'
   if (value === 'PENDING') return '同步中'
   return '系统估算'
+}
+
+export function hourlyUsageTrend(points: UsageTrendPoint[]): UsageTrendPoint[] {
+  const byHour = new Map(points.map((point) => [point.bucket, point]))
+  return Array.from({ length: 24 }, (_, hour) => {
+    const bucket = `${String(hour).padStart(2, '0')}:00`
+    return byHour.get(bucket) ?? { bucket, totalTokens: 0, callCount: 0 }
+  })
 }
