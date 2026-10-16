@@ -68,12 +68,26 @@ export function getUsageSummary(period: UsagePeriod) {
   return http.get<UsageSummary>('/usage/summary', { params: { period } })
 }
 
-export function getUsageByTask(period: UsagePeriod) {
-  return http.get<UsageTaskItem[]>('/usage/by-task', { params: { period } })
+export async function getUsageByTask(period: UsagePeriod) {
+  const response = await http.get<UsageTaskItem[]>('/usage/by-task', { params: { period } })
+  // The backend serializes Java Long values as strings, including usage totals.
+  response.data = response.data.map((item) => ({
+    ...item,
+    totalTokens: Number(item.totalTokens),
+    estimatedCostMicros: Number(item.estimatedCostMicros),
+    callCount: Number(item.callCount)
+  }))
+  return response
 }
 
-export function getUsageTrend(period: UsagePeriod) {
-  return http.get<UsageTrendPoint[]>('/usage/trend', { params: { period } })
+export async function getUsageTrend(period: UsagePeriod) {
+  const response = await http.get<UsageTrendPoint[]>('/usage/trend', { params: { period } })
+  response.data = response.data.map((point) => ({
+    ...point,
+    totalTokens: Number(point.totalTokens),
+    callCount: Number(point.callCount)
+  }))
+  return response
 }
 
 export function getUsageTurns(period: UsagePeriod, limit = 20) {

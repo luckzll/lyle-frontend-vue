@@ -8,6 +8,68 @@ type MockIdentity = {
   totalTokens: number
 }
 
+test('hourly usage fills gaps, exposes exact values and handles string totals', async ({ page }) => {
+  const identity = identityFor(42, '用量趋势用户', '用量趋势回归', 46_884)
+  let empty = false
+  await installLegacySession(page, identity)
+  await page.route(/^https?:\/\/[^/]+\/api\//, async (route) => {
+    const url = new URL(route.request().url())
+    const path = url.pathname.replace(/^\/api/, '')
+    if (path === '/usage/trend') {
+      return fulfill(route, empty ? [] : url.searchParams.get('period') === 'month'
+        ? [{ bucket: '10-16', totalTokens: '46884', callCount: '20' }]
+        : [
+            { bucket: '11:00', totalTokens: '39813', callCount: '16' },
+            { bucket: '15:00', totalTokens: '7071', callCount: '4' }
+          ])
+    }
+    if (path === '/usage/by-task') {
+      return fulfill(route, [
+        { taskType: 'CHAT', label: '对话回答', description: '对话', totalTokens: '42897', callCount: '16', estimatedCostMicros: '90000' },
+        { taskType: 'OTHER', label: '其他 AI 调用', description: '其他', totalTokens: '2468', callCount: '2', estimatedCostMicros: '5000' },
+        { taskType: 'INTENT', label: '意图识别', description: '意图', totalTokens: '1519', callCount: '2', estimatedCostMicros: '5000' }
+      ])
+    }
+    return fulfillV64Route(route, identity)
+  })
+  await page.goto('/settings/usage')
+  const chart = page.getByRole('group', { name: '今日 Token 用量折线图' })
+  await expect(chart.getByRole('button')).toHaveCount(24)
+  await chart.getByRole('button', { name: '11:00，39,813 Token，16 次调用', exact: true }).hover()
+  await expect(page.locator('.trend-detail')).toContainText('11:00–12:00 · 39,813 Token · 16 次调用')
+  await chart.getByRole('button', { name: '12:00，0 Token，0 次调用', exact: true }).focus()
+  await expect(page.locator('.trend-detail')).toContainText('12:00–13:00 · 0 Token · 0 次调用')
+  const line = await chart.locator('.trend-line').getAttribute('d')
+  expect(line?.match(/L /g)).toHaveLength(23)
+  const positions = line!.split(/ [ML] /).map((point) => point.replace(/^M /, '').split(' ').map(Number))
+  expect(positions.slice(12, 15).every(([, y]) => y === 150)).toBe(true)
+  expect(positions[11][1]).toBe(0)
+  await expect(page.locator('.breakdown-table tbody tr').nth(0)).toContainText('91%')
+  await expect(page.locator('.breakdown-table tbody tr').nth(1)).toContainText('5%')
+  await expect(page.locator('.breakdown-table tbody tr').nth(2)).toContainText('3%')
+  await page.mouse.click(20, 20)
+  await page.screenshot({ path: 'artifacts/usage-hourly-desktop.png', fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await chart.getByRole('button', { name: '15:00，7,071 Token，4 次调用', exact: true }).click()
+  await expect(page.locator('.trend-detail')).toContainText('15:00–16:00 · 7,071 Token · 4 次调用')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)
+  const labels = await page.locator('.trend-labels span').evaluateAll((nodes) => nodes.map((node) => {
+    const rect = node.getBoundingClientRect()
+    return { left: rect.left, right: rect.right }
+  }))
+  expect(labels.every((label, index) => index === 0 || label.left > labels[index - 1].right)).toBe(true)
+  await page.screenshot({ path: 'artifacts/usage-hourly-mobile.png', fullPage: true })
+  await page.getByRole('tab', { name: '本月', exact: true }).click()
+  const monthChart = page.getByRole('group', { name: '本月 Token 用量折线图' })
+  await expect(monthChart.locator('.trend-dot')).toHaveCount(1)
+  await expect(monthChart.getByRole('button')).toHaveCount(1)
+  empty = true
+  await page.getByRole('tab', { name: '今日', exact: true }).click()
+  await expect(chart.getByRole('button')).toHaveCount(24)
+  await expect(page.locator('.trend-detail')).toContainText('今日暂无 AI 用量')
+  await expect(chart.getByRole('button', { name: /，0 Token，0 次调用/ })).toHaveCount(24)
+})
+
 test('V6.4 refresh restores the account session after a full page reload', async ({ page }) => {
   const identity = identityFor(42, '会话恢复用户', '恢复后的私有对话', 12_340)
   let refreshCalls = 0
