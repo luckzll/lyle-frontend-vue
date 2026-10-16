@@ -186,6 +186,7 @@ export interface DailyBriefing {
   dueTasks: AgentTodoItem[]
   overdueTasks: AgentTodoItem[]
   pendingOperations: PendingOperationItem[]
+  counts?: { dueToday: number; overdue: number; pending: number }
   createdAt: string
 }
 
@@ -451,6 +452,7 @@ export interface ExecutionResultListParams {
 
 export interface ExecutionResultPage {
   items: ExecutionResultSummary[]
+  statusCounts?: Record<ExecutionResultSummary['status'], number>
   nextCursor: string | null
   hasMore: boolean
 }
@@ -497,7 +499,9 @@ export interface ConnectionDiagnostic {
   id: string
   type: string
   name: string
-  status: 'healthy' | 'reauthorize_required' | 'restricted' | 'unavailable'
+  status: 'healthy' | 'reauthorize_required' | 'restricted' | 'unavailable' | 'not_configured' | 'disabled' | 'unchecked'
+  needsAttention?: boolean
+  configured?: boolean
   displayReason: string
   nextAction: string
   actionTarget?: string

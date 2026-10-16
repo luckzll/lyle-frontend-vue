@@ -1179,7 +1179,7 @@ export function listNeedsAttention() {
 }
 
 export function listConfirmations() {
-  return http.get<{ items: ConfirmationInboxItem[] }>('/experience/confirmations')
+  return http.get<{ items: ConfirmationInboxItem[]; total?: number }>('/experience/confirmations')
 }
 
 export function getConfirmation(id: number) {

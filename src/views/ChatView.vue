@@ -433,14 +433,7 @@ const memoryKeyLabels: Record<string, string> = {
 onMounted(async () => {
   const initialEpoch = conversationEpoch
   const handoff = workspace.consumeChatDraft()
-  if (handoff) {
-    input.value = handoff.draft
-    handoffProject.value = handoff.project
-    if (handoff.project) {
-      selectedProjectId.value = String(handoff.project.id)
-      writeStoredContext(CHAT_PROJECT_STORAGE_KEY, selectedProjectId.value)
-    }
-  }
+  let handoffReady = false
   // Knowledge bases and the brief are optional context. Load them in the
   // background so a slow auxiliary request never blocks the chat surface.
   void refreshKnowledgeBases()
@@ -451,7 +444,7 @@ onMounted(async () => {
     if (viewDisposed || initialEpoch !== conversationEpoch) return
     const requestedConversationId = routeQueryText(route.query.conversationId) || undefined
     const requestedNewChat = routeQueryText(route.query.newChat)
-    const initialConversationId = requestedNewChat ? '' : resolveConversationToRestore({
+    const initialConversationId = requestedNewChat || handoff ? '' : resolveConversationToRestore({
       requestedId: requestedConversationId,
       storedId: window.localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY),
       conversationIds: conversations.value.map((item) => String(item.id)),
@@ -459,14 +452,30 @@ onMounted(async () => {
     })
     if (initialConversationId) {
       await loadConversation(initialConversationId)
-    } else if (requestedNewChat) resetNewConversation()
+    } else if (requestedNewChat || handoff) resetNewConversation()
+    handoffReady = Boolean(handoff)
     syncPendingMemoriesToLatestAssistant()
   } catch {
     error.value = '对话列表暂时无法加载，你仍然可以开始新对话。'
+    if (handoff && !viewDisposed && initialEpoch === conversationEpoch) {
+      resetNewConversation()
+      handoffReady = true
+    }
   } finally {
     initializing.value = false
     await nextTick()
-    if (handoff) composerRef.value?.focus()
+    // Apply after resetting the new conversation, which clears its composer.
+    // The handoff is already consumed; reloads and route restoration cannot resend it.
+    if (handoff && handoffReady && !viewDisposed && route.name === 'chat') {
+      input.value = handoff.draft
+      handoffProject.value = handoff.project
+      selectedProjectId.value = handoff.project ? String(handoff.project.id) : ''
+      writeStoredContext(CHAT_PROJECT_STORAGE_KEY, selectedProjectId.value)
+      composerRef.value?.focus()
+      if (handoff.autoSubmit === true && handoff.source === 'dashboard' && handoff.draft.trim()) {
+        await submit()
+      }
+    }
     if (requestedSourceMessageId()) await revealSourceMessage(requestedSourceMessageId())
     else if (conversationId.value || hasUserMessages.value) scrollToBottom(false)
     else if (chatListRef.value) chatListRef.value.scrollTop = 0

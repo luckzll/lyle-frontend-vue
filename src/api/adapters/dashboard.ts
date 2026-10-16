@@ -11,6 +11,7 @@ import type {
   ExecutionResultSummary
 } from '@/api/types'
 import { humanizeIsoDateTimes } from '@/domain/date-time'
+import { connectionNeedsAttention } from '@/domain/connection-status'
 
 export type DashboardSource = 'briefing' | 'confirmations' | 'results' | 'connections'
 export type DashboardTone = 'neutral' | 'info' | 'warning' | 'danger' | 'success'
@@ -60,10 +61,10 @@ export interface DashboardProjectItem {
 export interface DashboardViewModel {
   generatedAt: string
   counts: {
-    dueToday: number
-    overdue: number
-    pending: number
-    needsAttention: number
+    dueToday: number | null
+    overdue: number | null
+    pending: number | null
+    failed: number | null
   }
   todayFocus: DashboardFocusItem[]
   actionItems: DashboardActionItem[]
@@ -138,10 +139,14 @@ export async function getDashboardViewModel(): Promise<DashboardViewModel> {
   return {
     generatedAt: new Date().toISOString(),
     counts: {
-      dueToday: responses.briefing?.dueTasks.length ?? 0,
-      overdue: responses.briefing?.overdueTasks.length ?? 0,
-      pending: responses.confirmations.length || responses.briefing?.pendingOperations.length || 0,
-      needsAttention: actionItems.filter((item) => item.kind !== 'confirmation').length
+      dueToday: validCount(responses.briefing?.counts?.dueToday),
+      overdue: validCount(responses.briefing?.counts?.overdue),
+      pending: (settled[1].status === 'fulfilled' ? validCount(settled[1].value.data.total) : null)
+        ?? validCount(responses.briefing?.counts?.pending),
+      failed: settled[2].status === 'fulfilled'
+        ? validCount(settled[2].value.data.statusCounts?.failed)
+          ?? (settled[2].value.data.hasMore === false ? responses.results.filter(item => item.status === 'failed').length : null)
+        : null
     },
     todayFocus,
     actionItems,
@@ -162,14 +167,14 @@ function buildTodayFocus(briefing: DailyBriefing | null): DashboardFocusItem[] {
     title: task.title,
     meta: task.dueAt ? `已逾期 · ${formatDateTime(task.dueAt)}` : '已逾期',
     tone: 'danger' as const,
-    target: '/tasks'
+    target: `/tasks?taskId=${task.id}`
   }))
   const dueToday = briefing.dueTasks.map((task) => ({
     id: `due-${task.id}`,
     title: task.title,
     meta: task.dueAt ? `今日到期 · ${formatTime(task.dueAt)}` : '今日到期',
     tone: 'warning' as const,
-    target: '/tasks'
+    target: `/tasks?taskId=${task.id}`
   }))
   const taskTitles = [...briefing.overdueTasks, ...briefing.dueTasks]
     .map((task) => task.title.trim().toLocaleLowerCase())
@@ -184,7 +189,7 @@ function buildTodayFocus(briefing: DailyBriefing | null): DashboardFocusItem[] {
     target: briefing.projectId ? `/projects/${briefing.projectId}` : '/projects'
     }))
 
-  return dedupeByTitle([...overdue, ...dueToday, ...suggestions]).slice(0, 6)
+  return dedupeByTitle([...overdue, ...dueToday, ...suggestions]).slice(0, 4)
 }
 
 function buildActionItems(responses: DashboardResponses): DashboardActionItem[] {
@@ -211,7 +216,7 @@ function buildActionItems(responses: DashboardResponses): DashboardActionItem[] 
     : []
 
   const connectionIssues = responses.connections
-    .filter((item) => item.status !== 'healthy')
+    .filter(connectionNeedsAttention)
     .map((item) => ({
       id: `connection-${item.id}`,
       title: `${item.name}需要处理`,
@@ -232,13 +237,13 @@ function buildActionItems(responses: DashboardResponses): DashboardActionItem[] 
       target: '/execution-center?view=attention'
     }))
 
-  return [...confirmations, ...legacyConfirmations, ...connectionIssues, ...executionIssues].slice(0, 6)
+  return [...confirmations, ...legacyConfirmations, ...executionIssues, ...connectionIssues].slice(0, 6)
 }
 
 function buildRecentResults(results: ExecutionResultSummary[]): DashboardResultItem[] {
   return [...results]
     .sort((left, right) => dateValue(right.createdAt) - dateValue(left.createdAt))
-    .slice(0, 5)
+    .slice(0, 3)
     .map((item) => ({
       id: item.id,
       title: item.title,
@@ -263,11 +268,7 @@ function buildActiveProjects(briefing: DailyBriefing | null): DashboardProjectIt
       id: project.id,
       name: project.name,
       stage: project.currentStage || '尚未设置阶段',
-      nextStep: project.id === briefing.projectId && briefing.todayFocus[0]
-        ? briefing.todayFocus[0]
-        : project.currentStage
-          ? `继续推进：${project.currentStage}`
-          : '打开项目，补充目标和下一步',
+      nextStep: project.currentStage ? '' : '补充项目目标与阶段',
       updatedAt: project.lastActivityAt || project.updatedAt,
       target: `/projects/${project.id}`
     }))
@@ -303,6 +304,10 @@ function dateValue(value?: string | null) {
   if (!value) return 0
   const timestamp = new Date(value).getTime()
   return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
+function validCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
 function formatDateTime(value: string) {

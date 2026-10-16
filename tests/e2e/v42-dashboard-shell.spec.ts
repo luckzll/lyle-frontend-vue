@@ -50,10 +50,12 @@ const briefing = {
     }
   ],
   pendingOperations: [],
+  counts: { dueToday: 1, overdue: 1, pending: 1 },
   createdAt: NOW
 }
 
 const confirmations = {
+  total: 1,
   items: [
     {
       pendingOperationId: 91,
@@ -74,6 +76,8 @@ const confirmations = {
 }
 
 const results = {
+  hasMore: false,
+  statusCounts: { completed: 1, failed: 0, partial: 0, awaiting_confirmation: 0 },
   items: [
     {
       id: 301,
@@ -267,9 +271,11 @@ test('new chat keeps one empty state and a compact composer across breakpoints',
   expect(desktopComposerHeight).toBeLessThanOrEqual(110)
 
   await page.setViewportSize({ width: 390, height: 844 })
+  // A short viewport may scroll the starter; its last action must remain reachable.
+  await page.locator('.starter-grid > :last-child').scrollIntoViewIfNeeded()
   const mobileLayout = await page.evaluate(() => {
     const list = document.querySelector('.chat-list')?.getBoundingClientRect()
-    const starter = document.querySelector('.chat-starter')?.getBoundingClientRect()
+    const starter = document.querySelector('.starter-grid > :last-child')?.getBoundingClientRect()
     const composer = document.querySelector('.chat-input')?.getBoundingClientRect()
     return {
       listBottom: list?.bottom || 0,
@@ -340,7 +346,19 @@ test('chat uses one contained message scrollbar and keeps the composer in view',
   expect(layout.composerBottom).toBeLessThanOrEqual(layout.viewportHeight)
 })
 
-test('V4.2 dashboard presents work and hands a project draft to chat once', async ({ page }) => {
+test('dashboard presents work and submits a project request exactly once', async ({ page }) => {
+  let submissions = 0
+  await page.route('**/api/conversations', route => route.request().method() === 'POST'
+    ? fulfillJson(route, { id: 'dashboard-sent', title: '首页请求' }) : fulfillJson(route, []))
+  await page.route('**/api/chat/messages/dashboard-sent', route => fulfillJson(route, []))
+  await page.route('**/api/chat/stream', async route => {
+    submissions++
+    const request = route.request().postDataJSON()
+    expect(request.projectId).toBe(PROJECT_ID)
+    const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+    await route.fulfill({ contentType: 'text/event-stream', body:
+      frame('delta', { text: '已经开始整理发布风险。' }) + frame('turn.status', { turnId: request.turnId, phase: 'COMPLETED' }) + frame('done', { turnId: request.turnId }) })
+  })
   await page.goto('/dashboard')
 
   const focusSection = page.locator('section[aria-labelledby="today-focus-title"]')
@@ -354,7 +372,7 @@ test('V4.2 dashboard presents work and hands a project draft to chat once', asyn
   await expect(attentionSection.getByText('发布 V4.2 到生产环境')).toBeVisible()
   await expect(resultsSection.getByRole('heading', { name: '最近结果' })).toBeVisible()
   await expect(resultsSection.getByText('V4.2 设计系统巡检')).toBeVisible()
-  await expect(projectsSection.getByRole('heading', { name: '活跃项目' })).toBeVisible()
+  await expect(projectsSection.getByRole('heading', { name: '项目计划' })).toBeVisible()
   await expect(projectsSection.getByText(PROJECT_NAME)).toBeVisible()
 
   const executionNavigation = page.locator('.app-sidebar__link[href="/execution-center"]')
@@ -364,21 +382,61 @@ test('V4.2 dashboard presents work and hands a project draft to chat once', asyn
 
   const draft = '请把 Lyle V4.2 的发布风险整理成今天的执行清单'
   await page.getByLabel('关联项目').selectOption(String(PROJECT_ID))
-  await page.getByLabel('今天想推进什么？').fill(draft)
+  await page.getByRole('textbox', { name: '今天想推进什么？', exact: true }).fill(draft)
   await page.getByRole('button', { name: '开始推进' }).click()
 
-  await expect(page).toHaveURL('/')
-  expect(new URL(page.url()).search).toBe('')
+  await expect(page.locator('.message.assistant .chat-answer')).toContainText('已经开始整理发布风险。')
+  expect(submissions).toBe(1)
   expect(page.url()).not.toContain(encodeURIComponent(draft))
-  await expect(page.getByTestId('chat-input')).toHaveValue(draft)
+  await expect(page.getByTestId('chat-input')).toHaveValue('')
   await page.getByRole('button', { name: '上下文', exact: true }).click()
   await expect(page.getByRole('complementary', { name: '当前上下文' })).toContainText(PROJECT_NAME)
   expect(await page.evaluate((text) => JSON.stringify(sessionStorage).includes(text), draft)).toBe(false)
+
+  await page.reload()
+  await expect(page.getByTestId('chat-input')).toHaveValue('')
+  expect(submissions).toBe(1)
 
   await page.getByRole('link', { name: '工作台', exact: true }).click()
   await page.locator('.workspace-heading').filter({ has: page.getByRole('button', { name: '新建聊天', exact: true }) }).hover()
   await page.getByRole('button', { name: '新建聊天', exact: true }).click()
   await expect(page.getByTestId('chat-input')).toHaveValue('')
+})
+
+test('dashboard keeps optional setup quiet, full totals accurate and actions compact', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.route('**/api/experience/confirmations**', route => fulfillJson(route, { items: [], total: 0 }))
+  await page.route('**/api/briefings/today**', route => fulfillJson(route, { ...briefing, counts: { dueToday: 8, overdue: 26, pending: 0 } }))
+  await page.route('**/api/experience/execution/results**', route => fulfillJson(route, { ...results, hasMore: true,
+    statusCounts: { completed: 30, failed: 17, partial: 2, awaiting_confirmation: 0 } }))
+  await page.route('**/api/experience/connections/recommended**', route => fulfillJson(route, { items: [
+    { ...connections.items[0], id: 'setup', status: 'not_configured', configured: false, needsAttention: false },
+    { ...connections.items[0], id: 'unchecked', status: 'unchecked', needsAttention: false }
+  ] }))
+  await page.goto('/dashboard')
+  await expect(page.getByRole('navigation', { name: '关键状态' })).toContainText('26个逾期')
+  await expect(page.getByRole('navigation', { name: '关键状态' })).toContainText('17个失败结果')
+  await expect(page.getByRole('region', { name: '待我处理', exact: true })).toContainText('暂时没有待处理事项')
+  await expect(page.locator('.quick-action-grid')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '运行巡检', exact: true })).toHaveCount(1)
+  await expect(page.getByRole('link', { name: '新建任务', exact: true })).toHaveAttribute('href', '/tasks?create=1')
+  await expect(page.getByRole('link', { name: '创建自动化', exact: true })).toHaveAttribute('href', '/automations?create=1')
+  await expect(page.getByRole('link', { name: /修复导航回归/ })).toHaveAttribute('href', '/tasks?taskId=12')
+  await expect(page.getByRole('region', { name: '项目计划', exact: true })).not.toContainText('推进今日到期任务')
+  const firstTaskBottom = await page.getByRole('region', { name: '今日重点', exact: true }).locator('.focus-item').first()
+    .evaluate(element => element.getBoundingClientRect().bottom)
+  expect(firstTaskBottom).toBeLessThanOrEqual(720)
+  await page.screenshot({ path: testInfo.outputPath('dashboard-compact-desktop.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
+  await page.screenshot({ path: testInfo.outputPath('dashboard-compact-mobile.png'), fullPage: true })
+})
+
+test('dashboard never presents a failed source as zero failures', async ({ page }) => {
+  await page.route('**/api/experience/execution/results**', route => route.fulfill({ status: 503, body: '{}' }))
+  await page.goto('/dashboard')
+  await expect(page.getByRole('navigation', { name: '关键状态' })).toContainText('未知失败结果数量')
+  await expect(page.getByRole('navigation', { name: '关键状态' })).not.toContainText('0个失败结果')
 })
 
 test('chat context can be selected from the composer and survives navigation until explicitly cleared', async ({ page }) => {
