@@ -21,7 +21,8 @@ describe('chat thinking and execution disclosure', () => {
   it('opens live execution and renders only actual reported steps without inventing reasoning', async () => {
     const html = await renderToString(createSSRApp(ChatThinkingProcess, { items, active: true }))
     expect(html).toContain('aria-expanded="true"')
-    expect(html).toContain('data-agent="supervisor_agent" data-status="completed"')
+    expect(html).not.toContain('data-agent="supervisor_agent"')
+    expect(html).toContain('data-internal-agent="supervisor_agent" data-status="completed"')
     expect(html).toContain('data-agent="rag_agent" data-status="running"')
     expect(html).toContain('知识库检索')
     expect(html).not.toContain('data-agent="writer_agent"')
@@ -156,11 +157,10 @@ describe('chat thinking and execution disclosure', () => {
     const html = await renderToString(createSSRApp(ChatThinkingProcess, { items: steps, phase: 'COMPLETED' }))
     expect(html).not.toContain('data-agent="rag_agent"')
     expect(html).not.toContain('步骤已完成')
-    expect(html).toContain('data-agent="writer_agent" data-status="completed"')
+    expect(html).not.toContain('data-testid="chat-thinking-process"')
     expect(steps).toHaveLength(2)
     const skippedOnly = await renderToString(createSSRApp(ChatThinkingProcess, { items: steps.slice(0, 1), phase: 'COMPLETED' }))
-    expect(skippedOnly).toContain('data-testid="chat-thinking-process"')
-    expect(skippedOnly).toContain('aria-expanded="false"')
+    expect(skippedOnly).not.toContain('data-testid="chat-thinking-process"')
   })
 
   it('discloses the unavailable chronology of older aggregate records', async () => {
@@ -178,7 +178,7 @@ describe('chat thinking and execution disclosure', () => {
     expect(html).toContain('记忆召回已结束')
     expect(html).toContain('此操作需要你确认后才会执行。')
     expect(html).not.toContain('此操作已返回结果。')
-    expect(html).toContain('2 个步骤')
+    expect(html).toContain('2 项操作')
   })
 
   it('keeps long reasoning available on demand without changing its position in the timeline', async () => {
@@ -191,7 +191,7 @@ describe('chat thinking and execution disclosure', () => {
     }))
     expect(html).toContain('查看思考内容')
     expect(html.match(/<details\b[^>]*>/)?.[0]).not.toContain(' open')
-    expect(html.indexOf('data-process-id="r-1"')).toBeLessThan(html.indexOf('data-process-id="writer_agent"'))
+    expect(html.indexOf('data-process-id="r-1"')).toBeLessThan(html.indexOf('data-internal-agent="writer_agent"'))
     expect(html).toMatch(/<strong[^>]*>核对资料<\/strong>/)
   })
 
@@ -206,5 +206,62 @@ describe('chat thinking and execution disclosure', () => {
       expect(html.slice(0, outputStart)).toContain(status === 'failed' ? '此步骤未能完成。' : '此操作需要你确认后才会执行。')
       expect(html).not.toContain('此操作已返回结果。')
     }
+  })
+
+  it('counts real actions while retaining internal stages in a separate disclosure', async () => {
+    const recorded: AgentStepEvent[] = [
+      { turnId: 't', sequence: 1, step: 'supervisor_agent', status: 'completed' },
+      { turnId: 't', sequence: 2, step: 'memory_agent', status: 'completed', durationMs: 0 },
+      { turnId: 't', sequence: 3, step: 'rag_agent', status: 'completed', durationMs: 1 },
+      { turnId: 't', sequence: 4, step: 'tool_agent', status: 'completed' },
+      { turnId: 't', sequence: 5, step: 'gather_agent', status: 'completed' },
+      { turnId: 't', sequence: 6, step: 'project_resolver', status: 'completed' },
+      { turnId: 't', sequence: 7, step: 'writer_agent', status: 'completed' },
+      { turnId: 't', sequence: 8, step: 'reviewer_agent', status: 'completed', summary: '内容检查完成' }
+    ]
+    const snapshot = JSON.stringify(recorded)
+    const html = await renderToString(createSSRApp(ChatThinkingProcess, { items: recorded, phase: 'COMPLETED' }))
+    expect([...html.matchAll(/data-agent="([^"]+)"/g)].map(match => match[1])).toEqual(['memory_agent', 'rag_agent'])
+    expect(html).toContain('2 项操作')
+    expect(html).not.toContain('8 个步骤')
+    expect(html).toContain('处理详情')
+    expect(html).toContain('data-internal-agent="writer_agent"')
+    expect(html).toContain('data-internal-agent="reviewer_agent"')
+    expect(JSON.stringify(recorded)).toBe(snapshot)
+  })
+
+  it('uses a simple live answer status for internal-only work and omits its completed history panel', async () => {
+    const recorded: AgentStepEvent[] = ['supervisor_agent', 'gather_agent', 'writer_agent', 'reviewer_agent'].map((step, index) => ({
+      turnId: 't', sequence: index + 1, step: step as AgentStepEvent['step'], status: 'completed'
+    }))
+    const history = await renderToString(createSSRApp(ChatThinkingProcess, { items: recorded, phase: 'COMPLETED' }))
+    expect(history).not.toContain('data-testid="chat-thinking-process"')
+    const live = await renderToString(createSSRApp(ChatThinkingProcess, { items: recorded, active: true,
+      statusText: '后台仍在执行，正在同步进度…' }))
+    expect(live).toContain('后台仍在执行，正在同步进度…')
+    expect(live).toContain('thinking-process__simple')
+    expect(live).not.toContain('aria-expanded')
+    expect(live).not.toContain('项操作')
+    expect(live).not.toContain('thinking-process__timeline')
+  })
+
+  it('keeps explicit project clarification and model review in the main timeline', async () => {
+    const html = await renderToString(createSSRApp(ChatThinkingProcess, { phase: 'COMPLETED', items: [
+      { turnId: 't', sequence: 1, step: 'project_resolver', status: 'completed', summary: '项目归属仍需确认，暂未采用项目上下文' },
+      { turnId: 't', sequence: 2, step: 'reviewer_agent', status: 'completed', summary: '模型复核完成' }
+    ] }))
+    expect(html).toContain('data-agent="project_resolver" data-status="needs_clarification"')
+    expect(html).toContain('data-agent="reviewer_agent" data-status="completed"')
+    expect(html).toContain('等待补充信息')
+    expect(html).toContain('2 项操作')
+  })
+
+  it('keeps failed internal work visible without reporting a successful process', async () => {
+    const html = await renderToString(createSSRApp(ChatThinkingProcess, { phase: 'COMPLETED', items: [
+      { turnId: 't', sequence: 1, step: 'reviewer_agent', status: 'failed', summary: '本地规则检查未通过' }
+    ] }))
+    expect(html).toContain('data-agent="reviewer_agent" data-status="failed"')
+    expect(html).toContain('有操作未完成')
+    expect(html).not.toContain('thinking-process__mark is-completed')
   })
 })

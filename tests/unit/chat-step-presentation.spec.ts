@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AGENT_STEPS, type AgentStep, type AgentStepEvent } from '@/domain/chat-progress'
-import { agentStepFeedback } from '@/domain/chat-step-presentation'
+import { agentStepFeedback, agentStepNeedsClarification, agentStepPresentation } from '@/domain/chat-step-presentation'
 
 const event: AgentStepEvent = { turnId: 'turn-1', sequence: 1, step: 'rag_agent', status: 'running' }
 
@@ -35,5 +35,46 @@ describe('step feedback presentation', () => {
     expect(agentStepFeedback(running, 'interrupted')).toBe('本轮已中断，此步骤未完成')
     expect(agentStepFeedback(running, 'failed')).toBe('知识库检索未能完成，请重试')
     expect(agentStepFeedback(running, 'pending')).toBeUndefined()
+  })
+})
+
+describe('reported actions and internal graph stages', () => {
+  it('keeps internal routing, assembly and answer generation out of the main action timeline', () => {
+    for (const step of ['supervisor_agent', 'gather_agent', 'writer_agent'] as const) {
+      expect(agentStepPresentation({ ...event, step, status: 'completed' })).toBe('internal')
+    }
+  })
+
+  it('shows reported recall and retrieval regardless of elapsed time, while skipped work stays hidden', () => {
+    for (const step of ['memory_agent', 'rag_agent'] as const) {
+      for (const durationMs of [0, 1, 120000]) expect(agentStepPresentation({ ...event, step, durationMs })).toBe('action')
+      expect(agentStepPresentation({ ...event, step, status: 'skipped' })).toBe('hidden')
+    }
+  })
+
+  it('avoids counting aggregate tool orchestration as an invocation or duplicating real calls', () => {
+    expect(agentStepPresentation({ ...event, step: 'tool_agent' })).toBe('internal')
+    expect(agentStepPresentation({ ...event, step: 'tool_agent' }, true)).toBe('hidden')
+    expect(agentStepPresentation({ ...event, step: 'tool_agent', status: 'failed' }, true)).toBe('internal')
+  })
+
+  it('requires explicit project and model-review outcomes for older untyped events', () => {
+    expect(agentStepPresentation({ ...event, step: 'project_resolver', status: 'completed' })).toBe('internal')
+    expect(agentStepPresentation({ ...event, step: 'project_resolver', summary: '未匹配到项目，继续使用本轮对话上下文' })).toBe('internal')
+    expect(agentStepPresentation({ ...event, step: 'project_resolver', summary: '已识别关联项目并取得项目上下文' })).toBe('action')
+    const clarification = { ...event, step: 'project_resolver' as const, status: 'completed' as const, summary: '项目归属仍需确认，暂未采用项目上下文' }
+    expect(agentStepNeedsClarification(clarification)).toBe(true)
+    expect(agentStepPresentation(clarification)).toBe('action')
+    expect(agentStepNeedsClarification({ ...clarification, status: 'failed' })).toBe(false)
+    expect(agentStepPresentation({ ...event, step: 'reviewer_agent', summary: '内容检查完成' })).toBe('internal')
+    expect(agentStepPresentation({ ...event, step: 'reviewer_agent', summary: '已完成回答内容的规则检查' })).toBe('internal')
+    expect(agentStepPresentation({ ...event, step: 'reviewer_agent', summary: '模型复核完成' })).toBe('action')
+    expect(agentStepPresentation({ ...event, step: 'reviewer_agent', summary: '正在进行模型复核' })).toBe('action')
+  })
+
+  it('keeps reported failures visible even when the successful stage is normally internal', () => {
+    for (const step of Object.keys(AGENT_STEPS) as AgentStep[]) {
+      expect(agentStepPresentation({ ...event, step, status: 'failed' })).toBe('action')
+    }
   })
 })

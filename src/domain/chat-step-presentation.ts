@@ -12,6 +12,29 @@ const STEP_FEEDBACK: Record<AgentStep, { running: string; completed: string }> =
 }
 const GENERIC_SUMMARIES = new Set(['步骤已完成', '已完成', '进行中', '已跳过', '失败', '本轮无需执行此步骤'])
 
+export type AgentStepPresentation = 'action' | 'internal' | 'hidden'
+
+/** Older events carry no execution-kind field. Only explicit outcomes establish these actions. */
+export function agentStepNeedsClarification(item: AgentStepEvent): boolean {
+  return item.step === 'project_resolver' && item.status === 'completed'
+    && /^(?:项目归属仍需确认|项目归属待确认|需要确认项目归属)/.test(item.summary?.trim() || '')
+}
+
+/** Keep graph bookkeeping out of the user-facing action timeline without changing its records. */
+export function agentStepPresentation(item: AgentStepEvent, hasToolCalls = false): AgentStepPresentation {
+  if (item.status === 'skipped') return 'hidden'
+  if (item.step === 'tool_agent' && hasToolCalls) return item.status === 'failed' ? 'internal' : 'hidden'
+  // A reported failure remains actionable even when its normal stage is internal.
+  if (item.status === 'failed') return 'action'
+  if (item.step === 'memory_agent' || item.step === 'rag_agent') return 'action'
+  const summary = item.summary?.trim() || ''
+  if (item.step === 'project_resolver' && (agentStepNeedsClarification(item)
+    || /^(?:已识别关联项目|已关联项目|已匹配到项目)/.test(summary))) return 'action'
+  if (item.step === 'reviewer_agent'
+    && /^(?:正在进行模型(?:审核|复核)|模型(?:审核|复核)(?:已完成|完成|未通过|进行中|通过)|已完成模型(?:审核|复核))/.test(summary)) return 'action'
+  return 'internal'
+}
+
 /** Show real status feedback; missing summaries never imply a match or successful operation. */
 export function agentStepFeedback(item: AgentStepEvent, displayStatus: string): string | undefined {
   if (displayStatus === 'interrupted') return '本轮已中断，此步骤未完成'

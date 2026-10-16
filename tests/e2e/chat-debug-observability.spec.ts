@@ -31,9 +31,10 @@ test('ordinary answers share rich Markdown and keep process, sources and image a
       agentProgress: [
         { turnId: 'answer-ui-turn', sequence: 2, step: 'rag_agent', status: 'completed', durationMs: 320 },
         { turnId: 'answer-ui-turn', sequence: 3, step: 'writer_agent', status: 'completed', durationMs: 600 }
-      ], processTimeline: [
+      ], toolCalls: [{ turnId: 'answer-ui-turn', sequence: 1, callId: 'reference-search', tool: 'web_search',
+        title: '搜索参考资料', status: 'completed', summary: '搜索完成，返回 3 条参考资料。', durationMs: 1200 }], processTimeline: [
         { type: 'reasoning', id: 'r-1', kind: 'summary', sequence: 1, text: '核对已有资料，按步骤整理结果。'.repeat(28) },
-        { type: 'agent', id: 'rag_agent' }, { type: 'agent', id: 'writer_agent' }
+        { type: 'agent', id: 'rag_agent' }, { type: 'tool', id: 'reference-search' }, { type: 'agent', id: 'writer_agent' }
       ], processStartedAt: 10000, processCompletedAt: 12600 } },
     { id: 'image-question', role: 'user', content: '生成一张预览图', createdAt: NOW, metadata: {} },
     { id: 'image-answer', role: 'assistant', content: '已生成预览图。', createdAt: NOW, metadata: {
@@ -67,10 +68,19 @@ test('ordinary answers share rich Markdown and keep process, sources and image a
   const processToggle = process.locator(':scope > button')
   await expect(processToggle).toHaveAttribute('aria-expanded', 'false')
   await processToggle.scrollIntoViewIfNeeded()
+  await processToggle.evaluate(element => (element as HTMLElement).blur())
   await page.screenshot({ path: testInfo.outputPath('ordinary-answer-completed.png'), fullPage: true })
   await processToggle.press('Enter')
   await expect(processToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(process.locator('[data-agent]')).toHaveCount(1)
+  await expect(process.locator('[data-agent="rag_agent"]')).toBeVisible()
+  await expect(process.locator('[data-call-id="reference-search"]')).toBeVisible()
+  await expect(process.locator('.thinking-process__count')).toHaveText('2 项操作')
+  const processingDetails = process.getByTestId('chat-processing-details')
+  await expect(processingDetails).not.toHaveAttribute('open', '')
+  await expect(processingDetails.locator('[data-internal-agent="writer_agent"]')).not.toBeVisible()
   await expect(process.locator('.thinking-process__output')).not.toHaveAttribute('open', '')
+  await processToggle.evaluate(element => (element as HTMLElement).blur())
   await page.screenshot({ path: testInfo.outputPath('ordinary-answer-process-expanded.png'), fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
   await page.evaluate(() => document.documentElement.classList.add('dark'))
@@ -78,7 +88,36 @@ test('ordinary answers share rich Markdown and keep process, sources and image a
   await processToggle.scrollIntoViewIfNeeded()
   await expect(answer).toHaveCSS('font-size', '14px')
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1)
+  await processToggle.evaluate(element => (element as HTMLElement).blur())
   await page.screenshot({ path: testInfo.outputPath('ordinary-answer-mobile-dark.png'), fullPage: true })
+  await processToggle.click()
+  await expect(processToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(processingDetails).not.toHaveAttribute('open', '')
+  await processToggle.scrollIntoViewIfNeeded()
+  await processToggle.evaluate(element => (element as HTMLElement).blur())
+  await page.screenshot({ path: testInfo.outputPath('ordinary-answer-mobile-expanded.png'), fullPage: true })
+})
+
+test('ordinary completed pipeline history does not become an eight-action agent panel', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1707, height: 1000 })
+  const steps = ['supervisor_agent', 'memory_agent', 'rag_agent', 'tool_agent', 'gather_agent', 'project_resolver', 'writer_agent', 'reviewer_agent']
+  const activeStages = new Set(['supervisor_agent', 'gather_agent', 'writer_agent'])
+  await page.route('**/api/chat/messages/debug-complete', route => json(route, [
+    { id: 'plain-question', role: 'user', content: '你好', createdAt: NOW, metadata: {} },
+    { id: 'plain-answer', role: 'assistant', turnId: 'plain-turn', content: '你好，有什么可以帮你？', createdAt: NOW, metadata: {
+      phase: 'COMPLETED', agentProgress: steps.map((step, index) => ({ turnId: 'plain-turn', sequence: index + 1, step,
+        status: activeStages.has(step) ? 'completed' : 'skipped' })),
+      processTimeline: steps.map(step => ({ type: 'agent', id: step }))
+    } }
+  ]))
+  await page.goto('/?conversationId=debug-complete')
+  await expect(page.locator('.message.assistant .chat-answer')).toHaveText('你好，有什么可以帮你？')
+  await expect(page.getByTestId('chat-thinking-process')).toHaveCount(0)
+  await expect(page.getByTestId('chat-processing-details')).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('ordinary-history-desktop.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1)
+  await page.screenshot({ path: testInfo.outputPath('ordinary-history-mobile.png'), fullPage: true })
 })
 
 test('complete historical debug evidence survives refresh and stays behind debug mode', async ({ page }) => {
