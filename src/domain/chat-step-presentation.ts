@@ -14,13 +14,13 @@ const GENERIC_SUMMARIES = new Set(['步骤已完成', '已完成', '进行中', 
 
 export type AgentStepPresentation = 'action' | 'internal' | 'hidden'
 
-/** Older events carry no execution-kind field. Only explicit outcomes establish these actions. */
-export function agentStepNeedsClarification(item: AgentStepEvent): boolean {
+/** An optional context match does not pause the answer or request a user action. */
+function hasUnresolvedProjectContext(item: AgentStepEvent): boolean {
   return item.step === 'project_resolver' && item.status === 'completed'
     && /^(?:项目归属仍需确认|项目归属待确认|需要确认项目归属)/.test(item.summary?.trim() || '')
 }
 
-/** Keep graph bookkeeping out of the user-facing action timeline without changing its records. */
+/** Distinguish processing stages from actions while preserving real recorded steps. */
 export function agentStepPresentation(item: AgentStepEvent, hasToolCalls = false): AgentStepPresentation {
   if (item.status === 'skipped') return 'hidden'
   if (item.step === 'tool_agent' && hasToolCalls) return item.status === 'failed' ? 'internal' : 'hidden'
@@ -28,8 +28,8 @@ export function agentStepPresentation(item: AgentStepEvent, hasToolCalls = false
   if (item.status === 'failed') return 'action'
   if (item.step === 'memory_agent' || item.step === 'rag_agent') return 'action'
   const summary = item.summary?.trim() || ''
-  if (item.step === 'project_resolver' && (agentStepNeedsClarification(item)
-    || /^(?:已识别关联项目|已关联项目|已匹配到项目)/.test(summary))) return 'action'
+  if (item.step === 'project_resolver'
+    && /^(?:已识别关联项目|已关联项目|已匹配到项目)/.test(summary)) return 'action'
   if (item.step === 'reviewer_agent'
     && /^(?:正在进行模型(?:审核|复核)|模型(?:审核|复核)(?:已完成|完成|未通过|进行中|通过)|已完成模型(?:审核|复核))/.test(summary)) return 'action'
   return 'internal'
@@ -40,6 +40,10 @@ export function agentStepFeedback(item: AgentStepEvent, displayStatus: string): 
   if (displayStatus === 'interrupted') return '本轮已中断，此步骤未完成'
   if (displayStatus === 'ended') return '本轮已结束，未收到此步骤的完成状态'
   if (!['running', 'completed', 'failed', 'skipped'].includes(displayStatus)) return undefined
+
+  if (displayStatus === 'completed' && hasUnresolvedProjectContext(item)) {
+    return '项目归属未确定，本轮继续使用对话上下文。'
+  }
 
   const summary = item.summary?.trim()
   if (summary && !GENERIC_SUMMARIES.has(summary) && displayStatus === item.status) return summary

@@ -57,7 +57,8 @@ test('streamed explicit memory becomes a confirmable candidate with profile evid
   await expect(rejectButton).toBeVisible()
   await rejectButton.click()
 
-  await page.getByRole('button', { name: '新对话', exact: true }).click()
+  await page.locator('.workspace-heading').filter({ has: page.getByRole('button', { name: '新建聊天', exact: true }) }).hover()
+  await page.getByRole('button', { name: '新建聊天', exact: true }).click()
   await page.getByTestId('chat-input').fill('你记得我什么？')
   await page.getByTestId('chat-submit').click()
   const recalledAnswer = page.locator('.message.assistant').last()

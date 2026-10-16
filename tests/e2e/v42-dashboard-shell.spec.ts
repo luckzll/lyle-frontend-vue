@@ -407,7 +407,8 @@ test('chat context can be selected from the composer and survives navigation unt
   await page.getByRole('button', { name: '新建聊天', exact: true }).click()
   await expect(summary).toHaveText(`${PROJECT_NAME} / ${knowledgeBase.name}`)
 
-  await page.getByRole('button', { name: '新对话', exact: true }).click()
+  await page.locator('.workspace-heading').filter({ has: page.getByRole('button', { name: '新建聊天', exact: true }) }).hover()
+  await page.getByRole('button', { name: '新建聊天', exact: true }).click()
   await summary.click()
   await expect(projectSelect).toHaveValue(String(PROJECT_ID))
   await expect(knowledgeSelect).toHaveValue(knowledgeBase.id)
