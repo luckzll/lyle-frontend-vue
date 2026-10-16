@@ -92,7 +92,8 @@ describe('local agent execution process', () => {
     expect(summary).toContain('2 个步骤')
     expect(summary).not.toContain('src/main.ts')
     expect(html).not.toContain('本次目录查看已结束。')
-    expect(html).not.toContain('local-agent-process__icon-badge')
+    expect(html).toContain('lucide-folder-search')
+    expect(html).toContain('lucide-file-search')
   })
 
   it('keeps write confirmation visible while disclosing long output on demand', async () => {
