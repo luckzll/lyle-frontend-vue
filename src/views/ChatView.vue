@@ -2361,7 +2361,6 @@ function formatBriefTime(value?: string | null) {
         </p>
       </div>
       <div class="row toolbar-controls">
-        <button class="secondary" type="button" @click="router.push('/local-project')">打开本地项目</button>
         <div v-if="debugControlsEnabled" class="debug-controls">
           <label class="debug-toggle">
             <input v-model="showDebug" type="checkbox" />
@@ -2373,7 +2372,6 @@ function formatBriefTime(value?: string | null) {
           <PanelRightOpen :size="16" aria-hidden="true" />
           当前上下文
         </button>
-        <button class="secondary" type="button" @click="newConversation">新对话</button>
       </div>
     </div>
 

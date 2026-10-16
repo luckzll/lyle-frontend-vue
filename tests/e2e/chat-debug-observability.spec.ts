@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
+import { createServer, type ServerResponse } from 'node:http'
 
 const NOW = '2026-09-04T08:00:00.000Z'
 
@@ -72,13 +73,13 @@ test('ordinary answers share rich Markdown and keep process, sources and image a
   await page.screenshot({ path: testInfo.outputPath('ordinary-answer-completed.png'), fullPage: true })
   await processToggle.press('Enter')
   await expect(processToggle).toHaveAttribute('aria-expanded', 'true')
-  await expect(process.locator('[data-agent]')).toHaveCount(1)
+  await expect(process.locator('[data-agent]')).toHaveCount(2)
   await expect(process.locator('[data-agent="rag_agent"]')).toBeVisible()
+  await expect(process.locator('[data-agent="writer_agent"]')).toBeVisible()
   await expect(process.locator('[data-call-id="reference-search"]')).toBeVisible()
-  await expect(process.locator('.thinking-process__count')).toHaveText('2 项操作')
+  await expect(process.locator('.thinking-process__count')).toHaveText('3 个步骤')
   const processingDetails = process.getByTestId('chat-processing-details')
-  await expect(processingDetails).not.toHaveAttribute('open', '')
-  await expect(processingDetails.locator('[data-internal-agent="writer_agent"]')).not.toBeVisible()
+  await expect(processingDetails).toHaveCount(0)
   await expect(process.locator('.thinking-process__output')).not.toHaveAttribute('open', '')
   await processToggle.evaluate(element => (element as HTMLElement).blur())
   await page.screenshot({ path: testInfo.outputPath('ordinary-answer-process-expanded.png'), fullPage: true })
@@ -92,13 +93,13 @@ test('ordinary answers share rich Markdown and keep process, sources and image a
   await page.screenshot({ path: testInfo.outputPath('ordinary-answer-mobile-dark.png'), fullPage: true })
   await processToggle.click()
   await expect(processToggle).toHaveAttribute('aria-expanded', 'true')
-  await expect(processingDetails).not.toHaveAttribute('open', '')
+  await expect(processingDetails).toHaveCount(0)
   await processToggle.scrollIntoViewIfNeeded()
   await processToggle.evaluate(element => (element as HTMLElement).blur())
   await page.screenshot({ path: testInfo.outputPath('ordinary-answer-mobile-expanded.png'), fullPage: true })
 })
 
-test('ordinary completed pipeline history does not become an eight-action agent panel', async ({ page }, testInfo) => {
+test('ordinary completed pipeline history retains its three reported steps and omits skipped stages', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1707, height: 1000 })
   const steps = ['supervisor_agent', 'memory_agent', 'rag_agent', 'tool_agent', 'gather_agent', 'project_resolver', 'writer_agent', 'reviewer_agent']
   const activeStages = new Set(['supervisor_agent', 'gather_agent', 'writer_agent'])
@@ -112,13 +113,191 @@ test('ordinary completed pipeline history does not become an eight-action agent 
   ]))
   await page.goto('/?conversationId=debug-complete')
   await expect(page.locator('.message.assistant .chat-answer')).toHaveText('你好，有什么可以帮你？')
-  await expect(page.getByTestId('chat-thinking-process')).toHaveCount(0)
+  const toolbar = page.locator('.toolbar-controls')
+  await expect(toolbar.getByRole('button', { name: '打开本地项目', exact: true })).toHaveCount(0)
+  await expect(toolbar.getByRole('button', { name: '新对话', exact: true })).toHaveCount(0)
+  const contextToggle = toolbar.getByRole('button', { name: '上下文', exact: true })
+  await expect(contextToggle).toBeVisible()
+  await contextToggle.click()
+  const contextPanel = page.getByRole('complementary', { name: '当前上下文' })
+  await expect(contextPanel).toBeVisible()
+  await contextPanel.getByRole('button', { name: '关闭上下文栏', exact: true }).click()
+  await expect(contextPanel).toHaveCount(0)
+  const process = page.getByTestId('chat-thinking-process')
+  await expect(process).toBeVisible()
+  const toggle = process.locator(':scope > button')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(process.locator('.thinking-process__count')).toHaveText('3 个步骤')
+  await toggle.click()
+  await expect(process.locator('[data-agent]')).toHaveCount(3)
+  expect(await process.locator('[data-agent]').evaluateAll(elements => elements.map(element => element.getAttribute('data-agent'))))
+    .toEqual(['supervisor_agent', 'gather_agent', 'writer_agent'])
+  await expect(process.locator('[data-agent="supervisor_agent"]')).toBeVisible()
+  await expect(process.locator('[data-agent="gather_agent"]')).toBeVisible()
+  await expect(process.locator('[data-agent="writer_agent"]')).toBeVisible()
+  await expect(process.locator('.thinking-process__spinner')).toHaveCount(0)
   await expect(page.getByTestId('chat-processing-details')).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('ordinary-history-desktop.png'), fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1)
   await page.screenshot({ path: testInfo.outputPath('ordinary-history-mobile.png'), fullPage: true })
+  await page.setViewportSize({ width: 1707, height: 1000 })
+  const newChat = page.getByRole('button', { name: '新建聊天', exact: true })
+  await page.locator('.workspace-heading').filter({ has: newChat }).hover()
+  await expect(newChat).toBeVisible()
+  await newChat.click()
+  await expect.poll(() => new URL(page.url()).searchParams.get('conversationId')).toBeNull()
+  await expect(page.getByTestId('chat-input')).toHaveValue('')
+  await expect(page.locator('.message.assistant')).toHaveCount(0)
 })
+
+test('real SSE frames retain reported workflow steps through generation and completed collapse', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1707, height: 1000 })
+  await page.route('**/api/chat/messages/debug-complete', route => json(route, []))
+  let stream: ServerResponse | undefined
+  let turnId = ''
+  const server = createServer((request, response) => {
+    response.setHeader('Access-Control-Allow-Origin', '*')
+    response.setHeader('Access-Control-Allow-Headers', 'authorization, content-type')
+    response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+    if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return }
+    let body = ''
+    request.setEncoding('utf8')
+    request.on('data', chunk => { body += chunk })
+    request.on('end', () => {
+      turnId = String(JSON.parse(body).turnId || '')
+      stream = response
+      response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
+      response.flushHeaders()
+    })
+  })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('SSE fixture did not obtain a loopback port')
+  await page.route('**/api/chat/stream', route => route.continue({ url: `http://127.0.0.1:${address.port}/api/chat/stream` }))
+  const send = (event: string, data: Record<string, unknown>) => {
+    if (!stream) throw new Error('SSE fixture has no connected response')
+    stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  }
+  const step = (sequence: number, name: string, status: 'running' | 'completed') => send('agent.step', {
+    turnId, sequence, step: name, status
+  })
+  try {
+    await page.goto('/?conversationId=debug-complete')
+    await page.getByTestId('chat-input').fill('解释一下递归')
+    await page.getByTestId('chat-submit').click()
+    await expect.poll(() => turnId).not.toBe('')
+    const startedAt = Date.now() - 1000
+    send('turn.status', { turnId, phase: 'THINKING', message: '正在理解请求', processStartedAt: startedAt })
+    const process = page.getByTestId('chat-thinking-process')
+    await expect(process).toBeVisible()
+    await expect(process.locator('[data-agent]')).toHaveCount(0)
+
+    step(1, 'supervisor_agent', 'running')
+    const toggle = process.locator(':scope > button')
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await expect(process.locator('[data-agent="supervisor_agent"]')).toHaveAttribute('data-status', 'running')
+    await expect(process.locator('[data-agent="supervisor_agent"]')).toBeVisible()
+    await expect(process.locator('[data-agent]')).toHaveCount(1)
+    await process.evaluate(element => element.setAttribute('data-live-continuity', 'same-card'))
+
+    step(2, 'supervisor_agent', 'completed')
+    await expect(process).toHaveAttribute('data-live-continuity', 'same-card')
+    await expect(process.locator('[data-agent="supervisor_agent"]')).toHaveAttribute('data-status', 'completed')
+    await expect(process.locator('[data-agent="supervisor_agent"]')).toBeVisible()
+    await expect(process.locator('[data-agent]')).toHaveCount(1)
+
+    step(3, 'gather_agent', 'running')
+    await expect(process).toHaveAttribute('data-live-continuity', 'same-card')
+    await expect(process.locator('[data-agent="gather_agent"]')).toHaveAttribute('data-status', 'running')
+    await expect(process.locator('[data-agent="supervisor_agent"]')).toBeVisible()
+    await expect(process.locator('[data-agent="gather_agent"]')).toBeVisible()
+    await expect(process.locator('[data-agent]')).toHaveCount(2)
+    step(4, 'gather_agent', 'completed')
+    await expect(process.locator('[data-agent="gather_agent"]')).toHaveAttribute('data-status', 'completed')
+    await expect(process.locator('[data-agent="gather_agent"]')).toBeVisible()
+
+    send('turn.status', { turnId, phase: 'GENERATING', message: '正在生成回答' })
+    step(5, 'writer_agent', 'running')
+    await expect(process).toHaveAttribute('data-live-continuity', 'same-card')
+    await expect(process.locator('[data-agent="writer_agent"]')).toHaveAttribute('data-status', 'running')
+    await expect(process.locator('[data-agent="writer_agent"]')).toBeVisible()
+    await expect(process.locator('.thinking-process__count')).toHaveText('3 个步骤')
+    expect(await process.locator('[data-agent]').evaluateAll(elements => elements.map(element => element.getAttribute('data-agent'))))
+      .toEqual(['supervisor_agent', 'gather_agent', 'writer_agent'])
+    await expect(process.getByTestId('chat-processing-details')).toHaveCount(0)
+    send('delta', { text: '递归是函数在更小的问题上调用自身。' })
+    await expect(page.locator('.message.assistant .chat-answer')).toContainText('递归是函数')
+    await expect(process).toHaveAttribute('data-live-continuity', 'same-card')
+    await expect(process.locator('[data-agent="writer_agent"]')).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('live-workflow-generating.png'), fullPage: true })
+
+    step(6, 'writer_agent', 'completed')
+    send('turn.status', { turnId, phase: 'COMPLETED', message: '回复完成', processStartedAt: startedAt, processCompletedAt: startedAt + 4000 })
+    send('done', { turnId })
+    stream!.end()
+    await expect(process).toHaveAttribute('data-live-continuity', 'same-card')
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(process.locator('[data-agent]')).toHaveCount(3)
+    await expect(process.locator('[data-status="completed"]')).toHaveCount(3)
+    await expect(process.locator('.thinking-process__spinner')).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath('live-workflow-completed-collapsed.png'), fullPage: true })
+    await toggle.click()
+    await expect(process.locator('[data-agent="supervisor_agent"]')).toBeVisible()
+    await expect(process.locator('[data-agent="gather_agent"]')).toBeVisible()
+    await expect(process.locator('[data-agent="writer_agent"]')).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('live-workflow-completed-expanded.png'), fullPage: true })
+  } finally {
+    stream?.end()
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+})
+
+test('legacy non-blocking project uncertainty stays neutral after the answer completes', async ({ page }, testInfo) => {
+  await page.route('**/api/chat/messages/debug-complete', route => json(route, [
+    { id: 'project-question', role: 'user', content: '解释一下递归', createdAt: NOW, metadata: {} },
+    { id: 'project-answer', role: 'assistant', turnId: 'project-neutral', content: '已继续回答本轮问题。', createdAt: NOW,
+      metadata: { phase: 'COMPLETED', agentProgress: [
+        { turnId: 'project-neutral', sequence: 1, step: 'project_resolver', status: 'completed', summary: '项目归属仍需确认，暂未采用项目上下文' }
+      ], processTimeline: [{ type: 'agent', id: 'project_resolver' }] } }
+  ]))
+  await page.goto('/?conversationId=debug-complete')
+  const process = page.getByTestId('chat-thinking-process')
+  await expect(process.locator('.thinking-process__status')).toHaveText('已完成')
+  await expect(process.locator('.thinking-process__mark.is-waiting')).toHaveCount(0)
+  await expect(process).not.toContainText('等待补充信息')
+  await process.locator(':scope > button').click()
+  await expect(process.locator('[data-agent="project_resolver"]')).toHaveAttribute('data-status', 'completed')
+  await expect(process).toContainText('项目归属未确定，本轮继续使用对话上下文。')
+  await expect(process).not.toContainText('待确认归属')
+  await page.screenshot({ path: testInfo.outputPath('project-uncertainty-neutral.png'), fullPage: true })
+})
+
+for (const status of ['awaiting_confirmation', 'needs_clarification'] as const) {
+  test(`real ${status} tool remains waiting alongside neutral project feedback`, async ({ page }, testInfo) => {
+    await page.route('**/api/chat/messages/debug-complete', route => json(route, [
+      { id: 'waiting-question', role: 'user', content: '安排一个日程', createdAt: NOW, metadata: {} },
+      { id: 'waiting-answer', role: 'assistant', turnId: 'waiting-tool', content: '请处理工具卡片后继续。', createdAt: NOW,
+        metadata: { phase: 'COMPLETED', agentProgress: [
+          { turnId: 'waiting-tool', sequence: 1, step: 'project_resolver', status: 'completed', summary: '项目归属仍需确认，暂未采用项目上下文' }
+        ], toolCalls: [{ turnId: 'waiting-tool', sequence: 2, callId: 'real-waiting-tool', tool: 'calendar.create',
+          title: '创建日程', status, summary: status === 'awaiting_confirmation' ? '请确认后创建日程。' : '请补充日程日期。' }],
+        processTimeline: [{ type: 'agent', id: 'project_resolver' }, { type: 'tool', id: 'real-waiting-tool' }] } }
+    ]))
+    await page.goto('/?conversationId=debug-complete')
+    const process = page.getByTestId('chat-thinking-process')
+    await expect(process.locator('.thinking-process__mark.is-waiting')).toBeVisible()
+    await expect(process.locator('.thinking-process__status')).toHaveText(status === 'awaiting_confirmation' ? '等待确认' : '等待补充信息')
+    await process.locator(':scope > button').click()
+    await expect(process.locator('[data-agent="project_resolver"]')).toHaveAttribute('data-status', 'completed')
+    await expect(process.locator('[data-call-id="real-waiting-tool"]')).toHaveAttribute('data-status', status)
+    await expect(process.locator('[data-call-id="real-waiting-tool"]')).toBeVisible()
+    await expect(process).toContainText('项目归属未确定，本轮继续使用对话上下文。')
+    await expect(process.locator('.thinking-process__spinner')).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath(`tool-${status}-still-waiting.png`), fullPage: true })
+  })
+}
 
 test('complete historical debug evidence survives refresh and stays behind debug mode', async ({ page }) => {
   await page.setViewportSize({ width: 1707, height: 932 })

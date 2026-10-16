@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { BookOpen, BrainCircuit, Check, ChevronDown, CircleAlert, CircleHelp, CircleMinus, CirclePause, CircleStop,
   Clock3, Database, FolderSearch, Layers, LoaderCircle, MessageSquareText, PenLine, ShieldCheck, Workflow, Wrench } from '@lucide/vue'
 import { AGENT_STEPS, type AgentStepEvent } from '@/domain/chat-progress'
-import { agentStepFeedback, agentStepNeedsClarification, agentStepPresentation } from '@/domain/chat-step-presentation'
+import { agentStepFeedback, agentStepPresentation } from '@/domain/chat-step-presentation'
 import type { ChatReasoning } from '@/domain/chat-reasoning'
 import { formatTraceDuration } from '@/domain/chat-trace-presentation'
 import { TOOL_CALL_STATUS_LABELS, toolCallDisplayStatus, type ChatToolCall } from '@/domain/chat-tool-calls'
@@ -65,14 +65,14 @@ const recordedRows = computed<Row[]>(() => timeline.value.flatMap<Row>(entry => 
   if (!item) return []
   const scope = agentStepPresentation(item, calls.value.length > 0)
   if (scope === 'hidden') return []
-  const status = item.status === 'running' && !running.value ? interrupted.value ? 'interrupted' : 'ended'
-    : agentStepNeedsClarification(item) ? 'needs_clarification' : item.status
+  const status = item.status === 'running' && !running.value ? interrupted.value ? 'interrupted' : 'ended' : item.status
   return [{ type: 'agent', id: entry.id, scope, title: AGENT_STEPS[item.step], status,
-    statusLabel: { running: '进行中', completed: '已完成', failed: '失败', skipped: '已跳过', interrupted: '已中断', ended: '已结束', needs_clarification: '待确认归属' }[status],
-    durationMs: item.durationMs, detail: status === 'needs_clarification' ? item.summary : agentStepFeedback(item, status) }]
+    statusLabel: { running: '进行中', completed: '已完成', failed: '失败', skipped: '已跳过', interrupted: '已中断', ended: '已结束' }[status],
+    durationMs: item.durationMs, detail: agentStepFeedback(item, status) }]
 }))
-const rows = computed(() => recordedRows.value.filter(row => row.type === 'reasoning' || row.scope === 'action'))
-const internalRows = computed(() => recordedRows.value.filter((row): row is Extract<Row, { type: 'agent' | 'tool' }> => row.type !== 'reasoning' && row.scope === 'internal'))
+// Processing is real progress too. Keep every received non-skipped stage visible
+// during generation and in history; optional workers are still not fabricated.
+const rows = recordedRows
 const legacyOrder = computed(() => props.processTimeline === undefined && rows.value.length > 1)
 const stepCount = computed(() => rows.value.filter(row => row.type !== 'reasoning').length)
 const waitingForConfirmation = computed(() => rows.value.some(row => row.type !== 'reasoning' && row.status === 'awaiting_confirmation'))
@@ -134,7 +134,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
         <CircleStop v-else-if="interrupted" :size="12" aria-hidden="true" />
         {{ headerStatus }}
       </span>
-      <span v-if="stepCount" class="thinking-process__count">{{ stepCount }} 项操作</span>
+      <span v-if="stepCount" class="thinking-process__count">{{ stepCount }} 个步骤</span>
       <span v-if="elapsedLabel" class="thinking-process__elapsed"><Clock3 :size="12" aria-hidden="true" />{{ elapsedLabel }}</span>
       <ChevronDown :size="15" class="thinking-process__chevron" :class="{ 'is-expanded': expanded }" aria-hidden="true" />
     </button>
@@ -201,31 +201,6 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           </template>
         </li>
       </ol>
-      <details v-if="internalRows.length" class="thinking-process__internal" data-testid="chat-processing-details">
-        <summary>处理详情<ChevronDown :size="12" aria-hidden="true" /></summary>
-        <ol class="thinking-process__internal-list" aria-label="内部处理阶段">
-          <li v-for="row in internalRows" :key="row.id" :data-internal-agent="row.id" :data-status="row.status">
-            <span class="thinking-process__step-icon" :class="`is-${row.status}`">
-              <component :is="stepIcon(row.type, row.id)" :size="16" aria-hidden="true" />
-              <span class="thinking-process__icon-badge" :class="`is-${row.status}`">
-                <LoaderCircle v-if="row.status === 'running'" :size="11" class="thinking-process__spinner" aria-hidden="true" />
-                <Check v-else-if="row.status === 'completed'" :size="10" :stroke-width="3" aria-hidden="true" />
-                <CircleAlert v-else-if="row.status === 'failed'" :size="11" aria-hidden="true" />
-                <CircleStop v-else-if="row.status === 'interrupted'" :size="11" aria-hidden="true" />
-                <CircleMinus v-else :size="11" aria-hidden="true" />
-              </span>
-            </span>
-            <div class="thinking-process__step-copy">
-              <div class="thinking-process__step-heading">
-                <span class="thinking-process__step-name">{{ row.title }}</span>
-                <span class="thinking-process__step-status" :class="`is-${row.status}`">{{ row.statusLabel }}</span>
-                <span v-if="row.durationMs !== undefined" class="thinking-process__step-duration">{{ formatTraceDuration(row.durationMs) }}</span>
-              </div>
-              <p v-if="row.detail" class="thinking-process__step-detail">{{ row.detail }}</p>
-            </div>
-          </li>
-        </ol>
-      </details>
     </div>
   </section>
 </template>
@@ -319,16 +294,5 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 .thinking-process__output > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .thinking-process__output > summary > svg { flex-shrink: 0; align-self: center; transition: transform 160ms ease; }
 .thinking-process__output[open] > summary > svg { transform: rotate(180deg); }
-.thinking-process__internal { margin: 2px 0 12px; padding-top: 10px; border-top: 1px solid var(--border); }
-.thinking-process__internal > summary { display: flex; align-items: center; gap: 4px; width: fit-content; max-width: 100%; border-radius: 3px; font-size: 12px; line-height: 1.8; cursor: pointer; list-style: none; }
-.thinking-process__internal > summary::-webkit-details-marker { display: none; }
-.thinking-process__internal > summary:hover { color: var(--foreground); }
-.thinking-process__internal > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-.thinking-process__internal > summary > svg { transition: transform 160ms ease; }
-.thinking-process__internal[open] > summary > svg { transform: rotate(180deg); }
-.thinking-process__internal-list { margin: 16px 0 0; padding: 0 0 0 14px; list-style: none; }
-.thinking-process__internal-list > li { display: flex; align-items: flex-start; gap: 12px; min-width: 0; padding: 0 0 20px; border-left: 1px solid var(--border); }
-.thinking-process__internal-list > li:last-child { padding-bottom: 0; border-color: transparent; }
-@media (max-width: 600px) { .thinking-process__internal-list > li { gap: 10px; padding-bottom: 18px; } }
-@media (prefers-reduced-motion: reduce) { .thinking-process__output > summary > svg, .thinking-process__internal > summary > svg { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .thinking-process__output > summary > svg { transition: none; } }
 </style>

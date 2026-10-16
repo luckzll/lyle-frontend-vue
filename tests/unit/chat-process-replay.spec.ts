@@ -53,15 +53,12 @@ describe('persisted chat process over the Java SSE replay contract', () => {
         expect(startedAt).toBe(Number(fixture.historyMetadata.processStartedAt))
         expect(completedAt).toBe(Number(fixture.historyMetadata.processCompletedAt))
         const html = await renderToString(createSSRApp(ChatThinkingProcess, { items, reasoning, phase, startedAt, completedAt }))
-        if (name === 'withReasoning') {
-          expect(html).toContain('aria-expanded="false"')
-          expect(html).toContain('天气查询完成')
-          expect(html).toContain('用时 0 秒')
-          expect(html).toContain('data-internal-agent="tool_agent"')
-        } else {
-          // A legacy aggregate is not evidence of a separate tool invocation.
-          expect(html).not.toContain('data-testid="chat-thinking-process"')
-        }
+        expect(html).toContain('aria-expanded="false"')
+        expect(html).toContain('天气查询完成')
+        expect(html).toContain('用时 0 秒')
+        expect(html).toContain('data-agent="tool_agent"')
+        // Preserve the recorded aggregate without inferring a separate tool invocation.
+        expect(html).not.toContain('data-call-id')
       })
     }
 
@@ -74,11 +71,10 @@ describe('persisted chat process over the Java SSE replay contract', () => {
         items: message.agentProgress || [], reasoning: message.reasoning, phase: message.phase,
         startedAt: message.processStartedAt, completedAt: message.processCompletedAt
       }))
-      if (name === 'withReasoning') {
-        expect(html).toContain('aria-expanded="false"')
-        expect(html).toContain('天气查询完成')
-        expect(html).toContain('用时 0 秒')
-      } else expect(html).not.toContain('data-testid="chat-thinking-process"')
+      expect(html).toContain('aria-expanded="false"')
+      expect(html).toContain('天气查询完成')
+      expect(html).toContain('用时 0 秒')
+      expect(html).not.toContain('data-call-id')
     })
   }
 
@@ -117,7 +113,7 @@ describe('persisted chat process over the Java SSE replay contract', () => {
     expect(html).not.toContain('thinking-process__spinner')
   })
 
-  it('retains replay metadata without rendering internal-only stages as separate actions', async () => {
+  it('retains real processing stages from replay metadata without inventing reasoning', async () => {
     let items: AgentStepEvent[] = []
     let phase: TurnStatusEvent['phase'] = 'THINKING'
     // ChatServiceImpl.stream(existing turn) sends delta, replayMetadata, status and done.
@@ -135,7 +131,10 @@ describe('persisted chat process over the Java SSE replay contract', () => {
     expect(consumeSseBuffer(remainder + wire.slice(73), handlers)).toBe('')
     expect(items).toHaveLength(2)
     const html = await renderToString(createSSRApp(ChatThinkingProcess, { items, phase }))
-    expect(html).not.toContain('data-testid="chat-thinking-process"')
+    expect(html).toContain('data-testid="chat-thinking-process"')
+    expect(html).toContain('2 个步骤')
+    expect(html).toContain('data-agent="supervisor_agent"')
+    expect(html).toContain('data-agent="writer_agent"')
     expect(html).not.toContain('模型思考')
   })
 

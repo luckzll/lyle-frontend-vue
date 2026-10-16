@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AGENT_STEPS, type AgentStep, type AgentStepEvent } from '@/domain/chat-progress'
-import { agentStepFeedback, agentStepNeedsClarification, agentStepPresentation } from '@/domain/chat-step-presentation'
+import { agentStepFeedback, agentStepPresentation } from '@/domain/chat-step-presentation'
 
 const event: AgentStepEvent = { turnId: 'turn-1', sequence: 1, step: 'rag_agent', status: 'running' }
 
@@ -39,7 +39,7 @@ describe('step feedback presentation', () => {
 })
 
 describe('reported actions and internal graph stages', () => {
-  it('keeps internal routing, assembly and answer generation out of the main action timeline', () => {
+  it('classifies routing, assembly and answer generation as processing stages', () => {
     for (const step of ['supervisor_agent', 'gather_agent', 'writer_agent'] as const) {
       expect(agentStepPresentation({ ...event, step, status: 'completed' })).toBe('internal')
     }
@@ -63,9 +63,9 @@ describe('reported actions and internal graph stages', () => {
     expect(agentStepPresentation({ ...event, step: 'project_resolver', summary: '未匹配到项目，继续使用本轮对话上下文' })).toBe('internal')
     expect(agentStepPresentation({ ...event, step: 'project_resolver', summary: '已识别关联项目并取得项目上下文' })).toBe('action')
     const clarification = { ...event, step: 'project_resolver' as const, status: 'completed' as const, summary: '项目归属仍需确认，暂未采用项目上下文' }
-    expect(agentStepNeedsClarification(clarification)).toBe(true)
-    expect(agentStepPresentation(clarification)).toBe('action')
-    expect(agentStepNeedsClarification({ ...clarification, status: 'failed' })).toBe(false)
+    expect(agentStepPresentation(clarification)).toBe('internal')
+    expect(agentStepFeedback(clarification, 'completed')).toBe('项目归属未确定，本轮继续使用对话上下文。')
+    expect(agentStepFeedback({ ...clarification, status: 'failed' }, 'failed')).toBe(clarification.summary)
     expect(agentStepPresentation({ ...event, step: 'reviewer_agent', summary: '内容检查完成' })).toBe('internal')
     expect(agentStepPresentation({ ...event, step: 'reviewer_agent', summary: '已完成回答内容的规则检查' })).toBe('internal')
     expect(agentStepPresentation({ ...event, step: 'reviewer_agent', summary: '模型复核完成' })).toBe('action')
