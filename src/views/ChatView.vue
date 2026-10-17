@@ -625,21 +625,28 @@ async function refreshConversations() {
 
 async function refreshBrief() {
   briefError.value = ''
-  try {
-    const [todoResponse, reminderResponse, memoryResponse, operationResponse] = await Promise.all([
-      listAgentTodos(),
-      listAgentReminders(),
-      getCurrentMemory(conversationId.value),
-      listPendingOperations(20)
-    ])
-    briefTodos.value = todoResponse.data.items
-    briefReminders.value = reminderResponse.data.items
-    briefMemory.value = memoryResponse.data
-    briefOperations.value = operationResponse.data.items.map((item) => ({ id: item.id, status: item.status }))
-    syncPendingMemoriesToLatestAssistant(memoryResponse.data)
-  } catch {
+  const epoch = conversationEpoch
+  const current = () => epoch === conversationEpoch && !viewDisposed
+  const results = await Promise.allSettled([
+    listAgentTodos().then(response => { if (current()) briefTodos.value = response.data.items }),
+    listAgentReminders().then(response => { if (current()) briefReminders.value = response.data.items }),
+    refreshPendingMemories(),
+    listPendingOperations(20).then(response => {
+      if (current()) briefOperations.value = response.data.items.map((item) => ({ id: item.id, status: item.status }))
+    })
+  ])
+  if (current() && results.some(result => result.status === 'rejected')) {
     briefError.value = '简报暂时无法加载'
   }
+}
+
+async function refreshPendingMemories() {
+  const epoch = conversationEpoch
+  const id = conversationId.value
+  const response = await getCurrentMemory(id)
+  if (epoch !== conversationEpoch || id !== conversationId.value || viewDisposed) return
+  briefMemory.value = response.data
+  syncPendingMemoriesToLatestAssistant(response.data)
 }
 
 async function ensureConversationId(firstMessage: string, epoch = conversationEpoch) {
@@ -686,7 +693,8 @@ async function loadConversation(id: string) {
     messages.value = response.data.map(historyMessage)
     window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, String(id))
     await syncConversationLocation(String(id))
-    await refreshBrief()
+    // Optional brief requests must not delay polling an active restored turn.
+    void refreshBrief()
   } catch {
     if (epoch === conversationEpoch) error.value = '对话加载失败，请稍后重试。'
   } finally {
@@ -731,7 +739,12 @@ async function pollRecoveredConversation() {
     if (!current()) return
     Object.assign(target, reconcileChatTurn(target, response.data))
     recoveryFailures = target.recoveryState === 'unconfirmed' ? recoveryFailures + 1 : 0
-    if (!isActiveTurnPhase(target.phase) && !target.recoveryState) notifyChatNavigationChanged(navigationOwner)
+    if (!isActiveTurnPhase(target.phase) && !target.recoveryState) {
+      notifyChatNavigationChanged(navigationOwner)
+      await refreshPendingMemories().catch(() => {
+        if (current()) briefError.value = '待确认记忆暂时无法加载'
+      })
+    }
   } catch {
     if (!current()) return
     target.recoveryState = 'unconfirmed'

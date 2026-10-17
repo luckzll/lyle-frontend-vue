@@ -7,17 +7,17 @@ import { createRenderer, h, nextTick, ssrContextKey } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import ChatView from '@/views/ChatView.vue'
 
-const api = vi.hoisted(() => ({ messages: vi.fn() }))
+const api = vi.hoisted(() => ({ messages: vi.fn(), memory: vi.fn(), todos: vi.fn(), reminders: vi.fn(), operations: vi.fn() }))
 vi.mock('@/api/app', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/app')>(),
   listConversations: async () => ({ data: [{ id: 'old-chat', title: '之前的工作讨论' }] }),
   listChatMessages: (id: string) => api.messages(id),
   listKnowledgeBases: async () => ({ data: [] }),
   listProjects: async () => ({ data: { items: [] } }),
-  listAgentTodos: async () => ({ data: { items: [] } }),
-  listAgentReminders: async () => ({ data: { items: [] } }),
-  listPendingOperations: async () => ({ data: { items: [] } }),
-  getCurrentMemory: async () => ({ data: {} }),
+  listAgentTodos: () => api.todos(),
+  listAgentReminders: () => api.reminders(),
+  listPendingOperations: () => api.operations(),
+  getCurrentMemory: (id?: string) => api.memory(id),
 }))
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ consumeChatDraft: () => null }) }))
 
@@ -43,7 +43,7 @@ const renderer = createRenderer<HostNode, HostNode>({
 const { descriptor } = parse(readFileSync(new URL('../../src/views/ChatView.vue', import.meta.url), 'utf8'))
 const bindings = compileScript(descriptor, { id: 'chat-route-test' }).bindings
 const template = compileTemplate({
-  source: '<section><h1>{{ activeConversationTitle }}</h1><p v-for="(message, index) in messages" :key="index">{{ message.content }}</p><button @click="newConversation">新对话</button></section>',
+  source: '<section><h1>{{ activeConversationTitle }}</h1><div v-for="(message, index) in messages" :key="index"><p>{{ message.content }}</p><span class="turn-phase">{{ message.phase }}:{{ message.recoveryState }}</span><article v-for="candidate in pendingCandidateMemories(message)" :key="candidate.key" class="candidate-memory-card">{{ candidate.value }}</article></div><button @click="newConversation">新对话</button></section>',
   filename: 'ChatView.vue', id: 'chat-route-test', compilerOptions: { bindingMetadata: bindings, hoistStatic: false },
 }).code
 const renderSource = template
@@ -73,8 +73,10 @@ beforeEach(() => {
   vi.stubGlobal('window', Object.assign(new EventTarget(), { localStorage, setTimeout, clearTimeout }))
   vi.stubGlobal('document', new EventTarget())
   api.messages.mockReset().mockResolvedValue({ data: [{ id: 'old-message', role: 'user', content: '上一段对话的内容', metadata: {} }] })
+  api.memory.mockReset().mockResolvedValue({ data: {} })
+  for (const service of [api.todos, api.reminders, api.operations]) service.mockReset().mockResolvedValue({ data: { items: [] } })
 })
-afterEach(() => { unmount?.(); unmount = undefined; vi.unstubAllGlobals() })
+afterEach(() => { unmount?.(); unmount = undefined; vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('ChatView route navigation', () => {
   it('clears an existing title and transcript when sidebar navigation requests a new chat', async () => {
@@ -104,5 +106,75 @@ describe('ChatView route navigation', () => {
     expect(nodes(root).find(item => item.tag === 'h1')?.text).toBe('新对话')
     expect(text(root)).not.toContain('迟到的旧对话内容')
     expect(router.currentRoute.value.query.newChat).toBe('sidebar-2')
+  })
+})
+
+const memoryQuestion = '请记住：我不喜欢帽子。'
+const pendingMemory = {
+  key: 'pending:one:negative_preference', schemaPath: 'preferences.visual.dislikes', value: '帽子', status: 'pending',
+  source: `source_ref:conversation:old-chat;message:11\n${memoryQuestion}`
+}
+const memoryHistory = (phase = 'COMPLETED') => ({ data: [
+  { id: '11', role: 'user', content: memoryQuestion, metadata: {} },
+  { id: '12', role: 'assistant', turnId: 'memory-turn', content: '确认后才会写入长期记忆。', metadata: { phase } }
+] })
+const candidateCards = (root: HostNode) => nodes(root).filter(item => item.props.class === 'candidate-memory-card')
+
+describe('ChatView pending memory restoration', () => {
+  it.each(['todos', 'reminders', 'operations'] as const)('restores saved candidates when the unrelated %s service fails', async service => {
+    api.messages.mockResolvedValue(memoryHistory())
+    api.memory.mockResolvedValue({ data: { structured_all: [pendingMemory] } })
+    api[service].mockRejectedValue(new Error('unrelated service unavailable'))
+
+    const { root } = await mount()
+
+    expect(candidateCards(root).map(text)).toEqual(['帽子'])
+  })
+
+  it('shows restored candidates while an unrelated brief request is still pending', async () => {
+    api.messages.mockResolvedValue(memoryHistory())
+    api.memory.mockResolvedValue({ data: { structured_all: [pendingMemory] } })
+    let finishTodos!: (value: unknown) => void
+    api.todos.mockImplementation(() => new Promise(resolve => { finishTodos = resolve }))
+
+    const { root } = await mount()
+
+    expect(candidateCards(root).map(text)).toEqual(['帽子'])
+    finishTodos({ data: { items: [] } })
+    await settle()
+  })
+
+  it.each(['available', 'pending'] as const)('loads candidates created after restoring an active turn with the unrelated brief request %s', async briefState => {
+    vi.useFakeTimers()
+    Object.assign(window, { setTimeout, clearTimeout })
+    if (briefState === 'pending') api.todos.mockReturnValue(new Promise(() => {}))
+    api.messages.mockResolvedValue(memoryHistory('RESPONDING'))
+    const { root } = await mount()
+    expect(candidateCards(root)).toHaveLength(0)
+    const initialMemoryRequests = api.memory.mock.calls.length
+    api.messages.mockResolvedValue(memoryHistory('COMPLETED'))
+    api.memory.mockResolvedValue({ data: { structured_all: [pendingMemory] } })
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await settle()
+
+    expect(api.memory.mock.calls.length).toBeGreaterThan(initialMemoryRequests)
+    expect(candidateCards(root).map(text)).toEqual(['帽子'])
+    expect(nodes(root).find(item => item.props.class === 'turn-phase' && text(item).startsWith('COMPLETED'))).toBeTruthy()
+  })
+
+  it('keeps an authoritative completed state when candidate restoration fails', async () => {
+    vi.useFakeTimers()
+    Object.assign(window, { setTimeout, clearTimeout })
+    api.messages.mockResolvedValue(memoryHistory('RESPONDING'))
+    const { root } = await mount()
+    api.messages.mockResolvedValue(memoryHistory('COMPLETED'))
+    api.memory.mockRejectedValue(new Error('memory temporarily unavailable'))
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await settle()
+
+    expect(nodes(root).filter(item => item.props.class === 'turn-phase').map(text)).toContain('COMPLETED:')
+    expect(text(root)).not.toContain('unconfirmed')
   })
 })
