@@ -54,6 +54,16 @@ describe('shared assistant Markdown', () => {
     expect(html).not.toContain('href="https://fence.example.com"')
   })
 
+  it('opens repository code labels in GitHub tables and standalone URL code labels', () => {
+    const text = 'GitHub 热门项目\n\n| 项目 | 说明 |\n| --- | --- |\n| `freeCodeCamp/freeCodeCamp` | 编程学习 |\n| `facebook/react` | 前端框架 |\n\n`https://example.com/guide`\n\n`src/main`'
+    const html = renderAssistantMarkdown(text, { linkify: true }).html
+    expect(html).toContain('href="https://github.com/freeCodeCamp/freeCodeCamp"')
+    expect(html).toContain('href="https://github.com/facebook/react"')
+    expect(html).toContain('<code>facebook/react</code></a>')
+    expect(html).toContain('href="https://example.com/guide"')
+    expect(html).not.toContain('href="https://github.com/src/main"')
+  })
+
   it('avoids nested anchors for linked images and rejects active links in every mode', () => {
     const html = renderAssistantMarkdown('[![参考](https://example.com/a.png)](https://example.com/page)\n\n[脚本](jav&#x61;script:alert%281%29)\n\n<script>alert(1)</script>', { allowImages: true, linkify: true }).html
     expect(html.match(/<a\b/g)).toHaveLength(1)
