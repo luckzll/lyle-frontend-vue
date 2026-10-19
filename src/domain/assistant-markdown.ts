@@ -60,13 +60,39 @@ function createMarkdown(linkify: boolean) {
     // Transform parsed text only. Existing links, inline/fenced code and image
     // descriptions stay intact, avoiding the old HTML-string double parsing.
     markdown.core.ruler.after('linkify', 'github_repositories', state => {
+      const githubContext = /\bgithub\b/i.test(state.src)
+      let inTable = false
+      let repoColumn = false
+      let column = -1
+      let headerCell = false
       for (const block of state.tokens) {
+        if (block.type === 'table_open') { inTable = true; repoColumn = false }
+        if (block.type === 'table_close') inTable = false
+        if (block.type === 'tr_open') column = -1
+        if (block.type === 'th_open' || block.type === 'td_open') {
+          column++
+          headerCell = block.type === 'th_open'
+        }
         if (block.type !== 'inline' || !block.children) continue
+        if (inTable && headerCell && column === 0 && /^(?:项目|仓库|repository|repo)$/i.test(block.content.trim())) repoColumn = true
+        const linkedRepoCell = githubContext && inTable && !headerCell && column === 0 && repoColumn
         const children: typeof block.children = []
         let linkDepth = 0
         for (const token of block.children) {
           if (token.type === 'link_open') linkDepth++
           if (token.type === 'link_close') linkDepth--
+          if (token.type === 'code_inline' && linkDepth === 0) {
+            const value = token.content.trim()
+            const repo = linkedRepoCell && /^[A-Za-z0-9_.-]{1,39}\/[A-Za-z0-9_.-]{1,100}$/.test(value)
+            const href = httpUrl(value) || (repo ? `https://github.com/${value}` : null)
+            if (href) {
+              const open = new state.Token('link_open', 'a', 1)
+              open.attrSet('href', href)
+              if (repo) open.attrSet('class', 'markdown-link--repo')
+              children.push(open, token, new state.Token('link_close', 'a', -1))
+              continue
+            }
+          }
           if (token.type !== 'text' || linkDepth > 0) { children.push(token); continue }
           const pattern = /(^|[\s(])([A-Za-z0-9_.-]{1,39}\/[A-Za-z0-9_.-]{1,100})(?=$|[\s),.!?:;])/g
           let cursor = 0
