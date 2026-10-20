@@ -2363,7 +2363,6 @@ function formatBriefTime(value?: string | null) {
     @dragover="workspaceDragover"
     @drop="workspaceDrop"
   >
-    <WorkspaceDropOverlay v-if="runtimeFeatures.chatWorkspaceDropEnabled && (dropController.dragging.value || dropController.scanning.value)" :scanning="dropController.scanning.value" />
     <div class="toolbar">
       <div>
         <h1>AI 聊天</h1>
@@ -3211,6 +3210,7 @@ function formatBriefTime(value?: string | null) {
       <ArrowDown :size="15" aria-hidden="true" /> 新消息
     </button>
 
+    <WorkspaceDropOverlay v-if="runtimeFeatures.chatWorkspaceDropEnabled && (dropController.dragging.value || dropController.scanning.value)" :scanning="dropController.scanning.value" />
     <ChatComposer
       @local-project="router.push('/local-project')"
       ref="composerRef"
