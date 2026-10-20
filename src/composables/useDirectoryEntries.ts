@@ -178,7 +178,7 @@ async function readEntry(
       const file = await readFile(entry, ctx)
       const normalized = normalizeRelativePath(relativePath)
       if (!normalized) ctx.skipped.push({ name: entry.name, relativePath, reason: 'read_error' })
-      else addFile(ctx, file, folderGroupId ? 'folder_drop' : 'drop', folderGroupId, folderRoot, normalized)
+      else addFile(ctx, file, folderGroupId ? 'folder_drop' : 'drop', folderGroupId, folderRoot, folderGroupId ? normalized : undefined)
     } catch {
       ctx.skipped.push({ name: entry.name, relativePath, reason: 'read_error' })
     }

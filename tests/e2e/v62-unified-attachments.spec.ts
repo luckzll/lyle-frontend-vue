@@ -322,7 +322,13 @@ test('drop and paste share the attachment queue and preserve the text draft', as
     Object.defineProperty(event, 'dataTransfer', { value: transfer })
     composer?.dispatchEvent(event)
   })
-  await expect(page.getByText('释放以使用文件或文件夹', { exact: true })).toBeVisible()
+  await expect(page.getByText('松开即可添加文件', { exact: true })).toBeVisible()
+  const overlay = await page.locator('.workspace-drop-overlay').boundingBox()
+  const composerBounds = await page.locator('.chat-composer').boundingBox()
+  expect(overlay).not.toBeNull()
+  expect(composerBounds).not.toBeNull()
+  expect(overlay!.width).toBeLessThanOrEqual(composerBounds!.width + 2)
+  expect(overlay!.height).toBeLessThanOrEqual(composerBounds!.height + 2)
   await page.evaluate(() => {
     const files = [
       new File([new Uint8Array([1])], 'drop-1.png', { type: 'image/png' }),
@@ -428,7 +434,7 @@ test('project menu connects locally without uploading directory contents', async
   await page.getByTestId('chat-input').fill('/项目')
   await page.getByRole('menuitem', { name: /^\/项目\s/ }).click()
   await expect(page).toHaveURL(/\/local-project$/)
-  await expect(page.getByRole('heading', { name: '本地项目', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '项目工作区', exact: true })).toBeVisible()
   expect(uploads).toBe(0)
 })
 

@@ -27,6 +27,16 @@ function directoryEntry(name: string, batches: FakeEntry[][]): FakeEntry {
 }
 
 describe('directory entry scanning', () => {
+  it('keeps a dropped single file free of folder metadata', async () => {
+    const entry = fileEntry('report.pdf')
+    const dataTransfer = { items: [{ kind: 'file', getAsEntry: () => entry, getAsFile: () => null }], files: [] } as unknown as DataTransfer
+
+    const result = await scanDataTransfer(dataTransfer)
+
+    expect(result.files).toEqual([expect.objectContaining({ sourceType: 'drop', folderGroupId: undefined,
+      folderRoot: undefined, relativePath: undefined })])
+  })
+
   it('reads every directory batch, skips hidden files, and naturally sorts paths', async () => {
     const root = directoryEntry('资料', [
       [fileEntry('10.txt'), fileEntry('.secret')],
