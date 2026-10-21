@@ -41,6 +41,7 @@ import {
 import type { AgentReminderItem, AgentTodoItem, AgentTraceItem, CandidateDecisionItem, CandidateGoalItem, CandidateOpenQuestionItem, CandidatePlanItem, CandidateTaskItem, ChatRetrievalScope, ChatSource, ChatUsage, Conversation, KnowledgeBase, MemoryExclusions, MemoryItem, MemorySnapshot, PendingOperationItem, Project, ProjectChatContext, ToolResult, ExecutionSuggestionItem, UsedMemory } from '@/api/types'
 import ContextPanel from '@/components/layout/ContextPanel.vue'
 import MemoryExplanationPanel from '@/components/memory/MemoryExplanationPanel.vue'
+import PendingMemoryCard from '@/components/memory/PendingMemoryCard.vue'
 import ExecutionTimeline from '@/components/domain/ExecutionTimeline.vue'
 import SuggestionCard from '@/components/domain/SuggestionCard.vue'
 import { useWorkspaceStore, type WorkspaceProjectContext } from '@/stores/workspace'
@@ -1992,16 +1993,9 @@ function memorySourceText(item: MemoryItem) {
   return (match?.[1] || item.sourceText || '').trim()
 }
 
-function setCandidateValue(item: MemoryItem, value: string) {
-  item.value = value
-}
-
-function updateCandidateTargetKey(item: MemoryItem, event: Event) {
-  setCandidateTargetKey(item, (event.target as HTMLInputElement).value)
-}
-
-function updateCandidateValue(item: MemoryItem, event: Event) {
-  setCandidateValue(item, (event.target as HTMLInputElement).value)
+function updateCandidateMemory(item: MemoryItem, update: { targetKey: string; value: string }) {
+  setCandidateTargetKey(item, update.targetKey)
+  item.value = update.value
 }
 
 async function confirmCandidateMemory(message: Message, item: MemoryItem) {
@@ -2572,53 +2566,16 @@ function formatBriefTime(value?: string | null) {
 
         <ChatSources v-if="message.role === 'assistant' && message.sources?.length && !showDebug" :sources="message.sources" />
 
-        <div v-if="message.role === 'assistant' && pendingCandidateMemories(message).length" class="candidate-memory-list">
-          <div class="candidate-memory-title">
-            <span>待确认记忆</span>
-            <span class="badge pending">{{ pendingCandidateMemories(message).length }} 条</span>
-          </div>
-          <article
+        <div v-if="message.role === 'assistant' && pendingCandidateMemories(message).length" class="personal-memory-list">
+          <PendingMemoryCard
             v-for="candidate in pendingCandidateMemories(message)"
             :key="candidateKey(candidate)"
-            class="candidate-memory-card"
-          >
-            <div class="candidate-memory-fields">
-              <label>
-                <span>类型</span>
-                <input
-                  :value="memoryTargetKey(candidate)"
-                  :disabled="memoryActionLoading[candidateKey(candidate)]"
-                  @input="updateCandidateTargetKey(candidate, $event)"
-                />
-              </label>
-              <label>
-                <span>内容</span>
-                <input
-                  :value="candidate.value || ''"
-                  :disabled="memoryActionLoading[candidateKey(candidate)]"
-                  @input="updateCandidateValue(candidate, $event)"
-                />
-              </label>
-            </div>
-            <small class="memory-meta">置信度 {{ candidate.confidence ?? 0.8 }} · {{ candidate.source || '本轮对话' }}</small>
-            <div class="candidate-memory-actions">
-              <button
-                type="button"
-                :disabled="memoryActionLoading[candidateKey(candidate)] || !memoryTargetKey(candidate).trim() || !String(candidate.value || '').trim()"
-                @click="confirmCandidateMemory(message, candidate)"
-              >
-                确认
-              </button>
-              <button
-                class="secondary"
-                type="button"
-                :disabled="memoryActionLoading[candidateKey(candidate)]"
-                @click="dismissCandidateMemory(message, candidate)"
-              >
-                忽略
-              </button>
-            </div>
-          </article>
+            :item="candidate"
+            :loading="memoryActionLoading[candidateKey(candidate)]"
+            @update="updateCandidateMemory(candidate, $event)"
+            @confirm="confirmCandidateMemory(message, candidate)"
+            @dismiss="dismissCandidateMemory(message, candidate)"
+          />
         </div>
 
         <div v-if="message.role === 'assistant' && pendingCandidateTasks(message).length" class="candidate-memory-list">
@@ -3240,6 +3197,7 @@ function formatBriefTime(value?: string | null) {
 </template>
 
 <style scoped>
+.personal-memory-list { display: grid; width: 100%; min-width: 0; gap: 12px; margin-top: 14px; }
 .attachment-context-note { margin: 0 0 10px; color: var(--muted-foreground); font-size: 11px; line-height: 1.6; }
 .page {
   --chat-content-width: 920px;

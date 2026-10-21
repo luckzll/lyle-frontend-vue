@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { memoryReasonLabel, memoryTargetKey, setCandidateTargetKey, memorySchemaLabel } from '@/domain/memory-presentation'
+import { MEMORY_CATEGORY_OPTIONS, memoryCategoryLabel, memoryCandidateSourceText, memoryReasonLabel, memoryTargetKey, setCandidateTargetKey, memorySchemaLabel } from '@/domain/memory-presentation'
 import { sanitizeUsedMemories } from '@/domain/chat-safety'
 import type { MemoryItem } from '@/api/types'
 
@@ -30,6 +30,46 @@ describe('memory confirmation and recall explanation', () => {
     const item: MemoryItem = { key: 'pending:one:career', schemaPath: 'work.current_role' }
     setCandidateTargetKey(item, '')
     expect(memoryTargetKey(item)).toBe('')
+  })
+
+  it('shows readable canonical and legacy categories without changing the submission key', () => {
+    const canonical = { key: 'pending:one:preference', targetKey: 'preference', schemaPath: 'preferences.general.likes' }
+    expect(memoryCategoryLabel(canonical)).toBe('个人喜好')
+    expect(memoryCategoryLabel({ key: 'pending:two:pet_preference' })).toBe('宠物偏好')
+    expect(memoryCategoryLabel({ targetKey: 'career' })).toBe('职业')
+    expect(memoryCategoryLabel({ schemaPath: 'preferences.visual.dislikes' })).toBe('视觉负向偏好')
+    expect(canonical).toEqual({ key: 'pending:one:preference', targetKey: 'preference', schemaPath: 'preferences.general.likes' })
+    expect(new Set(MEMORY_CATEGORY_OPTIONS.map(item => item.value)).size).toBe(35)
+    expect(MEMORY_CATEGORY_OPTIONS.every(item => /\p{Script=Han}/u.test(item.label))).toBe(true)
+  })
+
+  it('uses a safe Chinese fallback label while preserving an unknown schema path', () => {
+    const item = { key: 'pending:one:new', schemaPath: 'future.custom.preference', label: '新的偏好' }
+    expect(memoryCategoryLabel(item)).toBe('新的偏好')
+    expect(memoryTargetKey(item)).toBe('future.custom.preference')
+    expect(memoryCategoryLabel({ ...item, label: 'future.custom.preference' })).toBe('个人记忆')
+    expect(memoryCategoryLabel({ ...item, label: '偏好 (future.custom.preference)' })).toBe('个人记忆')
+    expect(memoryCategoryLabel({ ...item, label: '来源 2112817612362207234' })).toBe('个人记忆')
+    expect(memoryCategoryLabel({ ...item, label: '偏好\n额外标签' })).toBe('个人记忆')
+    expect(memoryCategoryLabel({ schemaPath: '' })).toBe('个人记忆')
+  })
+
+  it('prefers explicit source text and removes references from newline and inline evidence', () => {
+    const reference = 'source_ref:conversation:2112817609317142529;message:2112817612362207234'
+    expect(memoryCandidateSourceText({ sourceText: '我喜欢猫。', source: `${reference}\n旧内容` })).toBe('我喜欢猫。')
+    expect(memoryCandidateSourceText({ source: `${reference}\n我喜欢猫，也喜欢周末去逛展。` })).toBe('我喜欢猫，也喜欢周末去逛展。')
+    expect(memoryCandidateSourceText({ source: `${reference} 我喜欢猫。` })).toBe('我喜欢猫。')
+    expect(memoryCandidateSourceText({ source: 'conversation:c-1;message:m-1\r\n我喜欢猫。' })).toBe('我喜欢猫。')
+    expect(memoryCandidateSourceText({ sourceText: `${reference}\n我喜欢猫。` })).toBe('我喜欢猫。')
+    expect(memoryCandidateSourceText({ source: '我喜欢猫。' })).toBe('我喜欢猫。')
+  })
+
+  it('falls back cleanly for missing evidence and machine-only source identifiers', () => {
+    for (const source of [undefined, '', '  ', 'chat_candidate', 'manual', 'conversation:c-1;message:m-1', 'source_ref:conversation:c-1;message:m-1', 'custom-source:opaque-id', '2112817612362207234', 'd6177936-4637-4a83-8ce3-3540fa5c453d']) {
+      expect(memoryCandidateSourceText({ source })).toBe('本轮对话')
+    }
+    expect(memoryCandidateSourceText({ source: 'conversation:c-1', sourceText: '  ' })).toBe('本轮对话')
+    expect(memoryCandidateSourceText({ source: 'chat_candidate', sourceRef: 'source_ref:conversation:c-1\n我喜欢猫。' })).toBe('我喜欢猫。')
   })
 
   it('preserves and explains the fixed constraint reason after safety sanitization', () => {
