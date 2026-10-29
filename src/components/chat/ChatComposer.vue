@@ -220,6 +220,7 @@ defineExpose({ focus: () => textarea.value?.focus() })
           </select>
           <ChevronDown :size="13" aria-hidden="true" />
         </label>
+        <slot name="tools" />
         <button
           class="composer-context"
           type="button"
