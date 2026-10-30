@@ -175,11 +175,12 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', outsidePointer)
   mobileQuery?.removeEventListener('change', syncMobile)
 })
-defineExpose({ focus: () => textarea.value?.focus() })
+defineExpose({ focus: () => textarea.value?.focus({ preventScroll: true }) })
 </script>
 
 <template>
   <form ref="root" class="chat-composer" @submit.prevent="!disabled && !loading && $emit('submit')" @focusout="focusOut">
+    <slot name="document-context" />
     <AttachmentTray :attachments="attachments" :skipped="skipped" @remove="$emit('remove', $event)" @remove-group="$emit('removeGroup', $event)" @retry="$emit('retry', $event)" />
     <AttachmentCommandMenu ref="attachmentMenu" v-if="commandOpen" :id="menuId" :folder-supported="folderSupported" :show-commands="slashCommand && !attachmentOpen" @select="choose" @dismiss="dismissMenu()" />
     <textarea

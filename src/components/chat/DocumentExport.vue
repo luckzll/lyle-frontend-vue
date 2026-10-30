@@ -13,17 +13,18 @@ const blob = ref<Blob>()
 const preparing = ref(false); const saving = ref(false)
 const status = ref(''); const error = ref('')
 const canChoose = canChooseDocumentLocation()
+const exportTitle = computed(() => props.sourceLabel === '当前编辑草稿' ? props.title || '未命名文档' : documentTitle(props.content, props.title))
 const chars = computed(() => props.content.replace(/\s/g, '').length.toLocaleString('zh-CN'))
 let generation = 0
-watch(() => props.content, () => { filename.value = documentFilename(documentTitle(props.content, props.title), format.value) })
+watch([() => props.content, exportTitle], () => { filename.value = documentFilename(exportTitle.value, format.value) })
 watch(() => props.expanded, value => { open.value = value })
-watch([open, format, () => props.content], async () => {
+watch([open, format, () => props.content, exportTitle], async () => {
   const current = ++generation; blob.value = undefined; status.value = ''; error.value = ''
   if (!open.value) { preparing.value = false; return }
   filename.value = documentFilename(filename.value, format.value)
   preparing.value = true
   try {
-    const generated = await createDocumentBlob(props.content, format.value, documentTitle(props.content, props.title))
+    const generated = await createDocumentBlob(props.content, format.value, exportTitle.value)
     if (current === generation) blob.value = generated
   } catch (exception) { if (current === generation) error.value = exception instanceof Error ? exception.message : '文件生成失败，请重试。' }
   finally { if (current === generation) preparing.value = false }
@@ -57,9 +58,9 @@ async function save(downloadOnly = false) {
       </div>
       <div class="export-fields">
         <label :for="`${id}-name`">文件名<input :id="`${id}-name`" v-model="filename" :disabled="saving" maxlength="110" @blur="filename = documentFilename(filename, format)" /></label>
-        <label :for="`${id}-format`">格式<select :id="`${id}-format`" v-model="format" :disabled="saving"><option value="docx">Word (.docx)</option><option value="md">Markdown (.md)</option></select></label>
+        <label :for="`${id}-format`">格式<select :id="`${id}-format`" v-model="format" :disabled="saving"><option value="docx">Word (.docx)</option><option value="xlsx">Excel (.xlsx)</option><option value="pptx">PowerPoint (.pptx)</option><option value="md">Markdown (.md)</option></select></label>
       </div>
-      <p class="export-note">{{ canChoose ? '在系统窗口选择桌面或其它目录，确认后保存。' : '当前浏览器不支持选择目录，可下载后移动到指定位置。' }}<span v-if="format === 'docx' && /!\[/.test(content)">图片保留说明和链接。</span></p>
+      <p class="export-note">{{ canChoose ? '在系统窗口选择桌面或其它目录，确认后保存。' : '当前浏览器不支持选择目录，可下载后移动到指定位置。' }}<span v-if="format === 'docx' && /!\[/.test(content)">图片保留说明和链接。</span><span v-if="format === 'xlsx'">按竖线或制表符拆成单元格，内容作为文本，公式不执行。</span><span v-if="format === 'pptx'">按标题和正文分页生成文字幻灯片，不包含原动画和图表。</span></p>
       <div class="export-bottom">
         <p v-if="error" class="export-error" role="alert">{{ error }}</p>
         <p v-else class="export-status" role="status" aria-live="polite"><LoaderCircle v-if="preparing || saving" class="export-spinner" :size="14" aria-hidden="true" /><CheckCircle2 v-else-if="status.startsWith('已保存')" :size="15" aria-hidden="true" />{{ preparing ? '正在生成文件…' : saving ? '等待选择并保存…' : status || '文件已准备好' }}</p>
