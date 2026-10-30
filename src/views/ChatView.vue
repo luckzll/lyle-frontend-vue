@@ -4,7 +4,7 @@ import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { authState } from '@/auth'
 import { newChatLocation, notifyChatNavigationChanged } from '@/domain/chat-navigation'
 import { memoryReasonLabel, memoryTargetKey, setCandidateTargetKey } from '@/domain/memory-presentation'
-import { ArrowDown, ArrowRight, BrainCircuit, ChevronRight, Circle, Database, GitBranch, PanelRightOpen, Sparkles, Wrench } from '@lucide/vue'
+import { ArrowDown, ArrowRight, BrainCircuit, ChevronRight, Circle, Database, FileText, GitBranch, PanelRightOpen, Sparkles, Wrench, X } from '@lucide/vue'
 import {
   createConversation,
   createAgentTodo,
@@ -95,7 +95,11 @@ import { reconcileChatTurn, recoveryPollDelay, recoveryStatusText, shouldRecover
 import { summarizeChatDebug } from '@/domain/chat-debug-summary'
 import ChatSources from '@/components/chat/ChatSources.vue'
 import DocumentExport from '@/components/chat/DocumentExport.vue'
-import { wantsDocumentExport } from '@/domain/document-export'
+import DocumentWorkspacePanel from '@/components/chat/DocumentWorkspacePanel.vue'
+import DocumentArtifactCard from '@/components/chat/DocumentArtifactCard.vue'
+import { useDocumentWorkspace } from '@/composables/useDocumentWorkspace'
+import { documentEditPrompt, documentRequestParts, isDocumentTask, type DocumentTarget } from '@/domain/document-workspace'
+import { documentTitle } from '@/domain/document-export'
 import { presentAgentTrace } from '@/domain/chat-trace-presentation'
 import MessageAttachments from '@/components/chat/MessageAttachments.vue'
 import WorkspaceDropOverlay from '@/components/chat/WorkspaceDropOverlay.vue'
@@ -224,6 +228,24 @@ const showDebug = ref(debugControlsEnabled.value)
 const error = ref('')
 const commercialQuotaError = ref(false)
 const conversationId = ref('')
+const { drafts: documentDrafts, activeId: activeDocumentId, open: documentOpen, busy: documentBusy, notice: documentNotice, error: documentError, reference: documentReference, replyTargets, create: createDocument, fromReply: draftFromReply, read: readDocument, applyReply, promote: promoteDocumentScope } = useDocumentWorkspace(conversationId, computed(() => String(authState.user?.id || '')))
+const documentFileInput = ref<HTMLInputElement>()
+function openDocumentWorkspace() { showContextPanel.value = false; showMemoryExplanation.value = false; documentOpen.value = true }
+function openReplyDraft(message: Message, index: number) {
+  openDocumentWorkspace()
+  draftFromReply(assistantTextContent(message), activeConversationTitle.value, message.turnId || message.id || `reply-${index}`)
+}
+function replyDraft(message: Message, index: number) { return documentDrafts.value.find(item => item.sourceId === (message.turnId || message.id || `reply-${index}`)) }
+function readDocumentAttachment(attachment: ChatAttachment) { openDocumentWorkspace(); void readDocument(attachment) }
+function chooseDocument(event: Event) {
+  const element = event.target as HTMLInputElement; const file = element.files?.[0]; element.value = ''
+  if (file) { openDocumentWorkspace(); void readDocument(file) }
+}
+function referenceDocument(target: DocumentTarget) {
+  documentReference.value = target
+  if (window.matchMedia('(max-width: 1100px)').matches) documentOpen.value = false
+  void nextTick(() => composerRef.value?.focus())
+}
 const ACTIVE_CONVERSATION_STORAGE_KEY = 'lyle.chat.active-conversation'
 
 watch(chatModelId, (value) => window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, value))
@@ -660,6 +682,7 @@ async function ensureConversationId(firstMessage: string, epoch = conversationEp
   const title = firstMessage.length > 18 ? `${firstMessage.slice(0, 18)}...` : firstMessage
   const response = await createConversation(title || '新对话')
   if (epoch !== conversationEpoch) return ''
+  promoteDocumentScope(String(response.data.id))
   conversationId.value = String(response.data.id)
   window.localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, conversationId.value)
   await syncConversationLocation(conversationId.value)
@@ -846,6 +869,7 @@ function applyStarterPrompt(draft: string) {
 }
 
 function openContextPanel() {
+  documentOpen.value = false
   showMemoryExplanation.value = false
   if (showContextPanel.value) return
   showContextPanel.value = true
@@ -861,6 +885,7 @@ function toggleContextPanel() {
 }
 
 function openMemoryExplanation(message: Message) {
+  documentOpen.value = false
   explainedMemories.value = message.usedMemories || []
   showContextPanel.value = false
   showMemoryExplanation.value = true
@@ -973,7 +998,13 @@ async function submit(retryContext?: RetryTurnContext) {
   const attachmentsForDisplay = retryContext
     ? (retryUser?.attachments || [])
     : attachmentDrafts.value.flatMap((draft) => draft.attachment ? [draft.attachment] : [])
-  const message = text || '请分析这些附件'
+  const requestDocumentTarget = retryContext ? replyTargets.get(retryContext.turnId) : documentReference.value
+  let message = text || '请分析这些附件'
+  if (requestDocumentTarget && !retryContext) {
+    if (documentDrafts.value.find(item => item.id === requestDocumentTarget.id)?.revision !== requestDocumentTarget.revision) { error.value = '引用后草稿已改变，请在文档区重新引用最新范围。'; return }
+    try { message = documentEditPrompt(message, requestDocumentTarget) }
+    catch (exception) { error.value = (exception as Error).message; return }
+  }
   const requestProjectId = activeProjectId.value
   const startsProjectConversation = !retryContext && Boolean(requestProjectId) && !hasUserMessages.value
   const turnId = retryContext?.turnId || crypto.randomUUID()
@@ -1008,6 +1039,7 @@ async function submit(retryContext?: RetryTurnContext) {
     activeConversationId = retryContext ? conversationId.value : await ensureConversationId(message, epoch)
     if (epoch !== conversationEpoch) return
     if (!activeConversationId) throw new Error('对话尚未保存，无法重试。')
+    if (requestDocumentTarget) replyTargets.set(turnId, requestDocumentTarget)
     const pending: Message = {
       role: 'assistant', content: '', turnId, phase: 'THINKING',
       statusText: '正在等待执行进度…', debugDataState: 'pending', agentProgress: [], toolCalls: [], processTimeline: [], processStartedAt: Date.now()
@@ -1335,7 +1367,7 @@ function formatTraceDetail(item: AgentTraceItem) {
 }
 
 function userDisplayText(message: Message) {
-  return message.content.replace(/\n?图片\d*\s*：https?:\/\/\S+/g, '').trim()
+  return (documentRequestParts(message.content)?.question ?? message.content).replace(/\n?图片\d*\s*：https?:\/\/\S+/g, '').trim()
 }
 
 function userImages(message: Message) {
@@ -2364,6 +2396,7 @@ function formatBriefTime(value?: string | null) {
 <template>
   <section
     class="page"
+    :class="{ 'page--document': documentOpen }"
     @dragenter="workspaceDragenter"
     @dragleave="workspaceDragleave"
     @dragover="workspaceDragover"
@@ -2388,6 +2421,7 @@ function formatBriefTime(value?: string | null) {
         </p>
       </div>
       <div class="row toolbar-controls">
+        <button class="secondary document-toggle" type="button" :aria-pressed="documentOpen" @click="openDocumentWorkspace"><FileText :size="16" aria-hidden="true" />文档{{ documentDrafts.length ? ` · ${documentDrafts.length}` : '' }}</button>
         <div v-if="debugControlsEnabled" class="debug-controls">
           <label class="debug-toggle">
             <input v-model="showDebug" type="checkbox" />
@@ -2417,7 +2451,8 @@ function formatBriefTime(value?: string | null) {
     <div
       class="chat-workspace"
       :class="{
-        'context-closed': !showContextPanel && !showMemoryExplanation,
+        'context-closed': !showContextPanel && !showMemoryExplanation && !documentOpen,
+        'document-open': documentOpen,
         'memory-explanation-open': showMemoryExplanation
       }"
     >
@@ -2456,7 +2491,7 @@ function formatBriefTime(value?: string | null) {
         :tabindex="highlightedMessageId === message.id ? -1 : undefined"
       >
         <template v-if="message.role === 'user'">
-          <MessageAttachments v-if="message.attachments?.length" :attachments="message.attachments" />
+          <MessageAttachments v-if="message.attachments?.length" :attachments="message.attachments" @open-document="readDocumentAttachment" />
           <div v-else-if="userImages(message).length" class="uploaded-image-grid">
             <a
               v-for="image in userImages(message)"
@@ -2472,6 +2507,7 @@ function formatBriefTime(value?: string | null) {
           <div v-if="userDisplayText(message)" class="message-bubble message-content">
             {{ userDisplayText(message) }}
           </div>
+          <details v-if="documentRequestParts(message.content)" class="document-sent-context"><summary>已发送文档修改范围 · {{ documentRequestParts(message.content)!.text.length.toLocaleString() }} 字</summary><pre>{{ documentRequestParts(message.content)!.text }}</pre></details>
         </template>
 
         <template v-else>
@@ -2499,17 +2535,26 @@ function formatBriefTime(value?: string | null) {
           </div>
           <GeneratedImageGrid v-if="message.imageBatch" :items="message.imageBatch.items" @retry="retryFailedMessage(index)" />
           <AssistantMarkdown
-            v-if="assistantTextContent(message)"
+            v-if="assistantTextContent(message) && (!isDocumentTask(messages[index - 1]?.content || '') || isActiveTurnPhase(message.phase) || message.phase === 'FAILED' || message.recoveryState)"
             class="message-bubble message-content chat-answer"
             :text="assistantTextContent(message)"
             allow-images
             linkify
           />
+          <details v-else-if="assistantTextContent(message)" class="document-reply-body"><summary>查看回复正文</summary><AssistantMarkdown :text="assistantTextContent(message)" allow-images linkify /></details>
+          <DocumentArtifactCard
+            v-if="assistantTextContent(message) && !isActiveTurnPhase(message.phase) && message.phase !== 'FAILED' && !message.recoveryState"
+            :title="replyDraft(message, index)?.title || documentTitle(assistantTextContent(message), activeConversationTitle)"
+            :chars="replyDraft(message, index)?.content.length ?? assistantTextContent(message).length"
+            :version="replyDraft(message, index)?.versions.slice(-1)[0]?.number"
+            :compact="!isDocumentTask(messages[index - 1]?.content || '')"
+            @open="openReplyDraft(message, index)"
+          />
+          <button v-if="message.turnId && replyTargets.has(message.turnId) && assistantTextContent(message) && message.phase === 'COMPLETED' && !message.recoveryState" class="secondary apply-document-reply" type="button" @click="applyReply(assistantTextContent(message), message.turnId)">应用到引用范围</button>
           <DocumentExport
             v-if="assistantTextContent(message) && !isActiveTurnPhase(message.phase) && message.phase !== 'FAILED' && !message.recoveryState"
             :content="assistantTextContent(message)"
             :title="activeConversationTitle"
-            :expanded="wantsDocumentExport(messages[index - 1]?.content || '')"
           />
           <a
             v-for="image in assistantImages(message)"
@@ -3083,6 +3128,8 @@ function formatBriefTime(value?: string | null) {
       </div>
     </div>
 
+    <DocumentWorkspacePanel v-if="documentOpen" :drafts="documentDrafts" :active-id="activeDocumentId" :busy="documentBusy" :notice="documentNotice" :error="documentError" @close="documentOpen = false" @select="activeDocumentId = $event" @create="createDocument" @import="documentFileInput?.click()" @reference="referenceDocument" />
+    <input ref="documentFileInput" type="file" class="document-file-input" aria-label="读取文档文件" accept=".docx,.xlsx,.xlsm,.xls,.pptx,.pdf" @change="chooseDocument" />
     <ContextPanel title="当前上下文" :open="showContextPanel" @close="showContextPanel = false">
       <section class="context-section context-controls">
         <small>切换上下文</small>
@@ -3204,7 +3251,7 @@ function formatBriefTime(value?: string | null) {
       @remove-group="removeAttachmentGroup"
       @retry="retryAttachment"
       @dismiss-hint="dismissAttachmentHint"
-    ><template #tools><ToolPicker :key="activeProjectId || 'personal'" v-model="toolSelection" :disabled="loading" /></template></ChatComposer>
+    ><template #document-context><div v-if="documentReference" class="document-reference"><FileText :size="15" aria-hidden="true" /><button type="button" @click="openDocumentWorkspace">{{ documentReference.title }} · {{ documentReference.text.length.toLocaleString() }} 字修改范围</button><button type="button" aria-label="移除文档引用" :disabled="loading" @click="documentReference = undefined"><X :size="14" aria-hidden="true" /></button><small>发送后由当前模型改写；回复需点击应用。</small></div></template><template #tools><ToolPicker :key="activeProjectId || 'personal'" v-model="toolSelection" :disabled="loading" /></template></ChatComposer>
     </div>
   </section>
 </template>
@@ -3233,6 +3280,20 @@ function formatBriefTime(value?: string | null) {
 }
 
 .chat-workspace.context-closed { grid-template-columns: minmax(0, 1fr); }
+.chat-workspace.document-open { grid-template-columns: minmax(300px, .85fr) minmax(440px, 1.15fr); }
+.chat-workspace.document-open :deep(.assistant-markdown) { position:relative; }
+.page--document .toolbar { width:100%; }
+.document-toggle { display:inline-flex;align-items:center;gap:6px; }
+.document-toggle[aria-pressed=true] { color:var(--primary);background:var(--primary-soft); }
+.document-file-input { display: none; }
+.document-reference { display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 12px 0;padding:9px 10px;border-radius:9px;background:var(--primary-soft);color:var(--primary);font-size:12px; }
+.document-reference button { border:0;background:transparent;color:inherit;max-width:85%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px;cursor:pointer;font-size:12px; }
+.document-reference small { flex-basis:100%;color:var(--muted-foreground);font-size:11px; }
+.apply-document-reply { align-self:flex-start;font-size:12px; }
+.document-reply-body { width:100%;font-size:12px;color:var(--muted-foreground); }.document-reply-body summary { cursor:pointer;padding:8px 0; }.document-reply-body :deep(.assistant-markdown) { margin:10px 0; }
+.document-reply-body:not([open]) > :not(summary),.document-sent-context:not([open]) > :not(summary) { display:none; }
+.document-sent-context { max-width:100%;font-size:11px;color:var(--muted-foreground); }.document-sent-context summary { cursor:pointer; }.document-sent-context pre { max-height:200px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;padding:8px;background:var(--surface-muted);border-radius:8px; }
+@media(max-width:1100px) { .chat-workspace.document-open { grid-template-columns:minmax(0,1fr); } }
 .chat-workspace.memory-explanation-open { grid-template-columns: minmax(0, 1fr) minmax(380px, 420px); }
 
 .chat-list {
