@@ -839,6 +839,7 @@ export async function streamMessage(
     attachmentIds?: string[]
     retry?: boolean
     modelId?: string
+    toolSelection?: import('./integrations').ToolSelection
   },
   handlers: SseHandlers,
   options: { signal?: AbortSignal } = {}

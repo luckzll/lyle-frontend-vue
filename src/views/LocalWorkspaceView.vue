@@ -4,6 +4,10 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import { ArrowLeft, ArrowUp, Bot, Check, ChevronDown, ChevronRight, Code, Download, FileCode, FolderOpen, FolderPlus, History, LoaderCircle, Pencil, Plus, Search, ShieldCheck, Sparkles, Square, Trash2, X } from '@lucide/vue'
 import { authState } from '@/auth'
 import { workspaceStep, workspaceStepBody } from '@/api/local-workspace'
+import ToolPicker from '@/components/chat/ToolPicker.vue'
+import { useToolSelection } from '@/composables/useToolSelection'
+import { CLI_LABELS, invokeIntegratedTool, isIntegratedTool } from '@/api/integrations'
+import { confirmPendingOperation as approveToolOperation, rejectPendingOperation as rejectToolOperation } from '@/api/app'
 import { CHAT_MODEL_OPTIONS, CHAT_MODEL_STORAGE_KEY, resolveChatModelId, type ChatModelId } from '@/domain/chat-model'
 import LocalProjectText from '@/components/chat/LocalProjectText.vue'
 import LocalAgentProcess from '@/components/chat/LocalAgentProcess.vue'
@@ -32,6 +36,9 @@ const owner = authState.user?.id
 const loaded = owner == null ? { history: { projects: [] as LocalProject[], sessions: [] as LocalSession[], activeId: null, activeProjectId: null }, error: '请登录后使用本地项目' } : loadLocalHistory(owner)
 const projects = ref<LocalProject[]>(loaded.history.projects)
 const activeProjectId = ref(loaded.history.activeProjectId)
+const { selection: toolSelection, localWorkspace: commandWorkspace } = useToolSelection(computed(() => `local-project:${activeProjectId.value || 'none'}`))
+const externalPreview = ref<{ id: number; summary: string } | null>(null)
+let answerExternal: ((accepted: boolean) => void) | null = null
 const activeProject = computed(() => projects.value.find(project => project.id === activeProjectId.value))
 const sessions = ref<LocalSession[]>(loaded.history.sessions)
 const activeId = ref(loaded.history.activeId)
@@ -403,6 +410,7 @@ async function selectMode(next: 'read-only' | 'confirm' | 'auto') {
   finally { permissionBusy.value = false }
 }
 function stop() {
+  answerExternal?.(false); answerExternal = null; externalPreview.value = null
   controller?.abort(); answerChange?.(false); answerChange = null; preview.value = undefined; previewWorkspace.value = undefined
 }
 async function applyPreview() {
@@ -547,6 +555,8 @@ async function send() {
   const currentAttachments = localAttachments(scope)
   const activeWorkspace = new LocalConversationWorkspace(workspace.value, currentAttachments)
   const executionKind = sessionKind.value
+  const selectedTools = structuredClone({ ...toolSelection.value, mcpToolIds: [...toolSelection.value.mcpToolIds] })
+  const nativeWorkspace = commandWorkspace.value
   const question = input.value.trim() || '请查看本轮附加的图片、文件或目录，按需读取并说明内容；不要修改文件。'
   const images = currentAttachments.flatMap(item => item.image ? [item.image] : [])
   const userMessage: WorkspaceMessage = { role: 'user', content: question + attachmentManifest(currentAttachments, !!workspace.value), ...(images.length ? { images } : {}) }
@@ -565,6 +575,8 @@ async function send() {
   activeSession.value!.updatedAt = Date.now()
   if (activeProject.value) activeProject.value.updatedAt = Date.now()
   const rejectedPaths = new Set<string>()
+  const attemptedExternal = new Set<string>()
+  const rejectedExternal = new Set<string>()
   let lastExplanation = ''
   transcript = queuedTranscript
   for (const attachment of currentAttachments) if (attachment.image) removeLocalAttachment(scope, attachment.id)
@@ -578,7 +590,7 @@ async function send() {
       const modelActivity: LocalActivity = { label: '分析下一步', status: 'running' }
       current.activities.push(modelActivity)
       const activity = current.activities[current.activities.length - 1]!
-      const modelResult = await workspaceStep(transcript, signal, text => { commentary += text; activity.detail = commentary; void scrollToBottom() }, { mode: executionKind, workspaceConnected: activeWorkspace.connected, modelId: chatModelId.value })
+      const modelResult = await workspaceStep(transcript, signal, text => { commentary += text; activity.detail = commentary; void scrollToBottom() }, { mode: executionKind, workspaceConnected: activeWorkspace.connected, modelId: chatModelId.value, toolSelection: selectedTools })
       assertCurrentTurn()
       const result = imageBatches.prepare(modelResult, transcript)
       if (result.content !== modelResult.content) activity.detail = result.content
@@ -592,13 +604,44 @@ async function send() {
       const readImages: WorkspaceReadImage[] = []
       for (const call of result.tool_calls) {
         assertCurrentTurn()
-        if (!call.id || seen.has(call.id) || !labels[call.name] || !call.args || typeof call.args !== 'object') throw new Error('模型返回了无效的工具请求，已停止')
+        if (!call.id || seen.has(call.id) || (!labels[call.name] && !isIntegratedTool(call.name)) || !call.args || typeof call.args !== 'object') throw new Error('模型返回了无效的工具请求，已停止')
         seen.add(call.id)
-        current.activities.push({ label: labels[call.name]!, path: String(call.args.path || '/'), status: 'running' })
+        current.activities.push({ label: labels[call.name] || CLI_LABELS[call.name] || `调用 ${call.name}`, path: isIntegratedTool(call.name) ? (selectedTools.localCli && !call.name.startsWith('mcp_') ? `本机 · ${nativeWorkspace?.name || ''}` : '服务端') : String(call.args.path || '/'), status: 'running' })
         const row = current.activities[current.activities.length - 1]!
         let outcome: unknown
         try {
-          if (call.name === 'workspace_edit' || call.name === 'workspace_create') {
+          if (isIntegratedTool(call.name)) {
+            const callKey = JSON.stringify([call.name, call.args])
+            if (attemptedExternal.has(callKey) || rejectedExternal.has(call.name)) throw new Error('此工具操作已执行、失败或被拒绝，本轮不能重复执行；请使用已有结果。')
+            attemptedExternal.add(callKey)
+            let result: Record<string, any>
+            if (selectedTools.localCli && !call.name.startsWith('mcp_')) {
+              if (!window.lyleTools || !nativeWorkspace || executionKind !== 'agent') throw new Error('请先连接本机命令目录')
+              const requestId = crypto.randomUUID()
+              const cancel = () => { void window.lyleTools?.cancel(requestId) }
+              signal.addEventListener('abort', cancel, { once: true })
+              try { result = await window.lyleTools.run(nativeWorkspace.token, call.name, call.args, requestId) }
+              finally { signal.removeEventListener('abort', cancel) }
+            } else {
+              result = (await invokeIntegratedTool(call.name, call.args, selectedTools, signal, scope.sessionId)).data
+              while (result.requiresConfirmation && result.operation?.id) {
+                assertCurrentTurn()
+                externalPreview.value = { id: result.operation.id, summary: String(result.operation.summary) }
+                row.status = 'waiting'; await scrollToBottom(true)
+                const accepted = await new Promise<boolean>(resolve => { answerExternal = resolve })
+                const operationId = externalPreview.value?.id
+                answerExternal = null; externalPreview.value = null; assertCurrentTurn()
+                if (!operationId) throw new Error('操作已停止')
+                if (!accepted) { await rejectToolOperation(operationId); result = { ok: false, rejected: true, content: '用户拒绝此操作，不得再次请求或执行。' }; break }
+                row.status = 'running'
+                result = (await approveToolOperation(operationId)).data.result as Record<string, any>
+              }
+            }
+            outcome = result
+            if (result.rejected) rejectedExternal.add(call.name)
+            row.detail = String(result.content || result.summary || (result.ok ? '工具已返回结果' : '工具未完成'))
+            if (result.ok === false) row.status = 'error'
+          } else if (call.name === 'workspace_edit' || call.name === 'workspace_create') {
             if (executionKind !== 'agent') throw new Error('聊天模式不会修改文件。请只提供分析和建议，执行修改需要用户新建智能体对话。')
             const permissionMode = activeWorkspace.modeFor(String(call.args.path))
             if (permissionMode === 'read-only') throw new Error('当前为仅查看权限，文件未修改。请提供分析或建议，不要继续请求写入。')
@@ -624,7 +667,7 @@ async function send() {
             } else row.detail = localReadFeedback(call.name, outcome)
           }
           assertCurrentTurn()
-          row.status = 'done'
+          if (row.status !== 'error') row.status = 'done'
         } catch (e) {
           assertCurrentTurn()
           const message = e instanceof Error ? e.message : '文件操作失败'
@@ -639,13 +682,14 @@ async function send() {
       if (step === 15) throw new Error('已达到本轮 16 步上限；' + (imageBatches.pendingCount ? `尚有 ${imageBatches.pendingCount} 张图片未读取；` : '') + '已完成的文件修改保留，请检查后继续')
     }
   } catch (e) {
-    const message = signal.aborted ? '任务已停止，已完成的文件修改保留。' : e instanceof Error ? e.message : '任务失败'
+    const message = signal.aborted ? (attemptedExternal.size ? '任务已停止；已发出的外部操作可能仍在完成，请查看执行记录。已完成的文件修改保留。' : '任务已停止，已完成的文件修改保留。') : e instanceof Error ? e.message : '任务失败'
     error.value = message
     if (lastExplanation) current.answer = lastExplanation
     current.activities.push({ label: message, status: 'error' })
     transcript.splice(checkpoint)
     for (const activity of current.activities) if (activity.status === 'running' || activity.status === 'waiting') activity.status = 'error'
   } finally {
+    answerExternal = null; externalPreview.value = null
     imageBatches.cancel()
     loading.value = false; controller = null; answerChange = null; preview.value = undefined; previewWorkspace.value = undefined
     if (isActive()) { persist(); await scrollToBottom(); await browse(treePath.value, treeOffset.value) }
@@ -822,6 +866,7 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
       <div v-if="mode === 'auto'" class="auto-note"><ShieldCheck :size="16" /><span>已允许 AI 直接修改当前目录；每次写入仍会检查文件冲突。</span></div>
       <div v-if="activeSession" class="conversation-bar"><span><span class="session-kind-badge"><Bot :size="13" />智能体</span>{{ activeSession.title || '新对话' }}</span><div class="conversation-actions"><button class="text-button" :disabled="!turns.length" @click="exportConversation"><Download :size="14" />导出对话</button><button class="icon-button" :disabled="busy" aria-label="删除当前项目对话" title="删除当前对话" @click="deleteId = activeSession.id"><Trash2 :size="14" /></button></div></div>
 
+      <section v-if="externalPreview" class="reconnect-note" role="region" aria-label="确认工具操作"><ShieldCheck :size="17" /><p>{{ externalPreview.summary }}</p><button class="text-button" type="button" @click="answerExternal?.(false)">取消</button><button class="text-button" type="button" @click="answerExternal?.(true)">确认执行</button></section>
       <div ref="scroller" class="conversation-scroll">
         <div class="conversation-content">
           <section v-if="!turns.length" class="project-empty" :class="{ 'without-project': !activeProject }">
@@ -862,6 +907,7 @@ onBeforeUnmount(() => { leave(); mounted = false; if (saveTimer) clearTimeout(sa
           <textarea id="local-question" ref="questionInput" v-model="input" :disabled="busy" :placeholder="workspace || attachments.length ? '描述任务或提问，也可拖入图片、文档和文件夹…' : '描述任务或先提问，通过＋添加图片、文件和文件夹…'" rows="2" @keydown="composerKeydown" @paste="pasteAttachments" />
           <LocalWorkspaceAttachments :items="attachments" :disabled="busy" @remove="removeAttachment" @mode="changeAttachmentMode" />
           <footer class="composer-settings">
+            <ToolPicker :key="activeProjectId || 'none'" v-model="toolSelection" v-model:local-workspace="commandWorkspace" :disabled="busy" allow-local />
             <LocalWorkspaceAttachmentMenu :disabled="busy" @pick-images="pickAttachmentInput(attachmentImagesInput)" @pick-files="pickAttachmentFiles" @pick-folder="pickAttachmentFolder" />
             <span class="workspace-agent-label"><Bot :size="15" />智能体</span>
             <label class="workspace-model-picker">

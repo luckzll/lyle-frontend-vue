@@ -79,6 +79,8 @@ import {
   type ChatModelId
 } from '@/domain/chat-model'
 import ChatComposer from '@/components/chat/ChatComposer.vue'
+import ToolPicker from '@/components/chat/ToolPicker.vue'
+import { useToolSelection } from '@/composables/useToolSelection'
 import DebugAgentTimeline from '@/components/chat/DebugAgentTimeline.vue'
 import DebugLedger from '@/components/chat/DebugLedger.vue'
 import AgentProgressTimeline from '@/components/chat/AgentProgressTimeline.vue'
@@ -147,6 +149,7 @@ interface Message {
   processCompletedAt?: number
   recoveryState?: ChatRecoveryState
   toolResults?: ToolResult[]
+  operationFeedback?: Array<{ id: number; summary: string; content: string; ok: boolean }>
   candidateMemories?: MemoryItem[]
   candidateTasks?: CandidateTaskItem[]
   candidateGoals?: CandidateGoalItem[]
@@ -324,6 +327,7 @@ const activeProjectId = computed(() => {
   if (Number.isInteger(selected) && selected > 0) return selected
   return handoffProject.value?.id
 })
+const { selection: toolSelection } = useToolSelection(computed(() => `chat-project:${activeProjectId.value || 'personal'}`))
 const activeProjectName = computed(() => {
   if (!activeProjectId.value) return ''
   if (selectedProject.value?.id === activeProjectId.value) return selectedProject.value.name
@@ -1023,7 +1027,8 @@ async function submit(retryContext?: RetryTurnContext) {
       knowledgeBaseIds: selectedKnowledgeBaseId.value ? [selectedKnowledgeBaseId.value] : [],
       attachmentIds,
       retry: Boolean(retryContext),
-      modelId: chatModelId.value
+      modelId: chatModelId.value,
+      toolSelection: toolSelection.value
     }, {
       onOpen: () => {
         if (!liveTarget()) return
@@ -2279,6 +2284,13 @@ async function confirmOperation(message: Message, item: PendingOperationItem) {
     if (response.data.result?.ok === false) {
       item.error = String(response.data.result.content || '操作未完成，请查看执行记录。')
     }
+    if (!response.data.result?.requiresConfirmation && response.data.result) {
+      const result = response.data.result
+      message.operationFeedback = [...(message.operationFeedback || []).filter(feedback => feedback.id !== item.id), {
+        id: item.id, summary: item.summary, ok: Boolean(result.ok),
+        content: String(result.content || result.summary || (result.ok ? '操作已完成。' : '操作未完成，请查看执行记录。')).slice(0, 12000),
+      }]
+    }
     message.toolResults = [...(message.toolResults || [])]
     await refreshBrief()
   } catch (exception) {
@@ -2835,6 +2847,7 @@ function formatBriefTime(value?: string | null) {
           </article>
         </div>
 
+        <section v-if="message.operationFeedback?.length" class="tool-operation-feedback" aria-label="工具执行结果" aria-live="polite"><article v-for="feedback in message.operationFeedback" :key="feedback.id"><strong>{{ feedback.ok ? '执行完成' : '执行未完成' }} · {{ feedback.summary }}</strong><pre>{{ feedback.content }}</pre></article></section>
         <DebugLedger
           v-if="showDebug && message.role === 'assistant'"
           :key="`${conversationId}-${index}`"
@@ -3191,12 +3204,13 @@ function formatBriefTime(value?: string | null) {
       @remove-group="removeAttachmentGroup"
       @retry="retryAttachment"
       @dismiss-hint="dismissAttachmentHint"
-    />
+    ><template #tools><ToolPicker :key="activeProjectId || 'personal'" v-model="toolSelection" :disabled="loading" /></template></ChatComposer>
     </div>
   </section>
 </template>
 
 <style scoped>
+.tool-operation-feedback{margin:14px 0;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:var(--surface-muted)}.tool-operation-feedback strong{font-size:12px;overflow-wrap:anywhere}.tool-operation-feedback pre{font-size:12px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto;margin:10px 0 0}
 .personal-memory-list { display: grid; width: 100%; min-width: 0; gap: 12px; margin-top: 14px; }
 .attachment-context-note { margin: 0 0 10px; color: var(--muted-foreground); font-size: 11px; line-height: 1.6; }
 .page {

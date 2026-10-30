@@ -49,7 +49,7 @@ export function localActivityFeedback(activity: LocalActivity, displayStatus: Lo
   const detail = activity.detail?.trim() ? activity.detail : ''
   if (displayStatus === 'interrupted') return withDetail('本轮已停止，此步骤未完成。', detail)
   if (displayStatus === 'error') return withDetail('此步骤未能完成。', detail)
-  if (displayStatus === 'waiting') return withDetail('等待你确认这项修改，文件尚未写入。', detail)
+  if (displayStatus === 'waiting') return withDetail(writeLabels.has(activity.label) ? '等待你确认这项修改，文件尚未写入。' : '等待你确认这项工具操作，尚未执行。', detail)
   if (displayStatus === 'rejected') return detail || rejectedWriteDetail
   if (detail) return detail
   return stepFeedback[activity.label]?.[displayStatus] || (displayStatus === 'running' ? '正在处理此步骤，结果尚未返回。' : '此步骤已结束，未提供结果详情。')

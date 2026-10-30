@@ -2,13 +2,14 @@ import { getAuthToken, initializeAuth } from '@/auth'
 import type { WorkspaceMessage } from '@/domain/local-workspace'
 import type { ChatModelId } from '@/domain/chat-model'
 import { MAX_WORKSPACE_CLIENT_BYTES, validateWorkspaceImages } from '@/domain/local-workspace-images'
+import type { ToolSelection } from './integrations'
 
 export type WorkspaceMode = 'chat' | 'agent'
-export interface WorkspaceStepOptions { mode?: WorkspaceMode; workspaceConnected?: boolean; modelId?: ChatModelId }
+export interface WorkspaceStepOptions { mode?: WorkspaceMode; workspaceConnected?: boolean; modelId?: ChatModelId; toolSelection?: ToolSelection }
 
 export function workspaceStepBody(messages: WorkspaceMessage[], options: WorkspaceStepOptions = {}) {
   for (const message of messages) validateWorkspaceImages(message.images, message.role)
-  const body = JSON.stringify({ messages, mode: options.mode ?? 'agent', workspaceConnected: options.workspaceConnected ?? true, modelId: options.modelId })
+  const body = JSON.stringify({ messages, mode: options.mode ?? 'agent', workspaceConnected: options.workspaceConnected ?? true, modelId: options.modelId, toolSelection: options.toolSelection })
   if (new TextEncoder().encode(body).length > MAX_WORKSPACE_CLIENT_BYTES) throw new Error('图片和对话上下文已满，请减少附件或新建当前项目的对话；文件和记录会保留')
   return body
 }
