@@ -5,7 +5,7 @@ import { X } from '@lucide/vue'
 const props = withDefaults(defineProps<{
   title?: string
   open?: boolean
-  variant?: 'default' | 'memory'
+  variant?: 'default' | 'memory' | 'workspace'
 }>(), { title: '上下文', open: true, variant: 'default' })
 const emit = defineEmits<{ close: [] }>()
 const panel = ref<HTMLElement | null>(null)
@@ -96,7 +96,7 @@ watch([() => props.open, isOverlay], ([open, overlay]) => {
 })
 
 onMounted(() => {
-  mediaQuery = window.matchMedia('(max-width: 1024px)')
+  mediaQuery = window.matchMedia(props.variant === 'workspace' ? '(max-width:1100px)' : '(max-width:1024px)')
   updateOverlay()
   mediaQuery.addEventListener('change', updateOverlay)
   if (props.open && isOverlay.value) void activateOverlay()
@@ -154,6 +154,13 @@ header { display: flex; align-items: center; justify-content: space-between; bor
 header button { display: grid; width: 30px; height: 30px; place-items: center; border-radius: var(--radius-md); background: transparent; color: var(--muted-foreground); padding: 0; }
 header button:hover { background: var(--surface-muted); }
 .content { display: grid; gap: var(--space-4); padding: var(--space-4); }
+.context-panel--workspace{display:flex;flex-direction:column;min-height:0;border:0;border-left:1px solid var(--border);border-radius:0;background:var(--surface)}
+.context-panel--workspace>header{min-height:44px;max-height:44px;padding:0 7px 0 0;gap:3px;flex-shrink:0;background:color-mix(in srgb,var(--foreground) 3%,var(--surface))}
+.context-panel--workspace>header>button{flex-shrink:0;border:0;min-width:30px}
+.context-panel--workspace>.content{display:block;flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:36px 34px}
+.context-panel-layer--overlay.context-panel-layer--workspace{padding:64px 0 0;background:var(--backdrop)}
+.context-panel-layer--workspace.context-panel-layer--overlay .context-panel{width:min(100vw,620px);border-radius:0;box-shadow:none}
+@media(max-width:540px){.context-panel--workspace>.content{padding:28px 22px}}
 
 @media (max-width: 640px) {
   .context-panel-layer--overlay.context-panel-layer--memory {

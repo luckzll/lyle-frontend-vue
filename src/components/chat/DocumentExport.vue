@@ -4,7 +4,7 @@ import { CheckCircle2, ChevronDown, Download, FileText, FolderDown, LoaderCircle
 import AppButton from '@/components/ui/AppButton.vue'
 import { canChooseDocumentLocation, createDocumentBlob, documentFilename, documentTitle, saveDocumentFile, type DocumentFormat } from '@/domain/document-export'
 
-const props = withDefaults(defineProps<{ content: string; title?: string; expanded?: boolean; sourceLabel?: string; compact?: boolean }>(), { title: '聊天整理', expanded: false, sourceLabel: '当前回复', compact: false })
+const props = withDefaults(defineProps<{ content: string; title?: string; expanded?: boolean; sourceLabel?: string; compact?: boolean; neutral?: boolean }>(), { title: '聊天整理', expanded: false, sourceLabel: '当前回复', compact: false, neutral: false })
 const id = useId()
 const open = ref(props.expanded)
 const root = ref<HTMLElement>()
@@ -66,7 +66,7 @@ async function save(downloadOnly = false) {
 </script>
 
 <template>
-  <div ref="root" class="document-export" :class="{ 'document-export--compact': compact }" @keydown.esc.stop="close">
+  <div ref="root" class="document-export" :class="{ 'document-export--compact': compact, 'document-export--neutral': neutral }" @keydown.esc.stop="close">
     <button v-if="compact || !open" ref="trigger" class="export-trigger" :class="{ 'export-trigger--primary': compact }" type="button" :aria-expanded="open" :aria-controls="`${id}-card`" @click="open ? close() : open = true"><Download :size="15" aria-hidden="true" />{{ compact ? '下载' : '保存为文件' }}<ChevronDown v-if="compact" :size="13" aria-hidden="true" /></button>
     <section v-if="open" :id="`${id}-card`" class="export-card" :aria-labelledby="`${id}-title`">
       <div class="export-heading">
@@ -91,11 +91,15 @@ async function save(downloadOnly = false) {
 <style scoped>
 .document-export { width: 100%; min-width: 0; }
 .document-export--compact{position:relative;width:auto;flex-shrink:0}
-.document-export--compact .export-card{position:absolute;z-index:5;right:0;top:calc(100% + 10px);width:min(520px,calc(100vw - 44px));max-height:min(560px,calc(100dvh - 210px));overflow:auto;box-sizing:border-box;box-shadow:var(--shadow-popover);text-align:left}
+.document-export--compact .export-card{position:absolute;z-index:5;right:0;top:calc(100% + 10px);width:min(520px,calc(var(--workspace-pane-width,100vw) - 28px),calc(100vw - 28px));max-height:min(560px,calc(100dvh - 160px));overflow:auto;box-sizing:border-box;box-shadow:var(--shadow-popover);text-align:left}
 .document-export--compact .export-trigger--primary{min-height:34px;padding:7px 12px;color:var(--primary-foreground,#fff);background:var(--primary);font-weight:600;font-size:13px;justify-content:center}
 .document-export--compact .export-trigger--primary:hover{color:var(--primary-foreground,#fff);background:var(--primary-hover,var(--primary))}
+.document-export--neutral .export-trigger--primary{min-height:30px;padding:5px 10px;border:1px solid var(--border);background:var(--surface);color:var(--foreground);font-size:12px;font-weight:500}
+.document-export--neutral .export-trigger--primary:hover{background:var(--surface-muted);color:var(--foreground)}
+.document-export--neutral .export-icon{background:var(--surface-muted);color:var(--foreground)}
 .document-export--compact .export-fields{grid-template-columns:minmax(0,1fr) 145px}
 @media(max-width:540px){.document-export--compact .export-fields{grid-template-columns:minmax(0,1fr)}.document-export--compact .export-card{max-height:calc(100dvh - 260px)}}
+@media(max-width:1100px){.document-export--compact .export-card{width:min(520px,calc(100vw - 28px))}}
 .export-trigger { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; background: transparent; border: 0; border-radius: 6px; color: var(--muted-foreground); font-size: 12px; }
 .export-trigger:hover { color: var(--primary); background: var(--primary-soft); }
 .export-card { border: 1px solid var(--border); background: var(--surface); border-radius: 14px; padding: 16px; max-width: 680px; }

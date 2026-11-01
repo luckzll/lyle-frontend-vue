@@ -4,7 +4,7 @@ import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { authState } from '@/auth'
 import { newChatLocation, notifyChatNavigationChanged } from '@/domain/chat-navigation'
 import { memoryReasonLabel, memoryTargetKey, setCandidateTargetKey } from '@/domain/memory-presentation'
-import { ArrowDown, ArrowRight, BrainCircuit, ChevronRight, Circle, Database, FileText, GitBranch, Pencil, Sparkles, Wrench, X } from '@lucide/vue'
+import { ArrowDown, ArrowRight, BrainCircuit, ChevronRight, Circle, Database, FileText, GitBranch, Pencil, Plus, Maximize2, Minimize2, Sparkles, Wrench, X } from '@lucide/vue'
 import {
   createConversation,
   createAgentTodo,
@@ -99,6 +99,7 @@ import DocumentWorkspacePanel from '@/components/chat/DocumentWorkspacePanel.vue
 import ChatWorkspaceSwitcher from '@/components/chat/ChatWorkspaceSwitcher.vue'
 import DocumentArtifactCard from '@/components/chat/DocumentArtifactCard.vue'
 import { useDocumentWorkspace } from '@/composables/useDocumentWorkspace'
+import { useChatWorkspaceLayout } from '@/composables/useChatWorkspaceLayout'
 import { documentEditPrompt, documentRequestParts, isDocumentTask, type DocumentTarget } from '@/domain/document-workspace'
 import { documentTitle } from '@/domain/document-export'
 import { presentAgentTrace } from '@/domain/chat-trace-presentation'
@@ -230,6 +231,10 @@ const error = ref('')
 const commercialQuotaError = ref(false)
 const conversationId = ref('')
 const { drafts: documentDrafts, activeId: activeDocumentId, open: documentOpen, busy: documentBusy, notice: documentNotice, error: documentError, reference: documentReference, replyTargets, create: createDocument, fromReply: draftFromReply, read: readDocument, applyReply, promote: promoteDocumentScope } = useDocumentWorkspace(conversationId, computed(() => String(authState.user?.id || '')))
+const { workspaceElement, expanded: workspaceExpanded, resizing: workspaceResizing, style: workspaceStyle, percentage: workspacePercentage, minimumPercentage: workspaceMinimumPercentage, maximumPercentage: workspaceMaximumPercentage, start: startWorkspaceResize, move: moveWorkspaceResize, finish: finishWorkspaceResize, keydown: workspaceResizeKeydown, reset: resetWorkspaceWidth } = useChatWorkspaceLayout()
+watch([documentOpen, showContextPanel], ([document, context]) => { if (!document && !context) workspaceExpanded.value = false })
+function selectWorkspaceDocument(id?: string) { if (id) activeDocumentId.value = id; openDocumentWorkspace() }
+function createWorkspaceDocument() { openDocumentWorkspace(); createDocument() }
 const documentFileInput = ref<HTMLInputElement>()
 function openDocumentWorkspace() { showContextPanel.value = false; showMemoryExplanation.value = false; documentOpen.value = true }
 function openReplyDraft(message: Message, index: number) {
@@ -2397,7 +2402,8 @@ function formatBriefTime(value?: string | null) {
 <template>
   <section
     class="page chat-page"
-    :class="{ 'page--document': documentOpen, 'page--context': showContextPanel }"
+    :class="{ 'page--document': documentOpen, 'page--context': showContextPanel, 'page--workspace': documentOpen || showContextPanel, 'page--workspace-expanded': workspaceExpanded && (documentOpen || showContextPanel) }"
+    :style="workspaceStyle"
     @dragenter="workspaceDragenter"
     @dragleave="workspaceDragleave"
     @dragover="workspaceDragover"
@@ -2418,7 +2424,7 @@ function formatBriefTime(value?: string | null) {
         <div v-else class="conversation-title-line"><span class="conversation-breadcrumb">聊天</span><ChevronRight :size="14" class="conversation-breadcrumb" aria-hidden="true" /><h1 :title="activeConversationTitle">{{ conversationId ? activeConversationTitle : '新对话' }}</h1><button v-if="conversationId" class="conversation-rename" type="button" aria-label="编辑标题" title="编辑标题" @click="startTitleEdit"><Pencil :size="14" aria-hidden="true" /></button></div>
       </div>
       <div class="row toolbar-controls">
-        <ChatWorkspaceSwitcher v-if="!documentOpen && !showContextPanel" :count="documentDrafts.length" @document="openDocumentWorkspace" @context="toggleContextPanel" />
+        <ChatWorkspaceSwitcher v-if="!documentOpen && !showContextPanel" :count="documentDrafts.length" @document="selectWorkspaceDocument" @context="toggleContextPanel" />
         <div v-if="debugControlsEnabled" class="debug-controls">
           <label class="debug-toggle">
             <input v-model="showDebug" type="checkbox" />
@@ -2442,10 +2448,14 @@ function formatBriefTime(value?: string | null) {
     <p v-if="briefError" class="alert danger">{{ briefError }}</p>
 
     <div
+      ref="workspaceElement"
       class="chat-workspace"
       :class="{
         'context-closed': !showContextPanel && !showMemoryExplanation && !documentOpen,
         'document-open': documentOpen,
+        'workspace-open': documentOpen || showContextPanel,
+        'workspace-resizing': workspaceResizing,
+        'workspace-expanded': workspaceExpanded && (documentOpen || showContextPanel),
         'memory-explanation-open': showMemoryExplanation
       }"
     >
@@ -3122,12 +3132,13 @@ function formatBriefTime(value?: string | null) {
       </div>
     </div>
 
-    <DocumentWorkspacePanel v-if="documentOpen" :drafts="documentDrafts" :active-id="activeDocumentId" :busy="documentBusy" :notice="documentNotice" :error="documentError" @close="documentOpen = false" @select="activeDocumentId = $event" @create="createDocument" @import="documentFileInput?.click()" @reference="referenceDocument"><template #switcher><ChatWorkspaceSwitcher active="document" :count="documentDrafts.length" @document="openDocumentWorkspace" @context="openContextPanel" /></template></DocumentWorkspacePanel>
+    <DocumentWorkspacePanel v-if="documentOpen" :drafts="documentDrafts" :active-id="activeDocumentId" :busy="documentBusy" :notice="documentNotice" :error="documentError" :expanded="workspaceExpanded" @maximize="workspaceExpanded = !workspaceExpanded" @close="documentOpen = false" @select="activeDocumentId = $event" @create="createDocument" @import="documentFileInput?.click()" @reference="referenceDocument"><template #switcher><ChatWorkspaceSwitcher expanded active="document" :count="documentDrafts.length" :documents="documentDrafts" :selected-id="activeDocumentId" @document="selectWorkspaceDocument" @context="openContextPanel" /></template></DocumentWorkspacePanel>
+    <div v-if="(documentOpen || showContextPanel) && !workspaceExpanded" class="workspace-divider" role="separator" tabindex="0" aria-label="调整聊天和工作区宽度" aria-orientation="vertical" :aria-valuenow="workspacePercentage" :aria-valuetext="`工作区占 ${workspacePercentage}%`" :aria-valuemin="workspaceMinimumPercentage" :aria-valuemax="workspaceMaximumPercentage" @pointerdown="startWorkspaceResize" @pointermove="moveWorkspaceResize" @pointerup="finishWorkspaceResize" @pointercancel="finishWorkspaceResize" @keydown="workspaceResizeKeydown" @dblclick="resetWorkspaceWidth" />
     <input ref="documentFileInput" type="file" class="document-file-input" aria-label="读取文档文件" accept=".docx,.xlsx,.xlsm,.xls,.pptx,.pdf" @change="chooseDocument" />
-    <ContextPanel title="当前上下文" :open="showContextPanel" @close="showContextPanel = false">
-      <template #header><ChatWorkspaceSwitcher active="context" :count="documentDrafts.length" @document="openDocumentWorkspace" @context="openContextPanel" /></template>
+    <ContextPanel title="当前上下文" variant="workspace" :open="showContextPanel" @close="showContextPanel = false">
+      <template #header><ChatWorkspaceSwitcher expanded active="context" :count="documentDrafts.length" :documents="documentDrafts" :selected-id="activeDocumentId" @document="selectWorkspaceDocument" @context="openContextPanel" /><div class="context-window-actions"><button type="button" aria-label="新建文档" title="新建文档" @click="createWorkspaceDocument"><Plus :size="16" /></button><button class="workspace-maximize" type="button" :aria-pressed="workspaceExpanded" :aria-label="workspaceExpanded ? '退出专注工作区' : '专注工作区'" @click="workspaceExpanded = !workspaceExpanded"><Minimize2 v-if="workspaceExpanded" :size="15" /><Maximize2 v-else :size="15" /></button></div></template>
       <section class="context-section context-controls">
-        <small>对话资料</small>
+        <h2 class="context-title">对话资料</h2>
         <p class="context-persistence-note">关联的项目计划和知识库会持续用于新消息与新对话，直到你在这里切换为不使用。</p>
         <label>
           <span>切换对话</span>
@@ -3201,10 +3212,10 @@ function formatBriefTime(value?: string | null) {
           <p>{{ sourceSnippet(source, 120) }}</p>
         </details>
       </section>
-      <section v-if="contextTimeline.length" class="context-section">
-        <small>执行详情</small>
+      <details v-if="contextTimeline.length" class="context-section context-execution">
+        <summary><span>本次执行 · {{ contextTimeline.length }} 个步骤</span><ChevronRight :size="14" aria-hidden="true" /></summary>
         <ExecutionTimeline :steps="contextTimeline" />
-      </section>
+      </details>
       <section v-if="pendingBriefMemories.length || pendingBriefOperations.length" class="context-section attention">
         <small>等待处理</small>
         <RouterLink v-if="pendingBriefMemories.length" to="/memory">{{ pendingBriefMemories.length }} 条记忆待确认</RouterLink>
@@ -3684,31 +3695,25 @@ function formatBriefTime(value?: string | null) {
   .turn-status-dot, .image-skeleton::after, .image-skeleton span, .source-message-highlight { animation: none; }
 }
 
-/* Workspace chrome shares the same surface as the conversation and document. */
+/* Docked workspace: compact tabs, independent panes, and a resizable divider. */
 :global(.lyle-shell__main--chat:has(.chat-page)){padding:0}
 .chat-page{position:relative;gap:0}
-.chat-page>.toolbar{min-height:58px;flex-shrink:0;padding:10px 24px;box-sizing:border-box;gap:12px;margin-inline:auto;align-items:center}
-.conversation-heading{min-width:0;flex:1}.conversation-title-line{flex-wrap:nowrap;gap:9px;min-width:0;margin:0}
-.conversation-title-line h1{margin:0;font-size:14px;font-weight:650;line-height:1.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.conversation-breadcrumb{flex-shrink:0;color:var(--muted-foreground);font-size:12px}
-.conversation-rename{display:grid;place-items:center;min-width:28px;min-height:28px;padding:4px;border:0;border-radius:6px;background:transparent;color:var(--muted-foreground);flex-shrink:0}
-.conversation-rename:hover{color:var(--foreground);background:var(--surface-muted)}
-.conversation-rename:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-.chat-page .toolbar-controls{gap:8px;flex-shrink:0;width:auto}
-.chat-page .title-editor{margin:0;grid-template-columns:minmax(0,1fr) auto auto}
-.chat-page .chat-workspace{gap:12px 0}
-.chat-page .chat-list{width:min(100% - 48px,var(--chat-content-width));padding-top:20px}
-.chat-page .chat-input{width:min(100% - 32px,var(--chat-content-width));margin-bottom:16px}
-.chat-page .chat-workspace.document-open{grid-template-columns:minmax(320px,.42fr) minmax(460px,.58fr)}
-.chat-page .chat-workspace.document-open>.chat-list{width:100%;padding:76px 24px 16px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent}
-.chat-page .chat-workspace.document-open .message.user>.message-bubble{background:var(--primary-soft);border-color:transparent}
-.chat-page .chat-workspace.document-open>.chat-input{width:calc(100% - 32px)}
-.chat-page.page--context :deep(.context-panel){grid-column:2;grid-row:1 / 3;min-height:0;border:0;border-left:1px solid var(--border);border-radius:0;display:flex;flex-direction:column}
-.chat-page.page--context :deep(.context-panel>.content){min-height:0;overflow:auto;overscroll-behavior:contain;flex:1}
-.chat-page.page--context :deep(.context-panel>header){flex-shrink:0;padding:10px 14px;min-height:58px;box-sizing:border-box;gap:8px}
-.chat-page.page--context .chat-workspace{grid-template-columns:minmax(0,1fr) minmax(300px,340px)}
-@media(min-width:1101px){.chat-page.page--document>.toolbar{position:absolute;z-index:2;top:0;left:0;width:42%;margin:0;background:var(--background);border-bottom:1px solid var(--border)}.chat-page.page--document .conversation-breadcrumb{display:none}.chat-page.page--document .conversation-title-line{gap:6px}}
-@media(max-width:1100px){.chat-page .chat-workspace.document-open{grid-template-columns:minmax(0,1fr)}.chat-page .chat-workspace.document-open>.chat-list{width:min(100% - 40px,var(--chat-content-width));padding:20px 0}}
-@media(max-width:1024px){.chat-page.page--context .chat-workspace{grid-template-columns:minmax(0,1fr)}}
-@media(max-width:640px){.chat-page>.toolbar{flex-direction:row;align-items:center;padding:10px 14px;gap:8px}.conversation-breadcrumb{display:none}.conversation-title-line{gap:4px}.conversation-title-line h1{font-size:13px}.chat-page .chat-list{width:calc(100% - 28px);padding-top:12px}.chat-page .chat-input{width:calc(100% - 20px);margin-bottom:10px}.chat-page .chat-workspace.document-open>.chat-list{width:calc(100% - 28px)}.chat-page .toolbar-controls{flex-wrap:nowrap}.chat-page .debug-controls{position:absolute;top:100%;right:12px;z-index:4}}
+.chat-page>.toolbar{min-height:52px;flex-shrink:0;padding:8px 24px;box-sizing:border-box;gap:12px;margin-inline:auto;align-items:center}
+.conversation-heading{min-width:0;flex:1}.conversation-title-line{flex-wrap:nowrap;gap:8px;min-width:0;margin:0}.conversation-title-line h1{margin:0;font-size:14px;font-weight:600;line-height:1.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.conversation-breadcrumb{flex-shrink:0;color:var(--muted-foreground);font-size:12px}.conversation-rename{display:grid;place-items:center;min-width:28px;min-height:28px;padding:4px;border:0;border-radius:6px;background:transparent;color:var(--muted-foreground);flex-shrink:0}.conversation-rename:hover{color:var(--foreground);background:var(--surface-muted)}.conversation-rename:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
+.chat-page .toolbar-controls{gap:8px;flex-shrink:0;width:auto}.chat-page .title-editor{margin:0;grid-template-columns:minmax(0,1fr) auto auto}
+.chat-page .chat-workspace{gap:12px 0}.chat-page .chat-list{width:min(100% - 56px,var(--chat-content-width));padding-top:20px}.chat-page .chat-input{width:min(100% - 40px,var(--chat-content-width));margin-bottom:18px}
+.chat-page .chat-workspace.workspace-open{grid-template-columns:minmax(320px,1fr) var(--workspace-pane-width)}
+.chat-page .workspace-open>.chat-list{width:100%;padding:72px 28px 16px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent}
+.chat-page .workspace-open>.chat-input{width:calc(100% - 40px)}
+.chat-page .workspace-open .message.user>.message-bubble{background:color-mix(in srgb,var(--foreground) 3%,var(--surface));border-color:transparent;border-radius:15px 15px 4px 15px}
+.chat-page :deep(.context-panel--workspace){grid-column:2;grid-row:1 / 3}
+.context-window-actions{display:flex;align-items:center;gap:2px;flex-shrink:0}.context-window-actions button{display:grid;place-items:center;min-width:30px;min-height:30px;padding:5px;border:0;border-radius:6px;background:transparent;color:var(--muted-foreground)}.context-window-actions button:hover{background:var(--surface);color:var(--foreground)}
+.context-title{font-size:18px;font-weight:600;letter-spacing:-.02em;margin:0 0 10px;color:var(--foreground)}
+.context-controls{gap:0}.context-persistence-note{margin-bottom:20px;font-size:12px;line-height:1.8;max-width:540px}.context-controls label{grid-template-columns:100px minmax(0,1fr);align-items:center;gap:8px 18px;padding:14px 0;border-bottom:1px solid color-mix(in srgb,var(--border) 65%,transparent);font-size:12px;font-weight:500;color:var(--foreground)}.context-controls label>small{grid-column:2;font-size:11px;line-height:1.7}.context-controls select{min-height:36px;padding:7px 10px;border-radius:6px;border-color:var(--border);font-size:12px;font-weight:400;background:color-mix(in srgb,var(--foreground) 2%,var(--surface))}
+.context-section+.context-section{margin-top:26px;padding-top:20px}.context-execution summary{cursor:pointer;font-size:12px;color:var(--muted-foreground);list-style:none}.context-execution summary{display:flex;justify-content:space-between;align-items:center}.context-execution[open] summary>svg{transform:rotate(90deg)}.context-execution :deep(.timeline){margin-top:16px}
+.workspace-divider{position:absolute;top:0;bottom:0;left:calc(100% - var(--workspace-pane-width) - 3px);width:7px;z-index:9;cursor:col-resize;touch-action:none;outline:0}.workspace-divider:hover,.workspace-divider:focus-visible,.workspace-resizing>.workspace-divider{background:color-mix(in srgb,var(--foreground) 14%,transparent)}.workspace-divider:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px}.workspace-resizing{user-select:none;cursor:col-resize}.workspace-resizing *{cursor:col-resize!important}
+@media(min-width:1101px){.chat-page.page--workspace>.toolbar{position:absolute;z-index:2;top:0;left:0;width:calc(100% - var(--workspace-pane-width));margin:0;background:var(--background);border-bottom:1px solid color-mix(in srgb,var(--border) 65%,transparent)}.chat-page.page--workspace .conversation-breadcrumb{display:none}.chat-page.page--workspace-expanded>.toolbar{display:none}.chat-page .chat-workspace.workspace-expanded{grid-template-columns:minmax(0,1fr)}.chat-page .workspace-expanded>.chat-list,.chat-page .workspace-expanded>.chat-input{display:none}.chat-page .workspace-expanded>:deep(.document-workspace-panel),.chat-page .workspace-expanded :deep(.context-panel--workspace){grid-column:1}.chat-page.page--workspace>.toolbar+:is(.alert,.source-replay-notice,.commercial-quota-card){margin-top:52px}}
+@media(max-width:1100px){.chat-page .chat-workspace.workspace-open{grid-template-columns:minmax(0,1fr)}.chat-page .workspace-open>.chat-list{width:min(100% - 40px,var(--chat-content-width));padding:20px 0}.workspace-divider,.workspace-maximize{display:none!important}}
+@media(max-width:640px){.chat-page>.toolbar{flex-direction:row;align-items:center;padding:9px 14px;gap:8px}.conversation-breadcrumb{display:none}.conversation-title-line{gap:4px}.conversation-title-line h1{font-size:13px}.chat-page .chat-list{width:calc(100% - 28px);padding-top:12px}.chat-page .chat-input{width:calc(100% - 20px);margin-bottom:10px}.chat-page .workspace-open>.chat-list{width:calc(100% - 28px)}.chat-page .toolbar-controls{flex-wrap:nowrap}.chat-page .debug-controls{position:absolute;top:100%;right:12px;z-index:4}.context-controls label{grid-template-columns:minmax(0,1fr)}.context-controls label>small{grid-column:1}.context-window-actions button{min-width:27px}}
 </style>
