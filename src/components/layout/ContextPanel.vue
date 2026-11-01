@@ -129,7 +129,7 @@ onBeforeUnmount(() => {
         :role="isOverlay ? 'dialog' : undefined"
         :tabindex="isOverlay ? -1 : undefined"
       >
-        <header><strong>{{ title }}</strong><button type="button" aria-label="关闭上下文栏" @click="$emit('close')"><X :size="17" /></button></header>
+        <header><slot name="header"><strong>{{ title }}</strong></slot><button type="button" aria-label="关闭上下文栏" @click="$emit('close')"><X :size="17" /></button></header>
         <div class="content"><slot /></div>
       </aside>
     </div>

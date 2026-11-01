@@ -4,7 +4,7 @@ import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { authState } from '@/auth'
 import { newChatLocation, notifyChatNavigationChanged } from '@/domain/chat-navigation'
 import { memoryReasonLabel, memoryTargetKey, setCandidateTargetKey } from '@/domain/memory-presentation'
-import { ArrowDown, ArrowRight, BrainCircuit, ChevronRight, Circle, Database, FileText, GitBranch, PanelRightOpen, Sparkles, Wrench, X } from '@lucide/vue'
+import { ArrowDown, ArrowRight, BrainCircuit, ChevronRight, Circle, Database, FileText, GitBranch, Pencil, Sparkles, Wrench, X } from '@lucide/vue'
 import {
   createConversation,
   createAgentTodo,
@@ -96,6 +96,7 @@ import { summarizeChatDebug } from '@/domain/chat-debug-summary'
 import ChatSources from '@/components/chat/ChatSources.vue'
 import DocumentExport from '@/components/chat/DocumentExport.vue'
 import DocumentWorkspacePanel from '@/components/chat/DocumentWorkspacePanel.vue'
+import ChatWorkspaceSwitcher from '@/components/chat/ChatWorkspaceSwitcher.vue'
 import DocumentArtifactCard from '@/components/chat/DocumentArtifactCard.vue'
 import { useDocumentWorkspace } from '@/composables/useDocumentWorkspace'
 import { documentEditPrompt, documentRequestParts, isDocumentTask, type DocumentTarget } from '@/domain/document-workspace'
@@ -2395,16 +2396,15 @@ function formatBriefTime(value?: string | null) {
 
 <template>
   <section
-    class="page"
-    :class="{ 'page--document': documentOpen }"
+    class="page chat-page"
+    :class="{ 'page--document': documentOpen, 'page--context': showContextPanel }"
     @dragenter="workspaceDragenter"
     @dragleave="workspaceDragleave"
     @dragover="workspaceDragover"
     @drop="workspaceDrop"
   >
     <div class="toolbar">
-      <div>
-        <h1>AI 聊天</h1>
+      <div class="conversation-heading">
         <form v-if="editingTitle" class="title-editor" @submit.prevent="saveTitle">
           <input v-model="titleDraft" maxlength="120" aria-label="对话标题" />
           <button type="submit" :disabled="titleSaving || !titleDraft.trim()">{{ titleSaving ? '保存中…' : '保存' }}</button>
@@ -2415,13 +2415,10 @@ function formatBriefTime(value?: string | null) {
             @click="editingTitle = false; editingConversationId = ''"
           >取消</button>
         </form>
-        <p v-else class="muted conversation-title-line">
-          {{ activeConversationTitle }} · {{ activeKnowledgeBaseName }}
-          <button v-if="conversationId" class="inline secondary" type="button" @click="startTitleEdit">编辑标题</button>
-        </p>
+        <div v-else class="conversation-title-line"><span class="conversation-breadcrumb">聊天</span><ChevronRight :size="14" class="conversation-breadcrumb" aria-hidden="true" /><h1 :title="activeConversationTitle">{{ conversationId ? activeConversationTitle : '新对话' }}</h1><button v-if="conversationId" class="conversation-rename" type="button" aria-label="编辑标题" title="编辑标题" @click="startTitleEdit"><Pencil :size="14" aria-hidden="true" /></button></div>
       </div>
       <div class="row toolbar-controls">
-        <button class="secondary document-toggle" type="button" :aria-pressed="documentOpen" @click="openDocumentWorkspace"><FileText :size="16" aria-hidden="true" />文档{{ documentDrafts.length ? ` · ${documentDrafts.length}` : '' }}</button>
+        <ChatWorkspaceSwitcher v-if="!documentOpen && !showContextPanel" :count="documentDrafts.length" @document="openDocumentWorkspace" @context="toggleContextPanel" />
         <div v-if="debugControlsEnabled" class="debug-controls">
           <label class="debug-toggle">
             <input v-model="showDebug" type="checkbox" />
@@ -2429,10 +2426,6 @@ function formatBriefTime(value?: string | null) {
           </label>
           <button class="secondary debug-exit" type="button" @click="exitDebugMode">退出调试</button>
         </div>
-        <button class="secondary context-toggle" type="button" aria-label="上下文" :aria-pressed="showContextPanel" @click="toggleContextPanel">
-          <PanelRightOpen :size="16" aria-hidden="true" />
-          当前上下文
-        </button>
       </div>
     </div>
 
@@ -2534,8 +2527,9 @@ function formatBriefTime(value?: string | null) {
             <button v-if="message.recoveryState === 'unconfirmed'" class="secondary" type="button" @click="refreshTurnStatus">重新查询状态</button>
           </div>
           <GeneratedImageGrid v-if="message.imageBatch" :items="message.imageBatch.items" @retry="retryFailedMessage(index)" />
+          <DocumentArtifactCard v-if="documentOpen && replyDraft(message, index) && assistantTextContent(message) && !isActiveTurnPhase(message.phase) && message.phase !== 'FAILED' && !message.recoveryState" :title="replyDraft(message, index)!.title" :chars="replyDraft(message, index)!.content.length" :version="replyDraft(message, index)!.versions.slice(-1)[0]?.number" @open="openReplyDraft(message, index)" />
           <AssistantMarkdown
-            v-if="assistantTextContent(message) && (!isDocumentTask(messages[index - 1]?.content || '') || isActiveTurnPhase(message.phase) || message.phase === 'FAILED' || message.recoveryState)"
+            v-if="assistantTextContent(message) && (documentOpen || !isDocumentTask(messages[index - 1]?.content || '') || isActiveTurnPhase(message.phase) || message.phase === 'FAILED' || message.recoveryState)"
             class="message-bubble message-content chat-answer"
             :text="assistantTextContent(message)"
             allow-images
@@ -2543,7 +2537,7 @@ function formatBriefTime(value?: string | null) {
           />
           <details v-else-if="assistantTextContent(message)" class="document-reply-body"><summary>查看回复正文</summary><AssistantMarkdown :text="assistantTextContent(message)" allow-images linkify /></details>
           <DocumentArtifactCard
-            v-if="assistantTextContent(message) && !isActiveTurnPhase(message.phase) && message.phase !== 'FAILED' && !message.recoveryState"
+            v-if="(!documentOpen || !replyDraft(message, index)) && assistantTextContent(message) && !isActiveTurnPhase(message.phase) && message.phase !== 'FAILED' && !message.recoveryState"
             :title="replyDraft(message, index)?.title || documentTitle(assistantTextContent(message), activeConversationTitle)"
             :chars="replyDraft(message, index)?.content.length ?? assistantTextContent(message).length"
             :version="replyDraft(message, index)?.versions.slice(-1)[0]?.number"
@@ -3128,11 +3122,12 @@ function formatBriefTime(value?: string | null) {
       </div>
     </div>
 
-    <DocumentWorkspacePanel v-if="documentOpen" :drafts="documentDrafts" :active-id="activeDocumentId" :busy="documentBusy" :notice="documentNotice" :error="documentError" @close="documentOpen = false" @select="activeDocumentId = $event" @create="createDocument" @import="documentFileInput?.click()" @reference="referenceDocument" />
+    <DocumentWorkspacePanel v-if="documentOpen" :drafts="documentDrafts" :active-id="activeDocumentId" :busy="documentBusy" :notice="documentNotice" :error="documentError" @close="documentOpen = false" @select="activeDocumentId = $event" @create="createDocument" @import="documentFileInput?.click()" @reference="referenceDocument"><template #switcher><ChatWorkspaceSwitcher active="document" :count="documentDrafts.length" @document="openDocumentWorkspace" @context="openContextPanel" /></template></DocumentWorkspacePanel>
     <input ref="documentFileInput" type="file" class="document-file-input" aria-label="读取文档文件" accept=".docx,.xlsx,.xlsm,.xls,.pptx,.pdf" @change="chooseDocument" />
     <ContextPanel title="当前上下文" :open="showContextPanel" @close="showContextPanel = false">
+      <template #header><ChatWorkspaceSwitcher active="context" :count="documentDrafts.length" @document="openDocumentWorkspace" @context="openContextPanel" /></template>
       <section class="context-section context-controls">
-        <small>切换上下文</small>
+        <small>对话资料</small>
         <p class="context-persistence-note">关联的项目计划和知识库会持续用于新消息与新对话，直到你在这里切换为不使用。</p>
         <label>
           <span>切换对话</span>
@@ -3185,7 +3180,7 @@ function formatBriefTime(value?: string | null) {
           <small v-else-if="knowledgeBasesError" class="context-load-note danger">{{ knowledgeBasesError }}</small>
         </label>
       </section>
-      <section class="context-section">
+      <section v-if="activeProjectId || contextProject?.projectId" class="context-section">
         <small>关联项目计划</small>
         <strong>{{ activeProjectName || '未关联项目计划' }}</strong>
         <RouterLink v-if="activeProjectId" class="inline-link" :to="`/projects/${activeProjectId}`">打开项目计划</RouterLink>
@@ -3194,7 +3189,7 @@ function formatBriefTime(value?: string | null) {
           最近回答使用了 {{ contextProject.projectName || `项目计划 #${contextProject.projectId}` }}
         </span>
       </section>
-      <section class="context-section">
+      <section v-if="selectedKnowledgeBaseId || contextMemoryCount > 0" class="context-section">
         <small>知识与记忆</small>
         <strong>{{ activeKnowledgeBaseName }}</strong>
         <span>{{ contextMemoryCount }} 条记忆用于最近回答</span>
@@ -3688,4 +3683,32 @@ function formatBriefTime(value?: string | null) {
   .chat-list { scroll-behavior: auto; }
   .turn-status-dot, .image-skeleton::after, .image-skeleton span, .source-message-highlight { animation: none; }
 }
+
+/* Workspace chrome shares the same surface as the conversation and document. */
+:global(.lyle-shell__main--chat:has(.chat-page)){padding:0}
+.chat-page{position:relative;gap:0}
+.chat-page>.toolbar{min-height:58px;flex-shrink:0;padding:10px 24px;box-sizing:border-box;gap:12px;margin-inline:auto;align-items:center}
+.conversation-heading{min-width:0;flex:1}.conversation-title-line{flex-wrap:nowrap;gap:9px;min-width:0;margin:0}
+.conversation-title-line h1{margin:0;font-size:14px;font-weight:650;line-height:1.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.conversation-breadcrumb{flex-shrink:0;color:var(--muted-foreground);font-size:12px}
+.conversation-rename{display:grid;place-items:center;min-width:28px;min-height:28px;padding:4px;border:0;border-radius:6px;background:transparent;color:var(--muted-foreground);flex-shrink:0}
+.conversation-rename:hover{color:var(--foreground);background:var(--surface-muted)}
+.conversation-rename:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.chat-page .toolbar-controls{gap:8px;flex-shrink:0;width:auto}
+.chat-page .title-editor{margin:0;grid-template-columns:minmax(0,1fr) auto auto}
+.chat-page .chat-workspace{gap:12px 0}
+.chat-page .chat-list{width:min(100% - 48px,var(--chat-content-width));padding-top:20px}
+.chat-page .chat-input{width:min(100% - 32px,var(--chat-content-width));margin-bottom:16px}
+.chat-page .chat-workspace.document-open{grid-template-columns:minmax(320px,.42fr) minmax(460px,.58fr)}
+.chat-page .chat-workspace.document-open>.chat-list{width:100%;padding:76px 24px 16px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--border-strong) transparent}
+.chat-page .chat-workspace.document-open .message.user>.message-bubble{background:var(--primary-soft);border-color:transparent}
+.chat-page .chat-workspace.document-open>.chat-input{width:calc(100% - 32px)}
+.chat-page.page--context :deep(.context-panel){grid-column:2;grid-row:1 / 3;min-height:0;border:0;border-left:1px solid var(--border);border-radius:0;display:flex;flex-direction:column}
+.chat-page.page--context :deep(.context-panel>.content){min-height:0;overflow:auto;overscroll-behavior:contain;flex:1}
+.chat-page.page--context :deep(.context-panel>header){flex-shrink:0;padding:10px 14px;min-height:58px;box-sizing:border-box;gap:8px}
+.chat-page.page--context .chat-workspace{grid-template-columns:minmax(0,1fr) minmax(300px,340px)}
+@media(min-width:1101px){.chat-page.page--document>.toolbar{position:absolute;z-index:2;top:0;left:0;width:42%;margin:0;background:var(--background);border-bottom:1px solid var(--border)}.chat-page.page--document .conversation-breadcrumb{display:none}.chat-page.page--document .conversation-title-line{gap:6px}}
+@media(max-width:1100px){.chat-page .chat-workspace.document-open{grid-template-columns:minmax(0,1fr)}.chat-page .chat-workspace.document-open>.chat-list{width:min(100% - 40px,var(--chat-content-width));padding:20px 0}}
+@media(max-width:1024px){.chat-page.page--context .chat-workspace{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:640px){.chat-page>.toolbar{flex-direction:row;align-items:center;padding:10px 14px;gap:8px}.conversation-breadcrumb{display:none}.conversation-title-line{gap:4px}.conversation-title-line h1{font-size:13px}.chat-page .chat-list{width:calc(100% - 28px);padding-top:12px}.chat-page .chat-input{width:calc(100% - 20px);margin-bottom:10px}.chat-page .chat-workspace.document-open>.chat-list{width:calc(100% - 28px)}.chat-page .toolbar-controls{flex-wrap:nowrap}.chat-page .debug-controls{position:absolute;top:100%;right:12px;z-index:4}}
 </style>
