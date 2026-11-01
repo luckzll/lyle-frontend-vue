@@ -1,7 +1,7 @@
-export type DocumentFormat = 'docx' | 'md' | 'xlsx' | 'pptx'
+export type DocumentFormat = 'docx' | 'md' | 'xlsx' | 'pptx' | 'pdf'
 export const DOCUMENT_MIMES: Record<DocumentFormat, string> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', md: 'text/markdown',
-  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', pdf: 'application/pdf'
 }
 export const WORD_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 export const MAX_DOCUMENT_CHARACTERS = 200_000
@@ -21,10 +21,15 @@ export function wantsDocumentExport(question: string) {
   return /(?:word|docx|excel|xlsx|pptx?|powerpoint|pdf|markdown|\.md\b|导出|保存.{0,12}(?:文档|文件)|(?:整理|生成|做成).{0,16}(?:文档|报告|周报))/i.test(question)
 }
 
-export async function createDocumentBlob(content: string, format: DocumentFormat, title: string) {
+export async function createDocumentBlob(content: string, format: DocumentFormat, title: string, signal?: AbortSignal) {
+  signal?.throwIfAborted()
   if (!content.trim()) throw new Error('没有可导出的正文。')
   if (content.length > MAX_DOCUMENT_CHARACTERS) throw new Error('内容超过 20 万字，请分段导出。')
   if (format === 'md') return new Blob([content], { type: 'text/markdown;charset=utf-8' })
+  if (format === 'pdf') {
+    const { createPdfExport } = await import('./pdf-export')
+    return createPdfExport(content, title, signal)
+  }
   if (format === 'xlsx' || format === 'pptx') {
     const { createOfficeDraft } = await import('./office-draft-export')
     return createOfficeDraft(content, format, title)

@@ -18,18 +18,21 @@ const chars = computed(() => props.content.replace(/\s/g, '').length.toLocaleStr
 let generation = 0
 watch([() => props.content, exportTitle], () => { filename.value = documentFilename(exportTitle.value, format.value) })
 watch(() => props.expanded, value => { open.value = value })
-watch([open, format, () => props.content, exportTitle], async () => {
+watch([open, format, () => props.content, exportTitle], async (_value, _previous, cleanup) => {
+  const controller = new AbortController()
+  cleanup(() => controller.abort())
   const current = ++generation; blob.value = undefined; status.value = ''; error.value = ''
   if (!open.value) { preparing.value = false; return }
   filename.value = documentFilename(filename.value, format.value)
   preparing.value = true
   try {
-    const generated = await createDocumentBlob(props.content, format.value, exportTitle.value)
+    const generated = await createDocumentBlob(props.content, format.value, exportTitle.value, controller.signal)
     if (current === generation) blob.value = generated
   } catch (exception) { if (current === generation) error.value = exception instanceof Error ? exception.message : '文件生成失败，请重试。' }
   finally { if (current === generation) preparing.value = false }
 }, { immediate: true })
 onBeforeUnmount(() => { generation++ })
+defineExpose({ selectFormat(value: DocumentFormat) { format.value = value; open.value = true } })
 
 async function save(downloadOnly = false) {
   if (!blob.value || saving.value) return
@@ -58,9 +61,9 @@ async function save(downloadOnly = false) {
       </div>
       <div class="export-fields">
         <label :for="`${id}-name`">文件名<input :id="`${id}-name`" v-model="filename" :disabled="saving" maxlength="110" @blur="filename = documentFilename(filename, format)" /></label>
-        <label :for="`${id}-format`">格式<select :id="`${id}-format`" v-model="format" :disabled="saving"><option value="docx">Word (.docx)</option><option value="xlsx">Excel (.xlsx)</option><option value="pptx">PowerPoint (.pptx)</option><option value="md">Markdown (.md)</option></select></label>
+        <label :for="`${id}-format`">格式<select :id="`${id}-format`" v-model="format" :disabled="saving"><option value="docx">Word (.docx)</option><option value="pdf">PDF (.pdf)</option><option value="xlsx">Excel (.xlsx)</option><option value="pptx">PowerPoint (.pptx)</option><option value="md">Markdown (.md)</option></select></label>
       </div>
-      <p class="export-note">{{ canChoose ? '在系统窗口选择桌面或其它目录，确认后保存。' : '当前浏览器不支持选择目录，可下载后移动到指定位置。' }}<span v-if="format === 'docx' && /!\[/.test(content)">图片保留说明和链接。</span><span v-if="format === 'xlsx'">按竖线或制表符拆成单元格，内容作为文本，公式不执行。</span><span v-if="format === 'pptx'">按标题和正文分页生成文字幻灯片，不包含原动画和图表。</span></p>
+      <p class="export-note">{{ canChoose ? '在系统窗口选择桌面或其它目录，确认后保存。' : '当前浏览器不支持选择目录，可下载后移动到指定位置。' }}<span v-if="format === 'pdf'">嵌入中文字体，按 A4 自动分页。图片保留说明与链接。</span><span v-if="format === 'docx' && /!\[/.test(content)">图片保留说明和链接。</span><span v-if="format === 'xlsx'">按竖线或制表符拆成单元格，内容作为文本，公式不执行。</span><span v-if="format === 'pptx'">按标题和正文分页生成文字幻灯片，不包含原动画和图表。</span></p>
       <div class="export-bottom">
         <p v-if="error" class="export-error" role="alert">{{ error }}</p>
         <p v-else class="export-status" role="status" aria-live="polite"><LoaderCircle v-if="preparing || saving" class="export-spinner" :size="14" aria-hidden="true" /><CheckCircle2 v-else-if="status.startsWith('已保存')" :size="15" aria-hidden="true" />{{ preparing ? '正在生成文件…' : saving ? '等待选择并保存…' : status || '文件已准备好' }}</p>

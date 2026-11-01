@@ -4,12 +4,12 @@ import { FileText, X, Pencil, Eye, History, Undo2, Save, Printer, MessageSquare,
 import AssistantMarkdown from './AssistantMarkdown.vue'
 import DocumentExport from './DocumentExport.vue'
 import { checkpoint, restoreVersion, updateDraft, type DocumentDraft, type DocumentTarget, documentTarget } from '@/domain/document-workspace'
-import { renderAssistantMarkdown } from '@/domain/assistant-markdown'
 
 const props = defineProps<{ drafts: DocumentDraft[]; activeId: string; busy: boolean; notice: string; error: string }>()
 const emit = defineEmits<{ close: []; select: [id: string]; create: []; import: []; reference: [target: DocumentTarget] }>()
 const draft = computed(() => props.drafts.find(item => item.id === props.activeId))
 const editing = ref(false); const versions = ref(false); const feedback = ref(''); const editor = ref<HTMLTextAreaElement>()
+const exporter = ref<InstanceType<typeof DocumentExport>>()
 const undoBefore = ref<number>()
 watch(() => draft.value?.revision, () => { undoBefore.value = undefined }, { flush: 'sync' })
 const panel = ref<HTMLElement>(); const mobile = ref(false)
@@ -43,17 +43,7 @@ function reference() {
   emit('reference', documentTarget(d, editing.value ? editor.value?.selectionStart : 0, editing.value ? editor.value?.selectionEnd : 0))
 }
 async function startEdit() { editing.value = true; await nextTick(); editor.value?.focus({ preventScroll: true }) }
-function printPdf() {
-  const d = draft.value; if (!d) return
-  const popup = window.open('', '_blank', 'popup,width=900,height=850')
-  if (!popup) { feedback.value = '打印窗口被拦截，请允许此站点打开弹窗后重试。'; return }
-  popup.opener = null
-  // Markdown renderer escapes file/model HTML; no remote images, fonts or scripts.
-  const rendered = renderAssistantMarkdown(d.content).html
-  popup.document.write('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>文档草稿</title><style>body{font:12pt/1.8 "Microsoft YaHei",sans-serif;color:#1e293b;max-width:180mm;margin:18mm auto;overflow-wrap:anywhere}table{border-collapse:collapse;width:100%}td,th{border:1px solid #cbd5e1;padding:6px}pre{white-space:pre-wrap}button,.markdown-code-toolbar{display:none}@page{size:A4;margin:18mm}@media print{body{margin:0;max-width:none}h1,h2,h3{break-after:avoid}tr{break-inside:avoid}}</style></head><body>' + rendered + '</body></html>')
-  popup.document.close(); popup.document.title = d.title; popup.focus(); popup.print()
-  feedback.value = '请在打印窗口选择“另存为 PDF”；尚未确认文件保存。'
-}
+function savePdf() { exporter.value?.selectFormat('pdf') }
 </script>
 
 <template>
@@ -87,9 +77,9 @@ function printPdf() {
         <article v-else class="doc-paper"><AssistantMarkdown v-if="draft.content" :text="draft.content" /><p v-else class="doc-empty">文档还是空白。点击“编辑正文”开始书写，或从聊天回复打开草稿。</p></article>
       </div>
       <footer class="doc-footer">
-        <div class="doc-footer-actions"><button class="doc-reference" type="button" :disabled="!draft.content.trim()" @click="reference"><MessageSquare :size="14" />{{ editing ? '引用选区 / 全文提问' : '引用全文提问' }}</button><button type="button" :disabled="!draft.content.trim()" @click="printPdf"><Printer :size="14" />保存 PDF</button></div>
+        <div class="doc-footer-actions"><button class="doc-reference" type="button" :disabled="!draft.content.trim()" @click="reference"><MessageSquare :size="14" />{{ editing ? '引用选区 / 全文提问' : '引用全文提问' }}</button><button type="button" :disabled="!draft.content.trim()" @click="savePdf"><Printer :size="14" />保存 PDF</button></div>
         <p v-if="feedback" class="doc-feedback" role="status">{{ feedback }}</p>
-        <DocumentExport v-if="draft.content.trim()" :content="draft.content" :title="draft.title" source-label="当前编辑草稿" />
+        <DocumentExport v-if="draft.content.trim()" ref="exporter" :content="draft.content" :title="draft.title" source-label="当前编辑草稿" />
         <p class="doc-local-note">草稿与最近 20 个版本仅在本页保留，离开或刷新前请下载。</p>
       </footer>
     </template>
