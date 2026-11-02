@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
-import { CheckCircle2, Download, FileText, FolderDown, LoaderCircle, X } from '@lucide/vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { CheckCircle2, ChevronDown, Download, FileText, FolderDown, LoaderCircle, X } from '@lucide/vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import { canChooseDocumentLocation, createDocumentBlob, documentFilename, documentTitle, saveDocumentFile, type DocumentFormat } from '@/domain/document-export'
 
-const props = withDefaults(defineProps<{ content: string; title?: string; expanded?: boolean; sourceLabel?: string }>(), { title: '聊天整理', expanded: false, sourceLabel: '当前回复' })
+const props = withDefaults(defineProps<{ content: string; title?: string; expanded?: boolean; sourceLabel?: string; compact?: boolean; neutral?: boolean }>(), { title: '聊天整理', expanded: false, sourceLabel: '当前回复', compact: false, neutral: false })
 const id = useId()
 const open = ref(props.expanded)
+const root = ref<HTMLElement>()
+const trigger = ref<HTMLButtonElement>()
+const nameInput = ref<HTMLInputElement>()
 const format = ref<DocumentFormat>('docx')
 const filename = ref(documentFilename(documentTitle(props.content, props.title), format.value))
 const blob = ref<Blob>()
@@ -32,6 +35,18 @@ watch([open, format, () => props.content, exportTitle], async (_value, _previous
   finally { if (current === generation) preparing.value = false }
 }, { immediate: true })
 onBeforeUnmount(() => { generation++ })
+
+function close() {
+  if (saving.value) return
+  open.value = false
+  if (props.compact) void nextTick(() => trigger.value?.focus())
+}
+function clickOutside(event: PointerEvent) {
+  if (props.compact && open.value && !saving.value && event.target instanceof Node && !root.value?.contains(event.target)) open.value = false
+}
+watch(open, value => { if (value && props.compact) void nextTick(() => nameInput.value?.focus()) })
+onMounted(() => document.addEventListener('pointerdown', clickOutside))
+onBeforeUnmount(() => document.removeEventListener('pointerdown', clickOutside))
 defineExpose({ selectFormat(value: DocumentFormat) { format.value = value; open.value = true } })
 
 async function save(downloadOnly = false) {
@@ -51,16 +66,16 @@ async function save(downloadOnly = false) {
 </script>
 
 <template>
-  <div class="document-export">
-    <button v-if="!open" class="export-trigger" type="button" @click="open = true"><Download :size="15" aria-hidden="true" /> 保存为文件</button>
-    <section v-else class="export-card" :aria-labelledby="`${id}-title`">
+  <div ref="root" class="document-export" :class="{ 'document-export--compact': compact, 'document-export--neutral': neutral }" @keydown.esc.stop="close">
+    <button v-if="compact || !open" ref="trigger" class="export-trigger" :class="{ 'export-trigger--primary': compact }" type="button" :aria-expanded="open" :aria-controls="`${id}-card`" @click="open ? close() : open = true"><Download :size="15" aria-hidden="true" />{{ compact ? '下载' : '保存为文件' }}<ChevronDown v-if="compact" :size="13" aria-hidden="true" /></button>
+    <section v-if="open" :id="`${id}-card`" class="export-card" :aria-labelledby="`${id}-title`">
       <div class="export-heading">
         <span class="export-icon"><FileText :size="22" aria-hidden="true" /></span>
         <div><strong :id="`${id}-title`">保存这份整理</strong><span>{{ sourceLabel }} · {{ chars }} 字</span></div>
-        <button class="export-close" :disabled="saving" type="button" aria-label="收起文件导出" @click="open = false"><X :size="17" aria-hidden="true" /></button>
+        <button class="export-close" :disabled="saving" type="button" aria-label="收起文件导出" @click="close"><X :size="17" aria-hidden="true" /></button>
       </div>
       <div class="export-fields">
-        <label :for="`${id}-name`">文件名<input :id="`${id}-name`" v-model="filename" :disabled="saving" maxlength="110" @blur="filename = documentFilename(filename, format)" /></label>
+        <label :for="`${id}-name`">文件名<input :id="`${id}-name`" ref="nameInput" v-model="filename" :disabled="saving" maxlength="110" @blur="filename = documentFilename(filename, format)" /></label>
         <label :for="`${id}-format`">格式<select :id="`${id}-format`" v-model="format" :disabled="saving"><option value="docx">Word (.docx)</option><option value="pdf">PDF (.pdf)</option><option value="xlsx">Excel (.xlsx)</option><option value="pptx">PowerPoint (.pptx)</option><option value="md">Markdown (.md)</option></select></label>
       </div>
       <p class="export-note">{{ canChoose ? '在系统窗口选择桌面或其它目录，确认后保存。' : '当前浏览器不支持选择目录，可下载后移动到指定位置。' }}<span v-if="format === 'pdf'">嵌入中文字体，按 A4 自动分页。图片保留说明与链接。</span><span v-if="format === 'docx' && /!\[/.test(content)">图片保留说明和链接。</span><span v-if="format === 'xlsx'">按竖线或制表符拆成单元格，内容作为文本，公式不执行。</span><span v-if="format === 'pptx'">按标题和正文分页生成文字幻灯片，不包含原动画和图表。</span></p>
@@ -75,6 +90,16 @@ async function save(downloadOnly = false) {
 
 <style scoped>
 .document-export { width: 100%; min-width: 0; }
+.document-export--compact{position:relative;width:auto;flex-shrink:0}
+.document-export--compact .export-card{position:absolute;z-index:5;right:0;top:calc(100% + 10px);width:min(520px,calc(var(--workspace-pane-width,100vw) - 28px),calc(100vw - 28px));max-height:min(560px,calc(100dvh - 160px));overflow:auto;box-sizing:border-box;box-shadow:var(--shadow-popover);text-align:left}
+.document-export--compact .export-trigger--primary{min-height:34px;padding:7px 12px;color:var(--primary-foreground,#fff);background:var(--primary);font-weight:600;font-size:13px;justify-content:center}
+.document-export--compact .export-trigger--primary:hover{color:var(--primary-foreground,#fff);background:var(--primary-hover,var(--primary))}
+.document-export--neutral .export-trigger--primary{min-height:30px;padding:5px 10px;border:1px solid var(--border);background:var(--surface);color:var(--foreground);font-size:12px;font-weight:500}
+.document-export--neutral .export-trigger--primary:hover{background:var(--surface-muted);color:var(--foreground)}
+.document-export--neutral .export-icon{background:var(--surface-muted);color:var(--foreground)}
+.document-export--compact .export-fields{grid-template-columns:minmax(0,1fr) 145px}
+@media(max-width:540px){.document-export--compact .export-fields{grid-template-columns:minmax(0,1fr)}.document-export--compact .export-card{max-height:calc(100dvh - 260px)}}
+@media(max-width:1100px){.document-export--compact .export-card{width:min(520px,calc(100vw - 28px))}}
 .export-trigger { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; background: transparent; border: 0; border-radius: 6px; color: var(--muted-foreground); font-size: 12px; }
 .export-trigger:hover { color: var(--primary); background: var(--primary-soft); }
 .export-card { border: 1px solid var(--border); background: var(--surface); border-radius: 14px; padding: 16px; max-width: 680px; }
